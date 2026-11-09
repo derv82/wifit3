@@ -32,7 +32,7 @@ body:
     id: usbinfo
     attributes:
       label: Card Output
-      description: For linux: "lsusb", macos: "system_profiler SPUSBDataType", Windows: "pnputil /enum-devices /connected /bus USB /deviceids /properties"
+      description: 'For linux: "lsusb", macos: "system_profiler SPUSBDataType", Windows: "pnputil /enum-devices /connected /bus USB /deviceids /properties"'
       placeholder: "Bus 001 Device 001: ID..."
   - type: dropdown
     id: have-it
@@ -50,5 +50,7 @@ body:
     attributes:
       label: Before submitting
       options:
+        - label: This adapter plugs in over USB (not a PCIe / M.2 / built-in laptop card).
+          required: true
         - label: This adapter is known to support monitor mode + injection on Linux.
           required: true

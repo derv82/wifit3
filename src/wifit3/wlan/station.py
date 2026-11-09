@@ -119,7 +119,8 @@ class Association:
                  auth_timeout: float = 1.0,
                  assoc_trailer_ies: bytes = b"",
                  privacy: Optional[bool] = None,
-                 should_stop: Optional[Callable[[], bool]] = None):
+                 should_stop: Optional[Callable[[], bool]] = None,
+                 beacon_frame: Optional[bytes] = None):
         self.iface = iface
         self.bssid = bssid.lower()
         self.bssid_bytes = str_to_mac(self.bssid)
@@ -130,7 +131,9 @@ class Association:
         self.auth_timeout = auth_timeout
         self.assoc_trailer_ies = assoc_trailer_ies
         self.privacy = privacy
+        self.beacon_frame = beacon_frame
         self.should_stop = should_stop or (lambda: False)
+        self._replied = asyncio.Event()
         self.associated = False
         self.fail_reason: Optional[str] = None
         self._auth_ok = False
@@ -154,7 +157,8 @@ class Association:
         self.iface.unregister_rx_callback(self._rx_cb)
 
     async def associate(self, attempts: int = 5) -> bool:
-        """Open-auth + assoc. Returns True once the AP accepts us (status 0)."""
+        """Open-auth + assoc. Returns True once the AP accepts us (status 0). An explicit
+        Auth or Assoc reject ends it; silence and deauths are retried up to ``attempts``."""
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
         for _ in range(attempts):
@@ -164,18 +168,21 @@ class Association:
             self._assoc_ok = False
             self.auth_status = None
             self.assoc_status = None
+            self.fail_reason = None
             logger.info("-> Auth Req to %s", self.bssid)
             await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
-                                   lambda: self._auth_ok, self.auth_timeout)
+                                   lambda: self.auth_status is not None, self.auth_timeout)
+            if self.auth_status is not None and self.auth_status != 0:
+                break
             # Send Assoc whether or not the Auth Resp surfaced
             logger.info("-> Assoc Req to %s", self.bssid)
-            await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, self.ssid,
-                                             self.assoc_trailer_ies,
-                                             channel=self.channel, privacy=self.privacy),
-                                   lambda: self._assoc_ok, self.assoc_timeout)
+            await self._send_until(self._assoc_req(self.ssid),
+                                   lambda: self.assoc_status is not None, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
                 return True
+            if self.assoc_status is not None:
+                break
         self.associated = False
         if not self.fail_reason:
             self.fail_reason = "no Assoc resp"
@@ -189,7 +196,7 @@ class Association:
         self.auth_status = None
         logger.info("-> Auth Req to %s", self.bssid)
         await self._send_until(auth_req(self.bssid_bytes, self.our_mac),
-                               lambda: self._auth_ok, self.auth_timeout)
+                               lambda: self.auth_status is not None, self.auth_timeout)
         return self._auth_ok
 
     async def associate_as(self, ssid: str) -> Optional[int]:
@@ -200,24 +207,32 @@ class Association:
         self.assoc_status = None
         self.ssid = ssid
         logger.info("-> Assoc Req to %s as %r", self.bssid, ssid)
-        await self._send_until(assoc_req(self.bssid_bytes, self.our_mac, ssid,
-                                         self.assoc_trailer_ies,
-                                         channel=self.channel, privacy=self.privacy),
+        await self._send_until(self._assoc_req(ssid),
                                lambda: self.assoc_status is not None, self.assoc_timeout)
         self.associated = self._assoc_ok
         return self.assoc_status
 
+    def _assoc_req(self, ssid: str) -> bytes:
+        return assoc_req(self.bssid_bytes, self.our_mac, ssid, self.assoc_trailer_ies,
+                         channel=self.channel, privacy=self.privacy, beacon_frame=self.beacon_frame)
+
     async def _send_until(self, frame: bytes, done, timeout: float,
-                          resend_after: float = 0.4) -> None:
-        """Send ``frame`` immediately, then poll ``done()`` up to ``timeout``, resending
-        every ``resend_after`` while still silent (covers a lost TX or a lost AP reply)."""
-        deadline = time.time() + timeout
-        last_send = 0.0
-        while time.time() < deadline and not done() and not self.should_stop():
-            if time.time() - last_send >= resend_after:
-                await self.iface.send_no_wait(frame)
-                last_send = time.time()
-            await asyncio.sleep(0.02)
+                          resend_after: float = 0.2) -> None:
+        """Send ``frame``, then resend every ``resend_after`` (mac80211's 200 ms) until ``done()``
+        or ``timeout``. Wakes on each AP reply instead of polling."""
+        deadline = time.monotonic() + timeout
+        while not done() and not self.should_stop() and time.monotonic() < deadline:
+            await self.iface.send_no_wait(frame)
+            resend_at = min(time.monotonic() + resend_after, deadline)
+            while not done() and not self.should_stop():
+                remaining = resend_at - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._replied.clear()
+                try:
+                    await asyncio.wait_for(self._replied.wait(), remaining)
+                except asyncio.TimeoutError:
+                    break
 
     def _rx_cb(self, pkt: Packet) -> None:
         if (not self._active or pkt.raw[4:10] != self.our_mac   # addressed to us
@@ -252,3 +267,4 @@ class Association:
             self._assoc_ok = False
             self.state = (AssocState.AUTHENTICATED if kind == "disassoc"
                           else AssocState.UNAUTHENTICATED)
+        self._replied.set()

@@ -310,6 +310,15 @@ MT_TX_PWR_CFG_7                   = 0x13d4
 MT_TX_PWR_CFG_8                   = 0x13d8
 MT_TX_PWR_CFG_9                   = 0x13dc
 
+# TX power EEPROM fields — [SRC] mt76x02_eeprom.h:38, 52, 76, 112
+MT_EE_TX_POWER_DELTA_BW80         = 0x052
+MT_EE_TX_POWER_0_GRP4_TSSI_SLOPE  = 0x076
+MT_EE_TX_POWER_BYRATE_BASE        = 0x0de
+MT_EE_NIC_CONF_1_TX_ALC_EN        = 1 << 13        # BIT(13)
+
+# World regdom max EIRP on every 2.4/5 GHz rule (dBm) — [SRC] net/wireless/reg.c:249-276
+WORLD_REGDOM_MAX_EIRP             = 20
+
 # TX SW/CTRL — [SRC] mt76x02_regs.h:410-428
 MT_TX_SW_CFG0                     = 0x1330
 MT_TX_SW_CFG1                     = 0x1334
@@ -332,6 +341,8 @@ MT_GF40_PROT_CFG                  = 0x1378
 # ACK + ALC — [SRC] mt76x02_regs.h:470, 487, 502
 MT_EXP_ACK_TIME                   = 0x1380
 MT_TX_ALC_CFG_0                   = 0x13b0
+MT_TX_ALC_CFG_0_CH_INIT_0         = 0x003f   # GENMASK(5, 0), mt76x02_regs.h:488
+MT_TX_ALC_CFG_0_CH_INIT_1         = 0x3f00   # GENMASK(13, 8), mt76x02_regs.h:489
 MT_TX0_BB_GAIN_ATTEN              = 0x13c0   # MT76x0-only
 
 # More TX prot configs — [SRC] mt76x02_regs.h:506-508

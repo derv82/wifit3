@@ -1,7 +1,7 @@
 """The WPS Association vendor IE: announces registrar (PIN) or enrollee (PBC)
 intent in the Association Request so a WPS AP starts the EAP-WSC exchange.
 
-Kept out of the generic ``auth_assoc.Association`` (which knows no protocol above the
+Kept out of the generic ``wlan.station.Association`` (which knows no protocol above the
 802.11 skeleton): the assoc engine appends whatever ``assoc_trailer_ies`` it is handed,
 and WPS callers hand it ``wps_assoc_ie(...)``.
 """

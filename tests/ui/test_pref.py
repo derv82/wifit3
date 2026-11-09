@@ -164,3 +164,18 @@ async def test_enable_dfs_channels_is_saved(tmp_path, monkeypatch):
 
     assert Config.enable_dfs_channels is True
     assert "enable_dfs_channels = true" in (tmp_path / "config.toml").read_text("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_save_probed_ssids_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "save_probed_ssids", False)
+    app = _Host()
+    async with app.run_test() as pilot:
+        await _open_prefs(app, pilot)
+        app.screen.query_one("#save_probed_ssids", Checkbox).value = True
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.save_probed_ssids is True
+    assert "save_probed_ssids = true" in (tmp_path / "config.toml").read_text("utf-8")

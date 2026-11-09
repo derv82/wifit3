@@ -30,7 +30,7 @@ sys.path.insert(0, str(_HERE))         # scripts/id/ for frame.py
 
 from dev import select_device
 from frame import Frame, IE, fmt
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, random_client_mac
+from wifit3.wlan.station import Association, WlanTransport, random_client_mac
 from wifit3.device.manager import wlan_ifaces, wlan_close
 from wifit3.dot11 import str_to_mac
 from wifit3.dot11.wsc import messages as M

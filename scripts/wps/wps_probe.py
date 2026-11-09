@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, str_to_mac
+from wifit3.wlan.station import Association, WlanTransport, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
 from wifit3.wlan.array import WlanArray

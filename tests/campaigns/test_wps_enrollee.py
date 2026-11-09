@@ -15,10 +15,19 @@ import asyncio
 import os
 import struct
 
+import pytest
+
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
+from wifit3.campaigns.wps import enrollee
 from wifit3.campaigns.wps.enrollee import UUID_E, WpsEnrollee
 from wifit3.campaigns.wps.registrar import PinResult
+
+
+@pytest.fixture(autouse=True)
+def no_eapol_start_wait(monkeypatch):
+    """The fake AP waits for our EAPOL-Start: skip the real 1-2 s wait for it to open EAP first."""
+    monkeypatch.setattr(enrollee, "eapol_start_wait", lambda wsc_2_0: 0.0)
 
 BSSID = bytes.fromhex("3421090001ff")
 STA = bytes.fromhex("02aabbccddee")
@@ -254,8 +263,9 @@ async def test_pbc_uuid_e_is_the_same_every_attempt():
 
 
 async def test_pbc_stop_after_answering_nacks_the_next_request():
-    # Polls: before Identity-Req, before WSC_Start, then right after M1 is sent.
-    polls = iter([False, False])
+    # Polls: before the EAPOL-Start wait, before Identity-Req, before WSC_Start, then right
+    # after M1 is sent.
+    polls = iter([False, False, False])
     out, reg = await _run(registrar_cls=_RetransmittingRegistrar,
                           should_stop=lambda: next(polls, True))
     assert out.result is PinResult.ABORTED

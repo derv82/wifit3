@@ -138,17 +138,6 @@ candidate. Keep `check_pin_half` as-is: it is the hostapd-shaped primitive the o
 target, press `Verify`: the card retunes to that AP's channel to verify, but doesn't return to the
 Focus channel. The Focus target's beacons stay at 0 until the Vault is closed, then come back.
 
-## Vault Verify does not honor TKIP APs, labels good passwords incorrect
-
-**Problem.** On an AP offering TKIP (seen on a WPA2 AP advertising pairwise TKIP + CCMP), Verify
-rejects the correct PSK. The live check's assoc and M2 RSN IE copy every pairwise cipher the AP
-lists (a client names exactly one), and M2's MIC is always key descriptor version 2 (HMAC-SHA1).
-If the AP picks TKIP, it expects version 1 (HMAC-MD5), drops our M2 and re-sends M1, which Verify
-reads as a wrong PSK. WPA1-only APs (vendor WPA IE, descriptor type 254) get a generic RSN IE.
-
-**Direction.** One pairwise cipher in the client RSN IE (CCMP if offered); M2's key descriptor
-version and MIC follow M1's `key_info`.
-
 ## PSK-SHA384 and FT-PSK-SHA384 handshakes are not yet supported
 
 **Problem.** AKM 20 (PSK-SHA384) and AKM 19 (FT-PSK-SHA384) derive the KCK and MIC with SHA-384

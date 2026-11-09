@@ -982,7 +982,11 @@ class MT76x0UDriver(Driver):
         EP 0x07 (AC_VO). A unicast addr1 requests ACK, so the chip's own HW retry (limit set
         globally in TX_RTY_CFG at connect) retransmits it un-ACKed. The sequence number
         is already stamped by ``_stamp_tx_seq`` (the base calls it before this)."""
-        from .tx import TXError, inject_80211_frame
+        from .tx import TXWI_RATE_CCK_1MBPS, TXWI_RATE_OFDM_6MBPS, TXError, inject_80211_frame
+        if self.current_channel is not None and self.current_channel <= 14:
+            rate = TXWI_RATE_CCK_1MBPS
+        else:
+            rate = TXWI_RATE_OFDM_6MBPS
         loop = asyncio.get_running_loop()
         try:
             # Offload the blocking build+bulk-OUT so a sync write can't stall the event loop.
@@ -990,7 +994,7 @@ class MT76x0UDriver(Driver):
             n = await loop.run_in_executor(
                 None, lambda: inject_80211_frame(self.transport, frame_bytes,
                                                  request_ack=not frame_bytes[4] & 0x01,
-                                                 wcid=0xFF))
+                                                 wcid=0xFF, rate=rate))
         except TXError as e:
             logger.error("MT7610U: inject_frame failed: %s", e)
             return False

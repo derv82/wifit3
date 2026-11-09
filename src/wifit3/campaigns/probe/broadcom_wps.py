@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
-from wifit3.dot11 import str_to_mac
+from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
+from wifit3.dot11 import random_client_mac, str_to_mac
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_ENROLLEE, wps_assoc_ie
 
@@ -139,17 +139,15 @@ async def probe_wps_implementation(iface: WlanInterface, ap: AccessPoint) -> Wps
     bssid = str_to_mac(ap.bssid.lower())
     await iface.set_channel(ap.channel)
     fake_mac = await iface.set_fake_mac(None, bssid)
-    if fake_mac is None:
-        logger.info("broadcom-wps: %s can't active-monitor", iface.name)
-        return WpsImplementation.INCONCLUSIVE
-    our_mac = str_to_mac(fake_mac)
+    our_mac = str_to_mac(fake_mac) if fake_mac else random_client_mac()
     transport = WlanTransport(iface, bssid, our_mac)
 
     async def send(payload_1x: bytes) -> None:
         await transport.send_no_wait(M.build_data_frame(bssid, our_mac, bssid, payload_1x))
 
     assoc = Association(iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac,
-                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, False))
+                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, False),
+                        beacon_frame=ap.last_beacon_frame)
     assoc.start()
     transport.start()
     try:

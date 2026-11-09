@@ -13,7 +13,7 @@ import logging
 from typing import Optional
 
 from .campaign import Campaign
-from .auth_assoc import (
+from wifit3.wlan.station import (
     Association, WlanTransport, build_client_leaving,
 )
 from wifit3.dot11 import random_client_mac, str_to_mac
@@ -80,7 +80,8 @@ class WpsPbcCampaign(Campaign):
             assoc = Association(iface, self.bssid, self.target.ssid or "",
                                 self.channel, our_mac=self.our_mac,
                                 assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, wsc_2_0),
-                                should_stop=lambda: self.stopped)
+                                should_stop=lambda: self.stopped,
+                                beacon_frame=self.target.last_beacon_frame)
             assoc.start()
             warning = iface.active_monitor_warning()
             if isinstance(warning, str):

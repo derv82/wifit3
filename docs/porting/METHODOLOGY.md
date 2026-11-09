@@ -1,99 +1,170 @@
 # Porting a chipset
 
-You're re-implementing a Linux kernel (or vendor) driver in Python. The C source is what you
-translate; a recorded USB capture of that same driver talking to *this* card is what you check
-your work against. You hold both, so a finished port isn't a guess. It's a translation you can
-verify against the wire.
+Port the chip's Linux driver to Python. Use the DKMS/vendor driver when one exists. The C source is the
+spec; live hardware is the test. A capture of the Linux driver is required (Step 1): it pins the driver version to
+port and shows monitor mode works.
 
-Three companion docs: **CODE-STYLE.md** (how to write the port), **CHIP-DOC.md** (the per-chip
-reference you ship with it), and **GOTCHAS.md** (recurring traps from past bring-ups). Terms used
-below (pcap, timeline, bundle) are defined at the end.
+Also read: GOTCHAS.md (bugs earlier ports hit), CHIP-DOC.md (the `<CHIP>.md` shipped with the port),
+FINAL-CHECKLIST.md (before calling the port done).
 
-> **Read only this chip's C source while porting.** Don't crib from another chip's driver in this
-> tree: a sibling carries its own bugs and pulls you off the source (one chip was ported as
-> Jaguar-1 by copying a sibling: it's actually Jaguar-2). Reading a shared base you genuinely
-> import is fine, and comparing siblings while *debugging* is fine. The rule is about porting from
-> a sibling instead of from source.
+## What wifit3 needs from a driver
+
+- **Monitor mode only.** No managed mode, no association. Port the STA setup the driver runs before monitor
+  entry when the bring-up goes through it.
+- **20 MHz channels only.** EAPOL, management and control frames go out at 20 MHz, and APs stay backward
+  compatible with 20 MHz clients. Don't implement 40/80/160 MHz tuning, but port the code inside a
+  width-conditional when it runs for the 20 MHz path or sets shared state.
+- **Every channel the silicon tunes:** 2.4 GHz 1-14 (channel 14 for users in Japan) and 5 GHz including DFS
+  (users in Europe), whether or not a capture covers them. Build `SUPPORTED_CHANNELS` from `Driver.CHANNELS_*`
+  (`chips/driver.py`); the app hops DFS with the DFS pref on.
+- **`inject_frame()` is the app's only TX path.** It takes a raw 802.11 MPDU without FCS (the chip appends it) and
+  sends it once; the chip's hardware retry is the only retransmission. Stamp a sequence number unless the
+  hardware assigns one (`_stamp_tx_seq`).
+- **Active monitor mode:** `enter_active_monitor(mac)` makes the chip hardware-ACK a forged MAC and retry until
+  ACKed. Declare what the silicon can do in `FAKE_MAC` (`FakeMacSupport`: `NONE`, `FIXED_MAC`, `SPOOFABLE`;
+  the default `UNIMPLEMENTED` means not ported). Ports that implement it, one per family: mt76 `mt7921au`,
+  rt2x00 `rt2800usb`, Realtek DKMS `rtl8812au_dkms`, rtw89 `rtl8922au`.
+- **ACKs reach RX** when asked: `_enable_rx_acks` / `_disable_rx_acks` admit ACK control frames so `record_ack`
+  can count them.
+- **RX** hands each frame to the `register_rx_callback` sink as a parsed `Packet`, built from the MPDU without
+  its FCS.
+- **Firmware** ships in `chips/<chip>/assets/`; record its source, licence and sha256 in `docs/FIRMWARE.md`.
+
+## What a port may edit
+
+- `src/wifit3/chips/<chip>/`: the port. Nearly every change goes here.
+- `src/wifit3/device/manager.py`: only to tell this chip apart from a different chip sharing its VID:PID
+  (`_VIDPID_FAMILIES`).
+- `scripts/chips/<chip>/`: the port's scratch dir: extractors, `test_hw.py` (the user plugs in the card, you
+  test and debug), diagnostics.
+- `src/wifit3/chips/products.py`: the card's retail model, if missing.
+- `docs/SUPPORTED-HARDWARE.md`: the card's entry.
+- Card art, optional: offer the user to draw the card as 20x10 ANSI art with textual-paint
+  (`uvx --python 3.11 --with "setuptools<82" textual-paint`), saved as `src/wifit3/ui/assets/cards/card-<model>.ans`
+  and mapped in `src/wifit3/ui/screens/focus_v2/art.py`. Conventions: `src/wifit3/ui/assets/cards/README.md`.
+- At FINAL-CHECKLIST.md only: `docs/CREDITS.md`, `docs/FIRMWARE.md`, the `README.md#supported-hardware` row, and
+  unit tests in `tests/chips/<chip>/`.
+- Nothing else: not the `Driver` ABC (`chips/driver.py`), not `wlan/`, not another chip's package.
+
+Look at other ports for how wifit3 does a thing (active monitor, ACKs in RX, the RX reader, warm attach). Take the
+chip's behaviour, values and tables only from its own C source.
+
+## Code style in `chips/`
+
+- Keep the C names for constants, variables and functions: a matching name is its own cross-reference.
+- Add a `file:line` only when the name can't carry the link.
+- Follow the C's structure. Where Python forces a difference (a split or merged helper), cite the C `file:line`.
+- Never type a register address or bitfield from memory: extract them from the source with a script. Earlier
+  ports' extractors are in `scripts/chips/*/extract_*.py` and `gen_*.py`: reuse their code on this chip's source,
+  never their output.
+- Dated history and debug notes go in the chip doc, not the `.py`.
+- Each port stands alone: don't import another chip's module or extract shared code into a base, even when tables
+  or sequences look identical. Each port follows its own source, and those diverge; shared code turns into
+  `if chip X: ... elif chip Y:` and makes every edit a re-test of every device using it. `rtw88_base` and
+  `rtl88xxau_base` exist; don't add to them or create new ones.
+- A register read can change device state: never assume two reads commute; never reorder them relative to the C.
 
 ## Prerequisites
 
 - **uv** for all Python — `uv run …`; bare `python` lacks the deps.
-- **tshark** on PATH — the verify tool and every pcap query shell out to it.
+- **tshark** on PATH — `pcap_slicer.py`, the shared replays and many chips' `verify_pcap.py` shell out to it.
 - **The card, bound to userland** — Windows: WinUSB via Zadig. Linux: the splash's device-setup
   step writes a per-chipset modprobe blacklist + udev access rule and asks for a replug. The
   blacklist (*not* the udev rule) is what keeps the kernel off the card across replugs (a rule
   only chmods the node; the kernel still binds + taints cold state). Ad-hoc: `rmmod` the module and
   run as root.
+- **Never write EFUSE/EEPROM fuses**: they are one-time and permanent.
 
-Porting writes registers and replays the vendor firmware-download path with nothing between you
-and the silicon. A byte-diff catches *inaccurate* sequences, not every *dangerous* one. Test on
-a card you can afford to lose. We only ever write RAM and registers and replay the vendor
-*download* path; we never program EFUSE/EEPROM fuses (one-time-writable, permanent). A port that
-adds a fuse write is wrong.
+## Step 0 — Pick the driver
 
-## Step 0 — Ask the user
+- **Chip already ported?** Stop. Don't write a second driver for it (no `<chip>_dkms`, no `<chip>_v2`). The
+  maintainer decides whether a chip needs a new driver: raise it in an issue first.
+- **Driver** — it must support monitor mode and injection; check whether it supports active monitor. The
+  kernel's in-tree driver isn't always the best one: prefer a trusted DKMS fork (lwfinger, morrownr) when it
+  does more or does it better. Ask the user when unsure.
+- **Mode** — ask the user: *kernel-dev* (show each function as you port it, sign-off per milestone) or
+  *autonomous* (port the whole driver, the user reviews at the end; the default).
 
-Before writing code: which mode, where's the bundle, do you have the source.
+## Step 1 — Capture the Linux driver
 
-- **Mode** — *kernel-dev* (I show each function as I port it and get milestone sign-off) or
-  *autonomous* (I port and verify the whole driver myself, you review at the end, the default).
-- **Bundle** — the `captures_<chip>/` directory: the pcap, the timeline + logs, the over-air
-  capture, the firmware blob, and (DKMS) the vendor `driver-source/`.
-- **Source** — DKMS cards ship it in the bundle. Mainline cards need the kernel tree at the
-  captured version (read the driver name + vermagic from the bundle's `driver.log`; current
-  captures are v6.18). Offer to fetch it from `torvalds/linux` at the matching tag if needed.
+A capture is the usbmon pcap plus everything recorded with it: the step timestamps (`main.log`), the driver logs
+(`driver.log`), the over-air pcap, the firmware blob and, for DKMS, the driver source. It is required: it records
+the exact driver and its source, shows that monitor mode and injection work, and maps the bring-up before you
+write code.
 
-## Step 1 — Find where to start
+- **Capture** — on a Linux machine, card unplugged: `sudo python src/wifit3/scripts/capture.py`
+  (`--target <BSSID>` adds an injection test). It records the usbmon pcap of plug-in, firmware, monitor mode, a
+  channel sweep and injection, with per-step timestamps (`main.log`), the firmware blob and, for DKMS, the driver
+  source, under `captures_<chip>/`. Keep it in `driver_captures/captures_<chip>/` (gitignored: real MACs).
+- **Monitor mode works** — the over-air pcap must hold unicast frames between other stations.
+- **Source** — the exact version the capture was taken with: DKMS captures include `driver-source/`. Mainline:
+  read the driver name and vermagic from `driver.log` and fetch that tag of `torvalds/linux`.
+- **Map the bring-up** — `uv run python scripts/porting/pcap_slicer.py <main.log> <pcap>` lists
+  each step's frame range and frame count: where firmware, init, monitor, each channel and injection fall, and
+  how much each one is.
 
-A 10,000-line driver beside an empty `.py` isn't a blank page. The driver has a small fixed set
-of entry points, and you port outward from them.
+### Replaying the capture: verify_pcap
 
-Find the doors (where the kernel calls in): the USB probe, the mac80211/cfg80211 ops it registers
-(start/stop, config/tune, RX-filter, TX/xmit), and the firmware upload. Everything else is reached
-from these. Trace the call graph out of each door; the union is your whole port surface, and the
-only code that matters. Code never reached from a door (a PCI-only path on a USB card) isn't
-"skipped": it's not on the graph.
+`uv run python scripts/porting/verify_pcap.py <chip> [capture]` runs the port against the capture: it answers the
+driver's reads with the card's recorded responses and compares the driver's writes with what the Linux driver
+sent. The pieces: the dispatcher, a replay shared per USB family (`rtw88_pcap_replay.py` Realtek,
+`rt2x00_pcap_replay.py` Ralink, `mt76usb_pcap_replay.py` mt76x0u/mt76x2u), and the chip's own
+`scripts/chips/<chip>/verify_pcap.py` (`run(capture) -> int`).
 
-Order the doors by the timeline. `pcap_slicer.py` maps timeline timestamps to pcap frame ranges,
-so you can see which door fires when: plug-in → firmware → init → monitor → channel hops →
-injection. That order is your milestone sequence, derived from this driver rather than a template.
-A milestone is a demoable chunk: firmware uploads and the chip ACKs, the EFUSE read, init
-completes in monitor, one channel tune. In kernel-dev mode, propose the list and get sign-off; in
-autonomous mode, proceed.
+The reference gate is `scripts/chips/rtl8922au/verify_pcap.py`. A gate:
 
-A few things hold for every driver:
+- drives the driver's own `_bringup()` (`connect()` minus the USB interface claim), `set_channel()` and
+  `inject_frame()`; not `_tune()` or `_inject()`, and not the chip's modules one by one;
+- reads only runtime inputs from the capture, like the channel a hop targets (`_peek_channel`); never pre-parses
+  EFUSE or other state the driver reads itself;
+- absorbs async traffic by its signature (`_absorb_async`), not by skipping a fixed number of ops;
+- names every waiver with its reason.
 
-- Bring the card up in the kernel's order. Don't reorder or defer steps to demo something early.
-  Cards calibrate RX/RF at specific points; move it and you're no longer bringing the card up the
-  way the kernel does.
-- Read the EEPROM/EFUSE early, because its values gate later init (RF-path count, antenna config,
-  board type, channel plan, chip cut). Read them at runtime; never hardcode this card's values.
-  A sibling with a different byte must still work.
-- Monitor mode is a method on your driver, not an external command. `airmon-ng`/`iw` only trigger
-  the driver's register writes; you port those writes.
-- Port against the cold-boot pcap (card plugged in fresh).
-- Commit each milestone on its own once it verifies. Milestone labels ("M1") live in commit
-  messages and the chip doc, never in code.
+Use it to check a ported step before it touches hardware, and to debug bring-up. A divergence marks code to
+compare with the C, not a byte to copy.
+
+- Don't read the capture op by op and reproduce bytes you don't understand: that corrupts chip state.
+- Don't change driver code that works on live hardware because of a divergence; inspect that area against the C.
+- Don't chase every divergence: watchdog ticks and LED blinks land anywhere. Find the kernel's periodic work
+  (`INIT_DELAYED_WORK`, watchdog, link tuner, DIG), then its signature in the capture, and handle it in the chip's
+  verify_pcap (call the driver's tick directly, or drop it).
+- Replay every capture of the chipset, not one: it separates a watchdog tick from a `set_channel` write, and
+  shows bugs one capture hides.
+- A full match doesn't mean the port is done: timing, races, missing waits for device ACKs and missed sleeps
+  don't show in a replay.
+- TX: pass the 802.11 frame from each captured bulk-OUT URB to `inject_frame()` and byte-diff the URB the driver
+  sends against the captured one. If the capture has no bulk-OUT URBs, record that and test TX on air.
+- RX: feed the captured bulk-IN buffers through the driver's RX path (`iter_frames` + `WlanFrameParser`) and
+  check that frames and beacons decode (rtl8922au's `validate_rx`).
+- Channels: start with the capture's `iw set channel` sweep (one tune at a time, long gaps). The airodump-ng
+  segment hops every 0.25 s, in a fixed but non-sequential order across every band, with async traffic
+  interleaved: leave it for last.
+
+## Step 2 — Port the chipset's paths
+
+The chip package (`src/wifit3/chips/<name>/`):
+
+- **`__init__.py` declares the VID:PIDs**: `SUPPORTED_IDS: list[DeviceID]` (every VID:PID this driver claims, a
+  readable description, any chip-id discriminator in `extras={}`) and
+  `def import_driver(): from .driver import <Class>; return <Class>`. It must NOT import `driver.py` at module
+  top: discovery is a pkgutil walk over `chips/*` that reads each light `__init__` and imports the driver only
+  on a VID:PID match. Copy the shape from `chips/rtl8812au/__init__.py`.
+- **`driver.py` subclasses the `Driver` ABC** (`chips/driver.py`): class attr `SUPPORTED_CHANNELS`
+  (`SUPPORTED_IDS` is not on the class), classmethod `from_usb_device(cls, dev, id_entry)`, and `connect()`,
+  `set_channel()`, `inject_frame()`, `close()`, `register_rx_callback()`.
+- **Cold vs warm:** if the vendor probe re-initialises a running chip, `connect()` always runs the cold path.
+  Otherwise it may detect a chip left running and skip bring-up (`chips/rtl8821au/mac.py:is_chip_warm()`,
+  `driver.py:_warm_reattach`).
+- **Registration:** nothing to register unless a different chip shares this chip's VID:PID: then add a
+  `_VIDPID_FAMILIES` row with a resolver in `device/manager.py`.
+
+- Port every line the C runs for this chipset: every branch, helper and switch case, both init and start. In a
+  driver for many chipsets (rtl8xxxu, rt2800usb), port only the paths this chipset's IDs and chip checks reach.
+- Bring the card up in the C's order. Don't reorder or defer steps to demo something early: cards calibrate RX/RF
+  at specific points.
+- Port every EFUSE/EEPROM path the C has: a card with different values must still work. Never hardcode this
+  card's values (BUGS.md "Expand EFUSE support" lists the ports that did).
 - Start the chip's reference doc (CHIP-DOC.md) as you go.
-
-The `Driver` ABC your `driver.py` must subclass is in CLAUDE.md → "Adding a New Chipset" (the
-runtime methods + `SUPPORTED_CHANNELS`). Two registration rules the ABC does not enforce:
-
-- **`chips/<name>/__init__.py` declares the VID:PIDs**, not the driver class. It sets
-  `SUPPORTED_IDS = [DeviceID(...), ...]` (`from wifit3.models.device_id import DeviceID`) and a
-  `def import_driver(): from .driver import <Class>; return <Class>`. It must NOT import `driver.py`
-  at module top: discovery reads the light `__init__` and imports the heavy driver only on a VID:PID
-  match. Copy the shape from `chips/rtl8812au/__init__.py`.
-- **`SUPPORTED_IDS` is not a driver-class attr; `SUPPORTED_CHANNELS` is.** Discovery is a pkgutil walk
-  over `chips/*` importing each light `__init__` (`device/manager.py`, `supported_ids()`): there is no
-  manual registry list to edit. If the chip's setup key differs from its package dir, or two packages
-  ship on the same VID:PID (the Realtek mainline/DKMS pairs), add a `_FAMILIES` row in
-  `device/manager.py`.
-
-## Step 2 — Port the whole graph; skip nothing by name
-
-Skipping the wrong code is the largest source of bugs here, so the rule is simple: port every line
-reachable on the call graph: every branch, every helper, every switch case, both init and start.
 
 Don't judge a branch irrelevant by its name. "Looks like Bluetooth," "the 40 MHz path,"
 "coexistence": these are exactly where drivers hide RX/RF-critical writes. Read what the code
@@ -105,133 +176,15 @@ A branch this card's silicon can't trigger is still ported, behind its real runt
 <hardware>` with its citation. That's "ported, untested," not "skipped," and it's what lets a
 sibling card work.
 
-Channel width: tune narrow, port wide. We only ever tune the 20 MHz primary, so we don't implement
-the 40/80 MHz tuning *behavior* (secondary-channel math, per-width setup). But you still port the
-code inside a width-conditional when it runs for the 20 MHz path or sets shared state.
+## Step 3 — Test on hardware
 
-Bands: port every band the kernel supports. If it does 5 GHz, you do 5 GHz: every channel it
-tunes, at 20 MHz.
-
-Never type a register address or bitfield from memory; grep it out of the source and paste it
-verbatim (see CODE-STYLE.md).
-
-## Step 3 — Verify each milestone against the pcap
-
-After porting a milestone, check it against the pcap with the verify tool
-(`uv run python scripts/porting/verify_pcap.py <chip>`; the tool's internals are documented in that script
-and the per-chip `scripts/<chip>/verify_pcap.py`).
-
-Source is the guide, the pcap is the test. Port from the source, then replay the pcap to confirm
-your driver makes the same USB calls the kernel made. Don't read the pcap op-by-op and reproduce
-bytes you don't understand. That produces drivers that corrupt chip state or emit a tune prefix
-the kernel never sent.
-
-A divergence is a bug in your driver, never in the pcap or the kernel. Every byte in and out was
-recorded; the replay feeds your driver the exact reads and ACKs the real card returned. If your
-driver's output differs, it did something the kernel's didn't. So when the tool reports a
-divergence, go back to the source and port what produced that op. Don't hardcode the diverging
-byte, don't waive the op or edit the tool to skip it, and don't paper over a flaky step with a
-retry loop: a step that needs N attempts means the port diverged from the source (the 8814au 8×
-RF re-roll was a port gap, not hardware).
-
-The target is a clean run with zero waived ops, end to end: including the STA→monitor setup, the
-background timer writes the kernel interleaves (watchdog, sreset poll, hop timer: port the
-mechanism and register it as an async handler), TX, and RX. The injection and deauth frames in the
-pcap are built by the driver's xmit path; reproduce them through `inject_frame()` and byte-match
-them. Pcap verification must also feed captured bulk-IN buffers into `ReplayDevice` and assert that
-the driver's real RX path (`iter_frames` + `WlanFrameParser`) decodes frames and beacons cleanly
-offline (see GOTCHAS.md). "Don't port every line" is true only of pure-logic lines that touch no
-register and so have no wire op to match. It isn't a licence to waive wire ops.
-
-Prove one channel tune before fighting airodump's hop. A manual `iw set channel N` sweep
-delineates each tune cleanly; get that byte-for-byte first. airodump calls the same `iw set
-channel` under the hood, so once the unit tune matches, the hops are just that tune on a timer.
-
-## Step 4 — RX quality: beacon_watch is the real bar
-
-A clean verify run proves you reproduced the kernel's wire ops. It does not prove the card
-*receives well*, and reception is what the port ultimately delivers. `beacon_watch.py` measures
-that against a known-good card, and it outranks the verify gate.
-
-Pin a strong nearby AP (closer than any other), fixed channel, 60 s, replug-cold between runs:
-
-```
-uv run python scripts/beacon_watch.py --bssid <ref-AP> --channel <ch> --duration 60
-```
-
-A known-good card holds ~9.8 beacons/s there. If your port hears roughly half that while the
-known-good card stays steady, that's an RX bug in the port (front-end overload, AGC/DIG not
-backing off, a missed tuning write). Fix it in the driver, never conclude "move further from the
-AP." And never optimize for AP count or breadth: hearing more distant APs trades away the near
-one, and being unable to hear a nearby AP is a non-starter. Score the reference AP's rate against
-a known-good card at the same moment.
-
-## Step 5 — Hardware testing and the TX gate
-
-Validate on hardware with `uv run python scripts/<chip>/test_hw.py` (add `--debug`). The agent
-runs this itself. Don't add "quick wins" that surface beacons to the user mid-port. Reception is
-judged by the scripts, not by eye.
-
-Live TX (injection, deauth, attacks) goes only at the user's test APs, supplied at runtime.
-
-If the device wedges, ask the user to unplug, wait, replug (resets cold-boot state).
-
-## Step 6 — Before the port is done
-
-A clean verify and flowing beacons are necessary, not sufficient. Both gates are blind to a value
-hardcoded to match the recording, and to uncaptured paths (TX-descriptor variants, power-save,
-sreset, runtime recal).
-
-1. **Zero waivers, everywhere** — read the verify report again, end to end (cold bring-up, monitor
-   entry, hops, injection/deauth). A waiver is an un-ported op hiding.
-2. **Coverage audit** — confirm every reachable branch is ported or carries a `# TODO: verify`
-   with its gate cited. Walk the graph for branches dropped without a marker; classify each leaf
-   ported / ported-untested / not-on-graph.
-3. **Every pcap, not just one** — run the verify against all cold-boot pcaps for this chipset
-   (confirm same silicon first). Each completes with zero waivers.
-4. **TX byte-match** — diff each frame your inject path builds against the same frame in the pcap.
-   Only the sequence number (and, for WEP, the IV) legitimately differs.
-5. **Async producers accounted for** — list the kernel's periodic threads (grep for
-   `INIT_DELAYED_WORK` / watchdog / link-tuner / DIG); each that runs in our scenario is a
-   registered async handler, not stripped.
-6. **Recalibration cadence** — confirm your per-tune recal (freq / VCO / synth / TX power / AGC)
-   matches the kernel's channel-config path, and the per-hop lock holds so a cancelled tune can't
-   strand the chip on a stale channel.
-7. **Hands-on break-it pass** — alternate targets fast, hop hard, replug mid-run (ask the user),
-   soak 30 min, fire the live attacks. Stress finds what a snapshot and a single pcap can't.
-8. **Final checklist** — run docs/porting/FINAL-CHECKLIST.md and record each result in the chip
-   doc's Final checklist section. The port isn't done until every item has a number.
-
-## Appendix — driver migrations (mainline → vendor/DKMS)
-
-The Realtek 11ac cards went mainline-rtw88 → vendor DKMS for ~2× the 2.4 GHz monitor breadth.
-Mainline rtw88 and the vendor stack are different codebases above the same registers, so the gap
-lives in the shared RX path and porting again from the vendor source recovers it. Cards with no
-vendor fork (MediaTek, Atheros, RTL8187) stay on mainline.
-
-When porting again from a different source tree, keep both drivers and A/B them. The new port lands
-in a sibling package (`chips/rtl<chip>_dkms/`); the old one stays. Both declare the same VID:PID in
-their `__init__.py`; a `_FAMILIES` row in `device/manager.py` picks between them (`default` = the new
-DKMS port, `mainline` = the old, flipped by the family's env var). Port in a fresh session with only the
-vendor source and the new pcap in view, and treat it as a new bring-up. Baseline the old driver at
-the reference AP first, and flip the default only once the new port ties or beats it on hardware.
-
-## Housekeeping — every new port
-
-- **Credits** — add the upstream driver's substantive contributors to docs/CREDITS.md, mapped to the
-  new card. Tally commit authorship of the kernel path (and the vendor repo); beware kernel file
-  renames (GitHub's `?path=` filter doesn't follow them, so scrape the pre-reorg path too). Drop
-  tree-wide mechanical committers; keep the real builders.
-- **Licensing** — wifit3 is GPL-2.0-only (a derivative of GPLv2 drivers). Any firmware blob in
-  `chips/<chip>/assets/` is not GPL: record its provenance + redistribution terms from
-  linux-firmware's WHENCE and byte-verify the blob (see docs/FIRMWARE.md).
-
-## Terms
-
-- **source** — the kernel/vendor C you're porting. Mainline is tag v6.18; vendor/DKMS ships in the
-  bundle.
-- **pcap** — the recorded USB conversation between the kernel driver and the card. The test.
-- **timeline** — `main.log` in the bundle: what `capture.py` was doing at each moment.
-  `pcap_slicer.py` maps its timestamps to pcap frame ranges.
-- **over-air pcap** — the fixed-channel RF capture in the bundle; a side baseline, not the bar.
-- **bundle** — the `captures_<chip>/` directory `capture.py` produced.
+- Before live testing, ask the user for test APs, at least one per band the card supports. Live TX (injection,
+  deauth, attacks) goes only at those APs.
+- Write `scripts/chips/<chip>/test_hw.py` and run it yourself: `scripts/dev.py` picks the card (name substring or
+  bus:addr), so the script can bring it up and run RX or TX on it.
+- Compare RX with the Linux driver: `scripts/baseline/BASELINING.md` (APs seen, beacons/s of nearby reference
+  APs). The RF environment drifts: alternate runs A/B/A/B instead of comparing against an old number.
+- Try to break it: switch between Scanner and Focus quickly, hop hard, replug mid-run (ask the user). A card that
+  goes deaf points at `set_channel`, RF tables or band switching.
+- If the device wedges, ask the user to unplug and replug: that resets cold-boot state.
+- Then run FINAL-CHECKLIST.md.

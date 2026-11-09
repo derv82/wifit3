@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport
+from wifit3.wlan.station import Association, WlanTransport
 from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
 from wifit3.dot11 import str_to_mac
@@ -22,7 +22,8 @@ class VerifyPinCampaign(VerifyCampaign):
         wsc_2_0 = ap.wps_version == "2.0"
         association = Association(iface, ap.bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
                                   assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, wsc_2_0),
-                                  should_stop=lambda: self.stopped)
+                                  should_stop=lambda: self.stopped,
+                                  beacon_frame=ap.last_beacon_frame)
         association.start()
         transport = WlanTransport(iface, bssid_mac, our_mac)
         transport.start()

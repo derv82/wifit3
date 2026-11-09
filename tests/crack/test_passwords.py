@@ -1,20 +1,10 @@
-"""WPA passphrase tests: length bounds, SSID variants, wordlist streaming."""
+"""WPA passphrase tests: SSID variants, wordlist streaming."""
 from pathlib import Path
 
 from wifit3.crack import passwords
-from wifit3.crack.passwords import expand_wordlists, is_valid_psk, read_passwords, ssid_variants
-
-
-def test_is_valid_psk_length_bounds():
-    assert not is_valid_psk("a" * 7)
-    assert is_valid_psk("a" * 8)
-    assert is_valid_psk("a" * 63)
-    assert not is_valid_psk("a" * 64)
-
-
-def test_is_valid_psk_counts_utf8_bytes():
-    assert not is_valid_psk("é" * 32)
-    assert is_valid_psk("é" * 31)
+from wifit3.crack.default_psks import default_psks
+from wifit3.crack.passwords import expand_wordlists, read_passwords, ssid_variants
+from wifit3.dot11.wpa import is_valid_psk
 
 
 def test_ssid_variants_start_with_the_cases_and_primary_suffixes():
@@ -44,6 +34,14 @@ def test_ssid_variants_pad_numbers_only_as_far_as_eight_bytes_needs():
     longname = set(ssid_variants("longname"))
     assert {"longname12", "longname9999"} <= longname and "longname012" not in longname
     assert len(ssid_variants("ab")) < 100
+
+
+def test_all_ssid_variants_try_every_default_psk_before_any_ssid_variant():
+    variants = passwords.all_ssid_variants([("HomeNet", "02:ab:cd:00:00:01"),
+                                            ("CafeWifi", "02:ab:cd:00:00:02")])
+    defaults = default_psks("HomeNet", "02:ab:cd:00:00:01") + default_psks("CafeWifi", "02:ab:cd:00:00:02")
+    assert variants[:len(defaults)] == defaults
+    assert variants[len(defaults):] == list(dict.fromkeys(ssid_variants("HomeNet") + ssid_variants("CafeWifi")))
 
 
 def test_read_passwords_strips_newlines_and_skips_invalid(tmp_path: Path):

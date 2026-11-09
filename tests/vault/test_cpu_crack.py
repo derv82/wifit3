@@ -5,7 +5,7 @@ import pytest
 
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import parse_hc22000, pmkid_hashline
-from wifit3.crack.passwords import ssid_passwords, ssid_variants
+from wifit3.crack.passwords import all_ssid_variants, ssid_passwords, ssid_variants
 from wifit3.dot11 import wpa
 from wifit3.dot11.eapol import eapol_key
 from wifit3.dot11.wpa import (
@@ -179,7 +179,7 @@ def test_cpu_crack_tries_ssid_variants_before_the_wordlist(tool, tmp_path, mocke
     result = _poll_finished(tool, job)
 
     assert result.value == f"Cracked! Keys: {psk}"
-    assert pmk_spy.call_args_list[0].args == (ssid, ssid.encode())
+    assert pmk_spy.call_args_list[0].args == ("FC690C158264", ssid.encode())
     assert "wrongpass1" not in [call.args[0] for call in pmk_spy.call_args_list]
 
 
@@ -208,7 +208,8 @@ def test_cpu_crack_counts_and_dedupes_the_ssid_passwords_in_the_total(tool, tmp_
 
     run = tool._runs[job.job_id]
     tried = list(tool._passwords(run))
-    assert tried == list(dict.fromkeys(ssid_variants("ab") + ssid_passwords(["CafeGuest"])))
+    assert tried == list(dict.fromkeys(
+        all_ssid_variants([("ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
     assert run.passwords_total == len(tried)
     release.set()
     _join(tool, job)
@@ -359,7 +360,7 @@ def test_each_password_source_is_its_own_queue_entry_recorded_once_exhausted(too
 
     _join(tool, job)
     assert list(tool._passwords(tool._runs[job.job_id])) == list(dict.fromkeys(
-        ssid_variants("ab") + ssid_passwords(["CafeGuest"])))
+        all_ssid_variants([("ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
     wordlist_entry = tool.poll_status(job)
     assert wordlist_entry.detail == "words.txt (3/3)"
     assert _capture_exhaustion(job) == {wordlist_identity(default), SSID_VARIANTS_IDENTITY}

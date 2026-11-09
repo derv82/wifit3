@@ -3,7 +3,7 @@
 Drives one PIN attempt as an external WPS Registrar against an Enrollee (the
 AP). Knows nothing about USB: it is handed a transport with
 ``send_until_ack``/``send_no_wait`` + ``recv(timeout)`` and builds/parses full 802.11
-data frames via ``messages``. The live adapter (``auth_assoc.WlanTransport``) wires
+data frames via ``messages``. The live adapter (``wlan.station.WlanTransport``) wires
 this to ``WlanInterface.send_until_ack``/``send_no_wait`` + ``register_rx_callback``;
 tests wire it to an in-process fake enrollee.
 
@@ -90,6 +90,12 @@ def config_error_name(code: Optional[int]) -> str:
 
 # After this many EAP-Req/Identity with no M1, the AP is "stuck at identity".
 _IDENTITY_STALL = 8
+
+
+def eapol_start_wait(wsc_2_0: bool) -> float:
+    """Seconds to wait for the AP to open EAP before sending EAPOL-Start: wpa_supplicant's
+    startWhen, 1 s for a WPS 1.0 AP, 2 s for 2.0 (eapol_supp_sm.c SUPP_PAE CONNECTING)."""
+    return 2.0 if wsc_2_0 else 1.0
 
 
 def disassoc_reason(frame: bytes) -> str:
@@ -205,18 +211,25 @@ class WpsRegistrar:
             # (never talked WSC) from one that rejected mid-exchange.
             return AttemptOutcome(result, pin, reached_m1=reached_m1, pixie=pixie, **kw)
 
-        await self._send_1x(M.eapol_start())
-        self.log(f"[WPS] -> EAPOL-Start (pin {pin})")
-
         # We answer every retransmit of the CURRENT stage as delivery insurance; the
         # stale-message guard below drops retransmits of stages we have already passed.
         overall_deadline = time.monotonic() + self.overall_timeout
-        timeout = self.eapol_start_timeout
+        start_pending = True
+        timeout = eapol_start_wait(self.wsc_2_0)
         while time.monotonic() < overall_deadline:
             frame = await self.t.recv(min(timeout, overall_deadline - time.monotonic()))
             if self.should_stop is not None and self.should_stop():
                 return _out(PinResult.ABORTED, detail="stopped")   # abort before any late logging
-            timeout = self.msg_timeout
+            if frame is None and start_pending:
+                start_pending = False
+                await self._send_1x(M.eapol_start())
+                self.log(f"[WPS] -> EAPOL-Start (pin {pin})")
+                timeout = self.eapol_start_timeout
+                continue
+            if frame is not None and M.LLC_SNAP_EAPOL in frame:
+                start_pending = False
+            if not start_pending:
+                timeout = self.msg_timeout
             if frame is None:
                 # No reply in the window. Our injected frames land no-ACK/no-retry, so the
                 # likeliest cause is a dropped frame (our last one never reached the AP, or
