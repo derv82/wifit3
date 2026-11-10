@@ -337,8 +337,8 @@ def hal_rfpath_init(efuse: EfuseInfo, *, ant_num: int, hw_stype: int, rf_2t2r: b
     return RfPath(trx_path_bmp, max_tx_cnt)
 
 
-def switch_efuse_bank_wifi(transport) -> None:
-    """Select and verify the Wi-Fi bank. [SRC halmac_efuse_88xx.c:switch_efuse_bank_88xx]"""
+def switch_efuse_bank_88xx(transport) -> None:
+    """switch_efuse_bank_88xx(HALMAC_EFUSE_BANK_WIFI). [SRC halmac_efuse_88xx.c:935-962]"""
     address = REG_LDO_EFUSE_CTRL + 1
     value = transport.read8(address)
     if value & 0x03:
@@ -352,7 +352,7 @@ def read_physical_map(transport) -> bytes:
 
     [SRC hal/halmac/halmac_88xx/halmac_efuse_88xx.c:168,1042-1067]
     """
-    switch_efuse_bank_wifi(transport)
+    switch_efuse_bank_88xx(transport)
     ldo25 = transport.read8(REG_ANAPARLDO_POW_MAC)           # read efuse needs no 2.5 V LDO
     transport.write8(REG_ANAPARLDO_POW_MAC, ldo25 & ~1)
     current = transport.read32(REG_EFUSE_CTRL)
@@ -374,7 +374,7 @@ def one_byte_read(transport, physical_map: bytes, address: int) -> int:
     """``efuse_OneByteRead`` -> ``rtw_halmac_read_physical_efuse``: halmac answers from the map
     it dumped at bring-up, so only the bank selection reaches the wire.
     [SRC core/efuse/rtw_efuse.c:2226, halmac_efuse_88xx.c:168]"""
-    switch_efuse_bank_wifi(transport)
+    switch_efuse_bank_88xx(transport)
     return physical_map[address]
 
 
