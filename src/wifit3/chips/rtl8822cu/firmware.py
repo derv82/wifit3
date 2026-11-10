@@ -59,6 +59,7 @@ from wifit3.chips.rtw88_base.registers import (
     REG_TXDMA_STATUS,
     RTW_DMA_MAPPING_HIGH,
 )
+from wifit3.errors import is_device_gone
 
 from .constants import (
     BB_PATH_A,
@@ -331,34 +332,36 @@ def download_firmware(dev: usb.core.Device, transport: RTL8822CUTransport,
         bcn = transport.read8(REG_BCN_CTRL)
         transport.write8(REG_BCN_CTRL, (bcn & ~BIT_EN_BCN_FUNCTION) | BIT_DIS_TSF_UDT)
         try:
-            _reset_platform(transport)
-            transport.write16(REG_MCUFW_CTRL, (transport.read16(REG_MCUFW_CTRL) & 0x3800) | BIT_MCUFWDL_EN)
-            _upload_section(dev, transport, bulk_out, image.dmem_addr & 0x7FFFFFFF, image.dmem,
-                            beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
-            _upload_section(dev, transport, bulk_out, image.imem_addr & 0x7FFFFFFF, image.imem,
-                            beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
-            if image.emem:
-                _upload_section(dev, transport, bulk_out, image.emem_addr & 0x7FFFFFFF, image.emem,
+            try:
+                _reset_platform(transport)
+                transport.write16(REG_MCUFW_CTRL, (transport.read16(REG_MCUFW_CTRL) & 0x3800) | BIT_MCUFWDL_EN)
+                _upload_section(dev, transport, bulk_out, image.dmem_addr & 0x7FFFFFFF, image.dmem,
                                 beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
-        finally:  # restore_mac_reg_88xx, in backup order [SRC halmac_fw_88xx.c:620]
-            transport.write8(REG_TXDMA_PQ_MAP + 1, pq1)
-            transport.write8(REG_CR, cr)
-            transport.write32(REG_H2CQ_CSR, 1 << 31)
-            transport.write16(REG_FIFOPAGE_INFO_1, info1)
-            transport.write32(REG_RQPN_CTRL_2, rqpn2)
-            transport.write8(REG_BCN_CTRL, bcn)
-        # dlfw_end_flow_88xx: TXDMA_STATUS first, then checksum-status check. [SRC halmac_fw_88xx.c:647]
-        transport.write32(REG_TXDMA_STATUS, BTI_PAGE_OVF)
-        fw_ctrl = transport.read16(REG_MCUFW_CTRL)
-        if (fw_ctrl & BIT_CHECK_SUM_OK) != BIT_CHECK_SUM_OK:
-            raise IOError(f"RTL8822CU FW checksum status invalid: 0x{fw_ctrl:04x}")
-        transport.write16(REG_MCUFW_CTRL, (fw_ctrl | BIT_FW_DW_RDY) & ~BIT_MCUFWDL_EN)
-        _wlan_cpu_enable(transport, True)
-        firmware_ready(transport)
-    except IOError:  # DLFW_FAIL [SRC halmac_fw_88xx.c:215-227]
-        transport.write8_clr(REG_MCUFW_CTRL, BIT_MCUFWDL_EN)
-        transport.write8_set(REG_SYS_FUNC_EN + 1, BIT_FEN_CPUEN)
-        raise
+                _upload_section(dev, transport, bulk_out, image.imem_addr & 0x7FFFFFFF, image.imem,
+                                beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
+                if image.emem:
+                    _upload_section(dev, transport, bulk_out, image.emem_addr & 0x7FFFFFFF, image.emem,
+                                    beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
+            finally:  # restore_mac_reg_88xx, in backup order [SRC halmac_fw_88xx.c:620]
+                transport.write8(REG_TXDMA_PQ_MAP + 1, pq1)
+                transport.write8(REG_CR, cr)
+                transport.write32(REG_H2CQ_CSR, 1 << 31)
+                transport.write16(REG_FIFOPAGE_INFO_1, info1)
+                transport.write32(REG_RQPN_CTRL_2, rqpn2)
+                transport.write8(REG_BCN_CTRL, bcn)
+            # dlfw_end_flow_88xx: TXDMA_STATUS first, then checksum-status check. [SRC halmac_fw_88xx.c:647]
+            transport.write32(REG_TXDMA_STATUS, BTI_PAGE_OVF)
+            fw_ctrl = transport.read16(REG_MCUFW_CTRL)
+            if (fw_ctrl & BIT_CHECK_SUM_OK) != BIT_CHECK_SUM_OK:
+                raise IOError(f"RTL8822CU FW checksum status invalid: 0x{fw_ctrl:04x}")
+            transport.write16(REG_MCUFW_CTRL, (fw_ctrl | BIT_FW_DW_RDY) & ~BIT_MCUFWDL_EN)
+            _wlan_cpu_enable(transport, True)
+            firmware_ready(transport)
+        except IOError as exc:  # DLFW_FAIL [SRC halmac_fw_88xx.c:215-227]
+            if not is_device_gone(exc):
+                transport.write8_clr(REG_MCUFW_CTRL, BIT_MCUFWDL_EN)
+                transport.write8_set(REG_SYS_FUNC_EN + 1, BIT_FEN_CPUEN)
+            raise
     finally:
         _ltecoex_write(transport, 0x38, lte_backup)
 

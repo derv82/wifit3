@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+import usb.core
 
 import wifit3.chips.rtl8822cu.firmware as firmware
 from wifit3.chips.rtl8822cu.cal import rfk_handshake
@@ -84,6 +85,44 @@ def test_download_failure_clears_fwdl_en_and_enables_cpu_before_restoring_ltecoe
         ("w", firmware.REG_LTECOEX_WDATA, 0x12345678),
         ("w", firmware.REG_LTECOEX_CTRL, 0xC00F0038),
     ]
+
+
+def _dlfw_fail_writes(log: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
+    return [op for op in log
+            if op[0] == "w" and op[1] in (firmware.REG_MCUFW_CTRL, firmware.REG_SYS_FUNC_EN + 1)]
+
+
+def test_download_skips_dlfw_fail_writes_when_the_device_is_gone(monkeypatch):
+    transport = RecordingTransport({firmware.REG_TXPKT_EMPTY: 0xFF, firmware.REG_TXPKT_EMPTY + 1: 0x06,
+                                    firmware.REG_LTECOEX_CTRL + 3: 0x20})
+    monkeypatch.setattr(firmware, "_upload_section",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(usb.core.USBError("No such device", errno=19)))
+
+    with pytest.raises(usb.core.USBError, match="No such device"):
+        firmware.download_firmware(MagicMock(), transport, 0x05, _image())
+
+    last_restore = max(i for i, op in enumerate(transport.log)
+                       if op == ("w", firmware.REG_BCN_CTRL, 0))
+    assert _dlfw_fail_writes(transport.log[last_restore + 1:]) == []
+
+
+class FailingCrReadTransport(RecordingTransport):
+    def _read(self, addr: int, length: int) -> bytes:
+        if addr == firmware.REG_CR:
+            raise IOError("REG_CR read failed")
+        return super()._read(addr, length)
+
+
+def test_download_skips_dlfw_fail_writes_when_a_register_backup_fails():
+    transport = FailingCrReadTransport({firmware.REG_TXPKT_EMPTY: 0xFF, firmware.REG_TXPKT_EMPTY + 1: 0x06,
+                                        firmware.REG_LTECOEX_CTRL + 3: 0x20})
+
+    with pytest.raises(IOError, match="REG_CR read failed"):
+        firmware.download_firmware(MagicMock(), transport, 0x05, _image())
+
+    pq_map_write = next(i for i, op in enumerate(transport.log)
+                        if op[0] == "w" and op[1] == firmware.REG_TXDMA_PQ_MAP + 1)
+    assert _dlfw_fail_writes(transport.log[pq_map_write + 1:]) == []
 
 
 def test_h2c_busy_box_returns_false_without_writing_the_box():
