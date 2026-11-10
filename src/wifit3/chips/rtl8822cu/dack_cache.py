@@ -1,6 +1,7 @@
-"""Process-local RTL8822CU DACK calibration cache."""
+"""Process-local RTL8822CU DACK calibration cache, off unless WIFIT3_8822CU_DACK=1."""
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from hashlib import sha256
 from threading import Lock
@@ -35,9 +36,15 @@ def valid(state: DackState) -> bool:
     return state.dack_en is True and getattr(state, "valid", False) is True
 
 
+def enabled() -> bool:
+    """WIFIT3_8822CU_DACK=1: cache DACK across connects, close without rtw_dev_unload's prefix.
+    0 (default): the vendor C, which recalibrates on every probe."""
+    return os.environ.get("WIFIT3_8822CU_DACK", "0") == "1"
+
+
 def get(key: tuple | None) -> DackState | None:
     """Return an independent copy of a live calibration, if available."""
-    if key is None:
+    if key is None or not enabled():
         return None
     with _lock:
         state = _entries.get(key)
@@ -51,7 +58,7 @@ def get(key: tuple | None) -> DackState | None:
 
 def put(key: tuple | None, state: DackState) -> None:
     """Store an independent copy only when calibration explicitly succeeded."""
-    if key is None or not valid(state):
+    if key is None or not enabled() or not valid(state):
         return
     with _lock:
         copied_state = deepcopy(state)

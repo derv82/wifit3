@@ -525,7 +525,19 @@ class RTL8822CUDriver(Driver):
             try:
                 loop = asyncio.get_running_loop()
                 def _power_off() -> None:
+                    unload = not dack_cache.enabled()
                     with self._control_lock:
+                        if self.chip_info and unload:
+                            # rtw_dev_unload -> check_ips_status; the C's RTW_INFO arguments are
+                            # evaluated right to left. [SRC os_intfs.c:4869, rtl8822c_ops.c:898-912]
+                            reg_86 = self.transport.read8(0x86)
+                            reg_100 = self.transport.read8(0x100)
+                            logger.info("RTL8822CU check_ips_status: Read 0x100=0x%02x 0x86=0x%02x",
+                                        reg_100, reg_86)
+                            if self.transport.read8(0x100) == 0xEA:
+                                logger.info("RTL8822CU close: driver in IPS-FWLPS")
+                            else:
+                                logger.info("RTL8822CU close: driver not in IPS")
                         if self._tx_led_enabled:
                             try:
                                 disable_tx_blink(self.transport)
@@ -533,6 +545,10 @@ class RTL8822CUDriver(Driver):
                                 logger.debug("RTL8822CU TX LED disable during close failed: %s", exc)
                             self._tx_led_enabled = False
                         if self.chip_info:
+                            if unload:
+                                # hal_btcoex_PowerOffSetting: clear the WiFi on/off bit in the BT
+                                # scoreboard register. [SRC hal/hal_intf.c:506-508, hal/hal_btcoex.c:5950-5957]
+                                self.transport.write16(REG_PMC_DBG_CTRL1 + 2, 0x8000)
                             cut_mask = cut_mask_from_sys_cfg1(self.chip_info.raw_cfg1)
                             mac_power_off(self.transport, cut_mask=cut_mask)
                 await loop.run_in_executor(None, _power_off)

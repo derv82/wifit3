@@ -13,7 +13,8 @@ from tests.chips.rtl8822cu.test_driver import _driver, _efuse, _run_bringup
 
 
 @pytest.fixture(autouse=True)
-def clear_cache():
+def clear_cache(monkeypatch):
+    monkeypatch.setenv("WIFIT3_8822CU_DACK", "1")
     with dack_cache._lock:
         dack_cache._entries.clear()
     yield
@@ -37,6 +38,13 @@ def calibrated():
     state.valid = True
     state.msbk_d[0][0][0] = 17
     return state
+
+
+def test_cache_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("WIFIT3_8822CU_DACK")
+    key = dack_cache.identity(factory_efuse(), chip())
+    dack_cache.put(key, calibrated())
+    assert dack_cache.get(key) is None
 
 
 def test_identity_requires_valid_factory_efuse_and_global_unicast_mac():

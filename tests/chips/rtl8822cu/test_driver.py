@@ -2,7 +2,7 @@
 import asyncio
 import struct
 import threading
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 import usb.core
@@ -839,6 +839,27 @@ async def test_close_turns_off_the_tx_led_before_mac_power_off(monkeypatch):
 
     assert calls == ["led_off", "power_off"]
     assert d._tx_led_enabled is False
+
+
+@pytest.mark.parametrize("dack_env, unload_calls", [
+    ("0", [call.read8(0x86), call.read8(0x100), call.read8(0x100),
+           call.write16(drv.REG_PMC_DBG_CTRL1 + 2, 0x8000)]),
+    ("1", []),
+])
+async def test_close_runs_rtw_dev_unload_prefix_before_mac_power_off_unless_dack_cache_on(
+        monkeypatch, dack_env, unload_calls):
+    monkeypatch.setenv("WIFIT3_8822CU_DACK", dack_env)
+    d = _driver()
+    d._claimed = True
+    d.chip_info = _chip_info()
+    d.transport.read8.return_value = 0
+    monkeypatch.setattr(drv, "mac_power_off", lambda transport, *, cut_mask: transport.power_off())
+    monkeypatch.setattr(drv.usb.util, "release_interface", lambda dev, interface: None)
+    monkeypatch.setattr(drv.usb.util, "dispose_resources", lambda dev: None)
+
+    await d.close()
+
+    assert d.transport.mock_calls == unload_calls + [call.power_off()]
 
 
 async def test_close_releases_usb_when_mac_power_off_fails(monkeypatch):
