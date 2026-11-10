@@ -5,7 +5,7 @@ that saturated strong signals to 0 dBm, and dropping OFDM phy-status types 2..5.
 Expected dBm come from the vendor formula pwdb = (s8)byte - 110, floor -120, no upper
 clamp (phydm_get_physts_0_jgr3 / phydm_get_physts_ofdm_cmn_jgr3, phydm_phystatus.c).
 """
-from wifit3.chips.rtl8822cu.rx import _phy_rssi, iter_bulk_frames, split_bulk_records
+from wifit3.chips.rtl8822cu.rx import _phy_rssi, iter_bulk_frames
 
 
 def _cck(pwdb_a, gain_a=0):
@@ -144,7 +144,7 @@ def test_rssi_uses_only_enabled_rx_paths():
         assert next(iter_bulk_frames(ofdm, rx_ant_status=mask))[2] == expected_ofdm
 
 
-def test_split_records_match_parser_with_alignment_c2h_and_truncation():
+def test_walk_with_alignment_c2h_and_truncation():
     first = _pkt(b"first" + bytes(4), _ofdm(1, 34, 20), shift_sz=1)
     c2h = bytearray(_desc(2, 32, shift_sz=3))
     c2h[1] |= 0xc0
@@ -153,12 +153,11 @@ def test_split_records_match_parser_with_alignment_c2h_and_truncation():
     c2h += bytes((-len(c2h)) % 8)
     last = _pkt(b"last" + bytes(4), _cck(43))
     aggregate = first + bytes(c2h) + last + _desc(100, 0)
-    records = list(split_bulk_records(aggregate))
-    assert len(records) == 2
-    assert [frame[1] for frame in iter_bulk_frames(aggregate)] == [b"first", b"last"]
-    assert [frame for record in records for frame in iter_bulk_frames(record)] == list(iter_bulk_frames(aggregate))
-    assert list(split_bulk_records(first[:-8])) == []
-    assert list(split_bulk_records(bytes(24))) == []
+    frames = list(iter_bulk_frames(aggregate))
+    assert [(mpdu, rssi) for _stat, mpdu, rssi in frames] == [(b"first", -76), (b"last", -67)]
+    assert frames[0][0].shift == 1
+    assert list(iter_bulk_frames(first[:-8])) == []
+    assert list(iter_bulk_frames(bytes(24))) == []
 
 
 def test_c2h_length_validation_ignores_normal_only_fields():
@@ -168,11 +167,11 @@ def test_c2h_length_validation_ignores_normal_only_fields():
     record = bytes(desc) + b"\x10\x00\x55"
     frame = _pkt(b"after" + bytes(4), _cck(43))
     aligned_record = record + bytes((-len(record)) % 8)
-    assert list(split_bulk_records(aligned_record + frame)) == list(split_bulk_records(frame))
+    assert list(iter_bulk_frames(aligned_record + frame)) == list(iter_bulk_frames(frame))
     assert [item[1] for item in iter_bulk_frames(aligned_record + frame)] == [b"after"]
-    assert list(split_bulk_records(record[:-1])) == []
+    assert list(iter_bulk_frames(record[:-1])) == []
     desc[0] = 0
-    assert list(split_bulk_records(bytes(desc))) == []
+    assert list(iter_bulk_frames(bytes(desc))) == []
 
 
 def test_cck_path_b_only_requires_its_complete_report():

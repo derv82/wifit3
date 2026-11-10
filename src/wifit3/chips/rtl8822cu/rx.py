@@ -5,14 +5,19 @@ JGR3: type 0 is CCK, types 1..5 share one OFDM PWDB layout.
 """
 from __future__ import annotations
 
+import logging
+from typing import Iterator
+
 from wifit3.chips.rtw88_base.rx_common import (
+    RX_PKT_DESC_SZ,
     Endpoints,
     RxPktStat,
-    iter_bulk_frames as _iter_bulk_frames,
     parse_rx_pkt_desc,
     probe_endpoints,
     read_rx_burst,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _s8(b: int) -> int:
@@ -63,26 +68,37 @@ def _phy_rssi(buf: bytes, offset: int, stat: RxPktStat,
     return None
 
 
-def split_bulk_records(buf: bytes):
+def iter_bulk_frames(buf: bytes, *, cck_gi_l_bnd: int | None = None,
+                     cck_gi_u_bnd: int | None = None, rx_ant_status: int = 0x03,
+                     ) -> Iterator[tuple[RxPktStat, bytes, int | None]]:
+    """recvbuf2recvframe [SRC rtl8822cu_recv.c:72-170]: yields (stat, mpdu without FCS, rssi)
+    per NORMAL_RX record of one bulk-IN transfer; C2H records are stepped over."""
     pos = 0
-    while pos + 24 <= len(buf):
+    transfer_len = len(buf)
+    while transfer_len >= RX_PKT_DESC_SZ:
         stat = parse_rx_pkt_desc(buf, pos)
         # rtl8822c_rxdesc2attribute only decodes drvinfo and shift for NORMAL_RX.
-        pkt_offset = 24 + stat.pkt_len if stat.is_c2h else stat.total_size
-        if stat.pkt_len == 0 or pos + pkt_offset > len(buf):
+        if stat.is_c2h:
+            pkt_offset = RX_PKT_DESC_SZ + stat.pkt_len
+        else:
+            pkt_offset = stat.total_size
+        if stat.pkt_len == 0 or pkt_offset > transfer_len:
+            # recvbuf2recvframe drops the rest of the aggregate here [SRC rtl8822cu_recv.c:125-134].
+            logger.warning("RX walk stopped, rest of transfer dropped: pkt_len=%d pkt_offset=%d transfer_len=%d",
+                           stat.pkt_len, pkt_offset, transfer_len)
             return
-        end = pos + pkt_offset
         if not stat.is_c2h:
-            yield buf[pos:end]
-        pos = (end + 7) & ~7
+            rssi = None
+            if stat.phy_status_present and stat.drv_info_sz >= 8:
+                rssi = _phy_rssi(buf, pos + RX_PKT_DESC_SZ, stat,
+                                 cck_gi_l_bnd, cck_gi_u_bnd, rx_ant_status)
+            mpdu_start = pos + stat.mpdu_offset
+            # pkt_len includes the 4-byte FCS.
+            yield stat, bytes(buf[mpdu_start:mpdu_start + max(stat.pkt_len - 4, 0)]), rssi
+        # jaguar 8-byte alignment
+        pkt_offset = (pkt_offset + 7) & ~7
+        pos += pkt_offset
+        transfer_len -= pkt_offset
 
 
-def iter_bulk_frames(buf: bytes, *, cck_gi_l_bnd: int | None = None,
-                     cck_gi_u_bnd: int | None = None, rx_ant_status: int = 0x03):
-    def phy_status_rssi(b: bytes, off: int, stat: RxPktStat) -> int | None:
-        return _phy_rssi(b, off, stat, cck_gi_l_bnd, cck_gi_u_bnd, rx_ant_status)
-    for record in split_bulk_records(buf):
-        yield from _iter_bulk_frames(record, phy_status_rssi=phy_status_rssi)
-
-
-__all__ = ["Endpoints", "RxPktStat", "iter_bulk_frames", "parse_rx_pkt_desc", "probe_endpoints", "read_rx_burst", "split_bulk_records"]
+__all__ = ["Endpoints", "RxPktStat", "iter_bulk_frames", "parse_rx_pkt_desc", "probe_endpoints", "read_rx_burst"]

@@ -64,7 +64,7 @@ from .phy import (
     phy_bf_init,
     switch_channel,
 )
-from .rx import iter_bulk_frames, read_rx_burst, split_bulk_records
+from .rx import iter_bulk_frames, read_rx_burst
 from .transport import EndpointLayout, RTL8822CUTransport
 from .txpwr_index import TxPwrIdxState, txpwr_idx_state
 from .tx import TX_DESC_QSEL_MGMT, build_tx_packet_inject, pick_bulk_out_ep, write_bulk
@@ -435,7 +435,6 @@ class RTL8822CUDriver(Driver):
             self._rx_reader = RxReaderThread(
                 loop, self._rx_read_once, self._rx_dispatch, name="rtl8822cu-rx",
                 on_fatal=lambda exc: self._on_lost and self._on_lost(exc),
-                split=split_bulk_records,
             )
             self._rx_reader.start()
             logger.debug("rtl8822cu RX reader started (bulk IN ep 0x%02x) after monitor entry",
