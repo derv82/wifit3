@@ -23,34 +23,29 @@ def test_dig_initializes_both_paths_at_no_link_lower_bound(monkeypatch):
     assert wd.WatchdogState.from_phydm(state).cur_ig_value == 0x1C
 
 
-@pytest.mark.parametrize("tx_bytes,rx_bytes,low", [
-    (0, 0, True),
-    (262_143, 0, True),
-    (262_144, 0, False),
-    (0, 262_143, True),
-    (0, 262_144, False),
-    (140_000, 140_000, True),
+@pytest.mark.parametrize("tx_bytes,low", [
+    (0, True),
+    (262_143, True),
+    (262_144, False),
 ])
-def test_aggregation_uses_separate_vendor_mbps_counters(tx_bytes, rx_bytes, low):
+def test_aggregation_uses_vendor_mbps_counter(tx_bytes, low):
     st = wd.WatchdogState()
-    assert wd._traffic_statistics(st, tx_bytes, rx_bytes) is low
+    assert wd._traffic_statistics(st, tx_bytes) is low
 
 
-def test_traffic_statistics_uses_interval_deltas_and_independent_phydm_smoothing():
+def test_traffic_statistics_uses_interval_deltas_and_phydm_smoothing():
     st = wd.WatchdogState()
-    assert wd._traffic_statistics(st, 262_144, 0) is False
-    assert (st.tx_tp, st.rx_tp) == (0, 0)
-    assert wd._traffic_statistics(st, 786_432, 1_048_576) is False
-    assert (st.tx_tp, st.rx_tp) == (1, 2)
-    assert wd._traffic_statistics(st, 786_432, 1_048_576) is True
-    assert (st.tx_tp, st.rx_tp) == (0, 1)
-    assert wd._traffic_statistics(st, 786_432, 1_048_576) is True
-    assert (st.tx_tp, st.rx_tp) == (0, 0)
+    assert wd._traffic_statistics(st, 262_144) is False
+    assert st.tx_tp == 0
+    assert wd._traffic_statistics(st, 786_432) is False
+    assert st.tx_tp == 1
+    assert wd._traffic_statistics(st, 786_432) is True
+    assert st.tx_tp == 0
 
 
 def test_phydm_counter_reset_does_not_underflow_its_delta():
     st = wd.WatchdogState(last_tx_bytes=100, last_tx_ok_cnt=100, tx_tp=2)
-    wd._traffic_statistics(st, 50, 0)
+    wd._traffic_statistics(st, 50)
     assert st.last_tx_ok_cnt == 50
     assert st.tx_tp == 1
 
@@ -100,25 +95,6 @@ def test_htstf_idle_and_ndp_wrap_enable_agc():
     wd._hw_setting(t, st)
     assert st.no_ndp_cnts == 0
     assert t.mock_calls[-1] == call.write32(0x08A0, 4)
-
-
-@pytest.mark.parametrize("disabled,priority", [(True, 0), (False, 1), (False, 2)])
-def test_htstf_skips_when_disabled_or_debug_port_busy(disabled, priority):
-    st = wd.WatchdogState(bhtstfdisabled=disabled, pre_dbg_priority=priority)
-    t = MagicMock()
-    wd._hw_setting(t, st)
-    t.assert_not_called()
-    assert t.mock_calls == []
-    assert st.pre_dbg_priority == priority
-
-
-def test_htstf_releases_debug_priority_after_read_failure():
-    st = wd.WatchdogState()
-    t = MagicMock()
-    t.read32.side_effect = [0, OSError("USB read failed")]
-    with pytest.raises(OSError, match="USB read failed"):
-        wd._hw_setting(t, st)
-    assert st.pre_dbg_priority == 0
 
 
 def test_tick_applies_accounted_traffic_before_aggregation_and_htstf(monkeypatch):
