@@ -1,5 +1,6 @@
 import base64
 import email.message
+import http.client
 import io
 import json
 import time
@@ -331,13 +332,21 @@ def test_user_api_endpoint(url):
     assert user_api_endpoint(url) == "http://server:8080/api/user.php"
 
 
-@pytest.mark.parametrize("error", [ValueError("nonnumeric port: '8080x'"),
+@pytest.mark.parametrize("error", [ValueError("unknown url type: 'server'"),
+                                   http.client.InvalidURL("nonnumeric port: '8080,'"),
                                    OverflowError("port must be 0-65535.")])
 def test_invalid_url_is_a_hashtopolis_error(monkeypatch, error):
     _answer(monkeypatch, error)
 
     with pytest.raises(HashtopolisError, match="Invalid server URL"):
-        HashtopolisApi("http://server:8080x", "key").check_access()
+        HashtopolisApi("http://server:8080,", "key").check_access()
+
+
+def test_non_http_reply_is_unreachable(monkeypatch):
+    _answer(monkeypatch, http.client.BadStatusLine("SSH-2.0-OpenSSH_10.2p1"))
+
+    with pytest.raises(HashtopolisUnreachable, match="not a Hashtopolis API"):
+        HashtopolisApi("http://server:22", "key").check_access()
 
 
 @pytest.mark.parametrize("reply", [
@@ -413,6 +422,7 @@ def test_v2_create_hashlist_posts_base64_paste(monkeypatch):
     assert attributes["sourceType"] == "paste"
     assert attributes["sourceData"] == base64.b64encode(f"{_PMKID}\n".encode()).decode()
     assert attributes["hashTypeId"] == 22000
+    assert attributes["hashCount"] == 0
 
 
 def test_v2_create_task_runs_the_wordlist_on_the_hashlist(monkeypatch):
@@ -424,6 +434,7 @@ def test_v2_create_task_runs_the_wordlist_on_the_hashlist(monkeypatch):
     assert (attributes["attackCmd"], attributes["files"], attributes["crackerBinaryId"]) == (
         "#HL# rockyou.txt", [2], 3)
     assert attributes["useNewBench"] is True
+    assert attributes["color"] == ""
     assert attributes["priority"] >= 1
 
 
@@ -449,36 +460,47 @@ def test_v2_access_groups(monkeypatch):
         AccessGroup(1, "Default")]
 
 
+_HASHTYPES_LINKS = {"hashtypes": {"links": {"related": "http://server:8080/api/v2/ui/crackers/1/hashtypes"}}}
+
+
 def test_v2_newest_hashcat_prefers_one_that_supports_wpa(monkeypatch):
-    _http(monkeypatch,
-          {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
-          {"data": [
-              {"id": 9, "attributes": {"crackerBinaryTypeId": 1},
-               "relationships": {"hashtypes": {"data": [{"id": 0}]}}},
-              {"id": 4, "attributes": {"crackerBinaryTypeId": 1},
-               "relationships": {"hashtypes": {"data": [{"id": 22000}]}}},
-              {"id": 8, "attributes": {"crackerBinaryTypeId": 1},
-               "relationships": {"hashtypes": {"data": []}}},
-          ]})
+    sent = _http(monkeypatch,
+                 {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
+                 {"data": [{"id": 9, "attributes": {"crackerBinaryTypeId": 1},
+                            "relationships": _HASHTYPES_LINKS}]},
+                 {"data": [
+                     {"id": 9, "attributes": {"crackerBinaryTypeId": 1},
+                      "relationships": {"hashtypes": {"data": [{"id": 0}]}}},
+                     {"id": 4, "attributes": {"crackerBinaryTypeId": 1},
+                      "relationships": {"hashtypes": {"data": [{"id": 22000}]}}},
+                     {"id": 8, "attributes": {"crackerBinaryTypeId": 1},
+                      "relationships": {"hashtypes": {"data": []}}},
+                 ]})
 
     assert HashtopolisApi("http://server:8080", _TOKEN).newest_hashcat_version_id() == 4
+    assert "include" not in _query(sent[1][1])
+    assert _query(sent[2][1])["include"] == ["hashtypes"]
 
 
-def test_v2_newest_hashcat_is_the_highest_id_when_support_is_unknown(monkeypatch):
-    _http(monkeypatch,
-          {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
-          {"data": [
-              {"id": 2, "attributes": {"crackerBinaryTypeId": 1}},
-              {"id": 8, "attributes": {"crackerBinaryTypeId": 1},
-               "relationships": {"hashtypes": {"data": []}}},
-          ]})
+def test_v2_newest_hashcat_is_the_highest_id_when_server_has_no_hashtypes(monkeypatch):
+    relationships = {"crackerBinaryType": {"links": {}}, "tasks": {"links": {}}}
+    sent = _http(monkeypatch,
+                 {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
+                 {"data": [
+                     {"id": 2, "attributes": {"crackerBinaryTypeId": 1}, "relationships": relationships},
+                     {"id": 8, "attributes": {"crackerBinaryTypeId": 1}, "relationships": relationships},
+                 ]})
 
     assert HashtopolisApi("http://server:8080", _TOKEN).newest_hashcat_version_id() == 8
+    assert len(sent) == 2
+    assert "include" not in _query(sent[1][1])
 
 
 def test_v2_hashcat_without_wpa_is_an_error(monkeypatch):
     _http(monkeypatch,
           {"data": [{"id": 1, "attributes": {"typeName": "hashcat"}}]},
+          {"data": [{"id": 4, "attributes": {"crackerBinaryTypeId": 1},
+                     "relationships": _HASHTYPES_LINKS}]},
           {"data": [{"id": 4, "attributes": {"crackerBinaryTypeId": 1},
                      "relationships": {"hashtypes": {"data": [{"id": 0}]}}}]})
 

@@ -1,6 +1,7 @@
 """Hashtopolis client. A JWT access key uses API v2 (``/api/v2``); any other key uses the
 User API (``POST /api/user.php``)."""
 import base64
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -161,8 +162,10 @@ class HashtopolisApi:
             raise HashtopolisUnreachable(f"Cannot reach {self.endpoint}: {e.reason}") from None
         except OSError as e:
             raise HashtopolisUnreachable(f"Cannot reach {self.endpoint}: {e}") from None
-        except (ValueError, OverflowError):
+        except (ValueError, OverflowError, http.client.InvalidURL):
             raise HashtopolisError(f"Invalid server URL: {self.endpoint}") from None
+        except http.client.HTTPException:
+            raise HashtopolisUnreachable(f"{self.endpoint} is not a Hashtopolis API") from None
 
     def _http_error(self, error: urllib.error.HTTPError) -> HashtopolisError:
         try:
@@ -231,9 +234,11 @@ class HashtopolisApi:
             if hashcat is None:
                 raise HashtopolisError("The server has no hashcat cracker")
             type_id = int(hashcat["id"])
-        binaries = self._list("/ui/crackers", {"filter[crackerBinaryTypeId]": type_id,
-                                               "include": "hashtypes"})
+        query = {"filter[crackerBinaryTypeId]": type_id}
+        binaries = self._list("/ui/crackers", query)
         with _reply_to("/ui/crackers"):
+            if any("hashtypes" in binary.get("relationships", {}) for binary in binaries):
+                binaries = self._list("/ui/crackers", {**query, "include": "hashtypes"})
             supporting: list[int] = []
             unknown: list[int] = []
             for binary in binaries:
@@ -253,7 +258,7 @@ class HashtopolisApi:
         data = base64.b64encode(("\n".join(hashlines) + "\n").encode("utf-8")).decode("ascii")
         response = self._v2("POST", "/ui/hashlists", body=_resource("hashlist", {
             "name": name, "isSalted": False, "isSecret": False, "isHexSalt": False,
-            "separator": ":", "format": 0, "hashTypeId": WPA_HASH_TYPE_ID,
+            "separator": ":", "format": 0, "hashTypeId": WPA_HASH_TYPE_ID, "hashCount": 0,
             "accessGroupId": access_group_id, "useBrain": False, "brainFeatures": 0,
             "notes": "", "isArchived": False, "sourceType": "paste", "sourceData": data}))
         with _reply_to("/ui/hashlists"):
@@ -264,7 +269,7 @@ class HashtopolisApi:
         response = self._v2("POST", "/ui/tasks", body=_resource("task", {
             "taskName": name, "hashlistId": hashlist_id,
             "attackCmd": f"#HL# {wordlist.filename}", "chunkTime": 600, "statusTimer": 5,
-            "useNewBench": True, "isCpuTask": False, "isSmall": False, "skipKeyspace": 0,
+            "color": "", "useNewBench": True, "isCpuTask": False, "isSmall": False, "skipKeyspace": 0,
             "crackerBinaryId": cracker_version_id, "files": [wordlist.file_id],
             "preprocessorId": 0, "preprocessorCommand": "", "priority": 10, "maxAgents": 0,
             "notes": "", "staticChunks": 0, "chunkSize": 0, "forcePipe": False,
