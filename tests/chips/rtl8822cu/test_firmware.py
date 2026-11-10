@@ -4,6 +4,30 @@ from unittest.mock import MagicMock
 import pytest
 
 import wifit3.chips.rtl8822cu.firmware as firmware
+from wifit3.chips.rtl8822cu.cal import rfk_handshake
+from wifit3.chips.rtl8822cu.mac import _compute_trx_alloc, arm_monitor
+from wifit3.chips.rtl8822cu.transport import RTL8822CUTransport
+
+
+class RecordingTransport(RTL8822CUTransport):
+    """Returns a fixed value per register address and logs every access in order."""
+
+    def __init__(self, reads: dict[int, int]):
+        super().__init__(MagicMock())
+        self.reads = reads
+        self.log: list[tuple[str, int, int]] = []
+
+    def _read(self, addr: int, length: int) -> bytes:
+        value = self.reads.get(addr, 0) & ((1 << (8 * length)) - 1)
+        self.log.append(("r", addr, value))
+        return value.to_bytes(length, "little")
+
+    def _write(self, addr: int, payload) -> None:
+        self.log.append(("w", addr, int.from_bytes(bytes(payload), "little")))
+
+    def box_writes(self) -> list[tuple[str, int, int]]:
+        boxes = range(firmware.REG_HMEBOX0, firmware.REG_HMEBOX_E0 + 16)
+        return [op for op in self.log if op[0] == "w" and op[1] in boxes]
 
 
 def _image() -> firmware.FirmwareImage:
@@ -34,15 +58,83 @@ def test_download_restores_ltecoex_when_upload_fails(monkeypatch):
     assert restored == [(0x38, 0x12345678)]
 
 
-def test_h2c_busy_mailbox_does_not_overwrite_firmware_command(monkeypatch):
-    transport = MagicMock()
-    transport.read8.return_value = 1
-    monkeypatch.setattr(firmware.time, "sleep", lambda seconds: None)
+def test_download_failure_clears_fwdl_en_and_enables_cpu_before_restoring_ltecoex():
+    transport = RecordingTransport({
+        firmware.REG_TXPKT_EMPTY: 0xFF,
+        firmware.REG_TXPKT_EMPTY + 1: 0x06,
+        firmware.REG_LTECOEX_CTRL + 3: 0x20,
+        firmware.REG_LTECOEX_RDATA: 0x12345678,
+        firmware.REG_MCUFW_CTRL: 0xFF,
+        firmware.REG_SYS_FUNC_EN + 1: 0x00,
+    })
+    dev = MagicMock()
+    dev.write.return_value = 0
 
-    with pytest.raises(IOError, match="stayed owned"):
-        firmware.fill_h2c_cmd(transport, firmware.H2cState(), 0x42, b"\x01")
+    with pytest.raises(IOError, match="firmware bulk write short"):
+        firmware.download_firmware(dev, transport, 0x05, _image())
 
-    transport.write32.assert_not_called()
+    last_restore = max(i for i, op in enumerate(transport.log)
+                       if op == ("w", firmware.REG_BCN_CTRL, 0))
+    assert transport.log[last_restore + 1:] == [
+        ("r", firmware.REG_MCUFW_CTRL, 0xFF),
+        ("w", firmware.REG_MCUFW_CTRL, 0xFE),
+        ("r", firmware.REG_SYS_FUNC_EN + 1, 0x00),
+        ("w", firmware.REG_SYS_FUNC_EN + 1, 0x04),
+        ("r", firmware.REG_LTECOEX_CTRL + 3, 0x20),
+        ("w", firmware.REG_LTECOEX_WDATA, 0x12345678),
+        ("w", firmware.REG_LTECOEX_CTRL, 0xC00F0038),
+    ]
+
+
+def test_h2c_busy_box_returns_false_without_writing_the_box():
+    transport = RecordingTransport({firmware.REG_HMETFR: 0x01})
+    h2c_state = firmware.H2cState()
+
+    assert firmware.fill_h2c_cmd(transport, h2c_state, 0x42, b"") is False
+
+    assert transport.box_writes() == []
+    assert h2c_state.box_num == 0
+
+
+def test_h2c_busy_box_reads_hmetfr_101_times_then_once_more_for_the_warning():
+    transport = RecordingTransport({firmware.REG_HMETFR: 0x01})
+
+    firmware.fill_h2c_cmd(transport, firmware.H2cState(), 0x42, b"")
+
+    assert transport.log == [("r", firmware.REG_HMETFR, 0x01)] * 102
+
+
+def test_general_info_stops_when_the_register_h2c_box_is_busy():
+    h2cq_addr = _compute_trx_alloc().h2cq_addr
+    transport = RecordingTransport({
+        firmware.REG_HMETFR: 0x01,
+        0x8000 + (h2cq_addr & 0xFFF): 0xFF01,
+    })
+    dev = MagicMock()
+    dev.write.side_effect = lambda ep, packet, timeout: len(packet)
+
+    with pytest.raises(IOError, match="Fail to send general info by register"):
+        firmware.send_general_info(dev, transport, 0x05, firmware.H2cState(), 1, 1)
+
+    assert transport.box_writes() == []
+
+
+def test_rfk_handshake_still_polls_0x49c_when_the_h2c_box_is_busy():
+    transport = RecordingTransport({firmware.REG_HMETFR: 0x01})
+
+    rfk_handshake(transport, firmware.H2cState(), before_k=False)
+
+    assert transport.box_writes() == []
+    assert transport.log[-1] == ("r", 0x049C, 0)
+
+
+def test_arm_monitor_still_programs_the_mac_when_the_h2c_box_is_busy():
+    transport = RecordingTransport({firmware.REG_HMETFR: 0x01})
+
+    arm_monitor(transport, firmware.H2cState(), bytes.fromhex("020000000001"))
+
+    assert transport.box_writes() == []
+    assert ("w", 0x0610, 0x00000002) in transport.log
 
 
 def test_first_download_boundary_uses_packet_offset_and_offset_56(monkeypatch):

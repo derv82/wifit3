@@ -355,6 +355,10 @@ def download_firmware(dev: usb.core.Device, transport: RTL8822CUTransport,
         transport.write16(REG_MCUFW_CTRL, (fw_ctrl | BIT_FW_DW_RDY) & ~BIT_MCUFWDL_EN)
         _wlan_cpu_enable(transport, True)
         firmware_ready(transport)
+    except IOError:  # DLFW_FAIL [SRC halmac_fw_88xx.c:215-227]
+        transport.write8_clr(REG_MCUFW_CTRL, BIT_MCUFWDL_EN)
+        transport.write8_set(REG_SYS_FUNC_EN + 1, BIT_FEN_CPUEN)
+        raise
     finally:
         _ltecoex_write(transport, 0x38, lte_backup)
 
@@ -440,37 +444,44 @@ class H2cState:
 
 
 def fill_h2c_cmd(transport: RTL8822CUTransport, h2c_state: H2cState, element_id: int,
-                 payload: bytes) -> None:
+                 payload: bytes) -> bool:
     """rtl8822c_fillh2ccmd -> rtw_halmac_send_h2c: element id in byte 0 and the payload after
     it, sent as bytes 4-7 into the extension box then bytes 0-3 into the message box, which is
-    what tells the firmware the command is complete. [SRC rtl8822c_cmd.c:32, hal_halmac.c:4157]"""
+    what tells the firmware the command is complete. False, with no box written, while the
+    firmware still owns the box. [SRC rtl8822c_cmd.c:32, hal_halmac.c:4157]"""
     if len(payload) > RTW_HALMAC_H2C_MAX_SIZE - 1:
         raise ValueError(f"RTL8822CU H2C 0x{element_id:02x}: payload too long ({len(payload)})")
     h2c = bytearray(RTW_HALMAC_H2C_MAX_SIZE)
     h2c[0] = element_id
     h2c[1:1 + len(payload)] = payload
     box = h2c_state.box_num
-    for _ in range(100):                # _is_fw_read_cmd_down: the FW has drained this box
-        if not transport.read8(REG_HMETFR) & (1 << box):
+    # _is_fw_read_cmd_down: retry_cnts = 100 is post-decremented, so 101 reads
+    read_down = False
+    for _ in range(101):
+        if transport.read8(REG_HMETFR) & (1 << box) == 0:
+            read_down = True
             break
         time.sleep(0.001)
-    else:
-        raise IOError(f"RTL8822CU H2C box {box} stayed owned by firmware for 100 ms")
+    if not read_down:
+        logger.warning("RTL8822CU _is_fw_read_cmd_down, reg_1cc(%x), msg_box(%d)",
+                       transport.read8(REG_HMETFR), box)
+        return False
     transport.write32(REG_HMEBOX_E0 + box * EX_MESSAGE_BOX_SIZE,
                       int.from_bytes(h2c[4:8], "little"))
     transport.write32(REG_HMEBOX0 + box * MESSAGE_BOX_SIZE,
                       int.from_bytes(h2c[0:4], "little"))
     h2c_state.box_num = (box + 1) % MAX_H2C_BOX_NUMS
+    return True
 
 
 def _send_general_info_by_reg(transport: RTL8822CUTransport, h2c_state: H2cState, rfe_type: int,
-                              chip_ver: int, rf_type_drv: int, tx_ant: int, rx_ant: int) -> None:
+                              chip_ver: int, rf_type_drv: int, tx_ant: int, rx_ant: int) -> bool:
     """A companion register H2C (rfe / rf / cut / antenna) alongside the FW-offload packets.
     [SRC hal_halmac.c]"""
     element_id = _GENINFO_REG_CMD_ID | (_GENINFO_REG_CLASS << 5)
-    fill_h2c_cmd(transport, h2c_state, element_id,
-                 bytes([rfe_type & 0xFF, rf_type_drv & 0xFF, chip_ver & 0xFF,
-                        (rx_ant & 0xF) | ((tx_ant & 0xF) << 4)]))
+    return fill_h2c_cmd(transport, h2c_state, element_id,
+                        bytes([rfe_type & 0xFF, rf_type_drv & 0xFF, chip_ver & 0xFF,
+                               (rx_ant & 0xF) | ((tx_ant & 0xF) << 4)]))
 
 
 _RF_TYPE_HALMAC2DRV = {          # halmac RF enum -> driver enum rf_type [SRC hal_halmac.c:3035-3073]
@@ -523,7 +534,8 @@ def send_general_info(dev: usb.core.Device, transport: RTL8822CUTransport, bulk_
         logger.error("RTL8822CU halmac rf_type 0x%02x maps to no driver rf_type; sending the "
                      "vendor's invalid marker 0x%02x", rf_type, RF_TYPE_MAX)
         rf_type_drv = RF_TYPE_MAX
-    _send_general_info_by_reg(transport, h2c_state, rfe_type, chip_ver, rf_type_drv, tx_ant, rx_ant)
+    if not _send_general_info_by_reg(transport, h2c_state, rfe_type, chip_ver, rf_type_drv, tx_ant, rx_ant):
+        raise IOError("RTL8822CU: Fail to send general info by register")
 
 
 @dataclass(frozen=True)
