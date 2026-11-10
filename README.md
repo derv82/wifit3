@@ -1,6 +1,13 @@
 # wifit3
 > A standalone USB Wi-Fi auditor for Linux, Windows, and macOS.
 
+> **Linux-only fork.** This fork adds PCIe/M.2 card support (incl. MediaTek MT7922) via a
+> `LinuxNetdevDriver` that rides the kernel driver over `AF_PACKET` + `nl80211`/`iw` — it does
+> **not** drive PCIe directly and is **Linux-only** (no Windows/macOS). It is not cross-platform
+> and is not a userspace chip port like the USB drivers. For the portable USB tool, see
+> [upstream wifit3](https://github.com/derv82/wifit3). Recover a stalled card with
+> `scripts/recover_netdev.py`.
+
 <p align="center">
   <img src="assets/wifit3-1-splash.png" alt="wifit3 splash / adapter picker" width="700">
 </p>
