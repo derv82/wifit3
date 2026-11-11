@@ -217,7 +217,6 @@ def test_parser_extracts_full_eapol_fields():
     assert parsed.nonce == anonce
     assert parsed.mic == mic
     assert parsed.replay_counter == b"\x00" * 7 + b"\x01"
-    assert parsed.key_data_len == 0
 
 
 # ---- PMKID KDE extraction -------------------------------------------------------

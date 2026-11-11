@@ -532,7 +532,7 @@ def test_forged_mac_does_not_create_client_or_append_eapol():
     s.update(pkt({
         "type": "eapol", "bssid": BSSID, "source": BSSID, "dest": forged, "rssi": -45,
         "raw": b"\x00" * 100, "eapol_msg_num": 1, "eapol_replay_counter": b"\x00" * 8,
-        "eapol_nonce": b"\x01" * 32, "eapol_mic": b"\x00" * 16, "eapol_key_data_len": 22,
+        "eapol_nonce": b"\x01" * 32, "eapol_mic": b"\x00" * 16,
         "eapol_payload": b"\x00" * 121, "eapol_pmkid": pmkid,
     }), W0)
     assert forged not in s.clients
@@ -564,7 +564,7 @@ def test_wep_ivs_tallied_onto_ap():
     for iv in (b"\x01\x02\x03", b"\x01\x02\x03", b"\x04\x05\x06"):
         s.update(pkt({"type": "wep_data", "bssid": bssid, "source": "aa:bb:cc:dd:ee:01",
                       "dest": "aa:bb:cc:dd:ee:01", "rssi": -45, "wep_iv": iv,
-                      "wep_keyid": 0, "raw": b"\x00" * 40}), W0)
+                      "raw": b"\x00" * 40}), W0)
     ap = s.access_points[bssid]
     assert ap.wep is not None and ap.wep.unique_ivs == 2
     assert s.clients["aa:bb:cc:dd:ee:01"].bssid == bssid
