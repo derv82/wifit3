@@ -39,6 +39,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
+| [RTL8192CU](#rtl8192cu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -126,6 +127,25 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-11-02 | 20-min 13-ch soak, OK (trend 1.20), 0 USB errors. |
 
 → [RTL8188FTV_DKMS.md](../src/wifit3/chips/rtl8188ftv_dkms/RTL8188FTV_DKMS.md)
+
+### RTL8192CU
+
+*TP-Link TL-WN823N (`0bda:8178`), generic unbranded dongles (`0bda:8176`) · 2.4 GHz*
+
+> Ported from the mainline Linux `rtlwifi` driver (`rtl8192cu/`, `rtl8192c/`, `usb.c`), Linux v6.12.107.
+> **No card in hand.** RX and TX are user-reported; nothing below is measured.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **ungraded** | 2026-11-11 | No card in hand: no RX, TX, ACK or soak measurement to score. |
+| RX | ✅ | 2026-11-08 | User-reported on both VID:PIDs ([#71](https://github.com/derv82/wifit3/issues/71), [#127](https://github.com/derv82/wifit3/issues/127)). |
+| Port | ⬜ | | No Linux baseline; register-level fidelity only (verify_pcap). |
+| TX | ✅ | 2026-11-11 | User-reported: deauth → `.hc22000` ([#127](https://github.com/derv82/wifit3/issues/127)). |
+| Handshake / PMKID / WEP / WPS | ⬜ | | |
+| ACKs | ⬜ | | Active monitor (MSR infra + REG_MACID) ported; untried. |
+| Stress | ⬜ | | |
+
+→ [RTL8192CU.md](../src/wifit3/chips/rtl8192cu/RTL8192CU.md)
 
 ### RTL8192FU
 <img align="right" width="140" src="../assets/cardart/card-dlink-an3u-n300.png" alt="D-Link AN3U rev. A1">
