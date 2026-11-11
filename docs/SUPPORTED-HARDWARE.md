@@ -130,7 +130,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ### RTL8192CU
 
-*TP-Link TL-WN823N (`0bda:8178`), generic unbranded dongles (`0bda:8176`) · 2.4 GHz*
+*TP-Link TL-WN823N (`0bda:8178`) · 2.4 GHz*
 
 > Ported from the mainline Linux `rtlwifi` driver (`rtl8192cu/`, `rtl8192c/`, `usb.c`), Linux v6.12.107.
 > **No card in hand.** RX and TX are user-reported; nothing below is measured.
