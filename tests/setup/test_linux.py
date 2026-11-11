@@ -542,7 +542,6 @@ def test_plan_uninstall_no_siblings(monkeypatch, tmp_path):
     _point_paths_at_tmp(monkeypatch, tmp_path)
     _write_blacklist("ar9271", "Atheros AR9271", "ath9k_htc")
     plan = lin.plan_uninstall(_target(key="ar9271"))
-    assert plan.own_modules == ("ath9k_htc",)
     assert plan.siblings == () and plan.has_own_files and plan.removable
 
 
@@ -551,7 +550,7 @@ def test_plan_uninstall_finds_direct_sibling(monkeypatch, tmp_path):
     _write_blacklist("rt5372", "Ralink RT5372 (Panda PAU05)", "rt2800usb")
     _write_blacklist("rt2800usb", "Ralink RT5572 (PAU09)", "rt2800usb")
     plan = lin.plan_uninstall(_target(key="rt5372"))
-    assert plan.own_modules == ("rt2800usb",) and plan.has_own_files
+    assert plan.has_own_files
     assert [s.key for s in plan.siblings] == ["rt2800usb"]
     assert plan.siblings[0].description == "Ralink RT5572 (PAU09)"   # parsed from the conf header
 
@@ -564,7 +563,6 @@ def test_plan_uninstall_false_negative_card_with_no_conf_of_its_own(monkeypatch,
     monkeypatch.setattr(lin, "discover_kernel_modules", lambda t: ["rt2800usb"])
     plan = lin.plan_uninstall(_target(key="rt2800usb"))
     assert not plan.has_own_files                       # no rt2800usb files installed
-    assert plan.own_modules == ("rt2800usb",)
     assert [s.key for s in plan.siblings] == ["rt5372"] and plan.removable
 
 

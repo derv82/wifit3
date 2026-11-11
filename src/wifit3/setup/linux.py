@@ -373,14 +373,12 @@ class SiblingConf:
     """Another installed wifit3 chipset whose blacklist shares ≥1 kernel module with the target."""
     key: str
     description: str
-    modules: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class UninstallPlan:
     """What removing a chipset entails, drives the splash's narrow/wide uninstall choice."""
     key: str
-    own_modules: tuple[str, ...]
     siblings: tuple[SiblingConf, ...]
     has_own_files: bool
 
@@ -448,22 +446,19 @@ def _target_modules(target: SetupTarget) -> set[str]:
 
 
 def plan_uninstall(target: SetupTarget) -> UninstallPlan:
-    """What removing ``target`` entails: its kernel modules, the *other* installed wifit3 chipsets
-    that share ≥1 of those modules (direct siblings, non-transitive), and whether ``target`` has
-    files of its own. Scans only wifit3's files."""
+    """What removing ``target`` entails: the *other* installed wifit3 chipsets that share ≥1 of its
+    kernel modules (direct siblings, non-transitive), and whether ``target`` has files of its own.
+    Scans only wifit3's files."""
     own_modules = _target_modules(target)
     self_key = _safe(target.key)
     siblings: list[SiblingConf] = []
     for key, path in _installed_blacklist_confs().items():
         if key == self_key:
             continue
-        shared = modules_in_conf(path) & own_modules
-        if shared:
-            siblings.append(SiblingConf(key=key, description=_desc_from_conf(path) or key,
-                                        modules=tuple(sorted(shared))))
+        if modules_in_conf(path) & own_modules:
+            siblings.append(SiblingConf(key=key, description=_desc_from_conf(path) or key))
     has_own = Path(blacklist_path(target.key)).exists() or Path(rule_path(target.key)).exists()
-    return UninstallPlan(key=target.key, own_modules=tuple(sorted(own_modules)),
-                         siblings=tuple(siblings), has_own_files=has_own)
+    return UninstallPlan(key=target.key, siblings=tuple(siblings), has_own_files=has_own)
 
 
 def _residual_blocked(own_modules: set[str], removed_keys: set[str]) -> dict[str, set[str]]:
