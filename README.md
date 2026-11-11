@@ -72,10 +72,10 @@
 | Realtek RTL8922AU | 2.4 / 5 GHz | ASUS USB-BE93 |
 | Realtek RTL8822BU | 2.4 / 5 GHz | TP-Link T3U Plus, Archer T4U v3 / T4U+ |
 | Realtek RTL8822CU | 2.4 / 5 GHz | D-Link AC13U |
-| Realtek RTL8187L | 2.4 GHz | ALFA AWUS036**H** |
+| Realtek RTL8187L/B | 2.4 GHz | ALFA AWUS036**H** |
 | Realtek RTL8188EUS | 2.4 GHz | TP-Link TL-WN722N v2/v3, Mercusys MW150US |
 | Realtek RTL8188FTV | 2.4 GHz | Generic unbranded dongles |
-| Realtek RTL8192CU | 2.4 GHz | TP-Link TL-WN823N |
+| Realtek RTL8192CU | 2.4 GHz | TP-Link TL-WN823N v1 |
 | Realtek RTL8192FU | 2.4 GHz | D-Link AN3U rev. A1 |
 | Ralink RT2570 | 2.4 GHz | Buffalo Nintendo Wi-Fi USB Controller |
 | Ralink RT3070 | 2.4 GHz | ALFA AWUS036**NH**, TP-Link TL-WN7200ND |
@@ -91,7 +91,8 @@ Breakdown of each device's capabilities and limitations: [Supported Hardware Doc
 Download the latest standalone executable from [**Releases**](https://github.com/derv82/wifit3/releases/latest):
 
 * **Windows:** Download and run `wifit3-windows-x64.exe`.
-* **Linux (non-sudo):** `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`
+* **Linux x64 (non-sudo):** `chmod +x wifit3-linux-x64 && ./wifit3-linux-x64`
+* **Linux arm64 (non-sudo):** `chmod +x wifit3-linux-arm64 && ./wifit3-linux-arm64`
 * **macOS:** (bypass quarantine)
   ```bash
   xattr -d com.apple.quarantine wifit3-macos-universal2
@@ -154,7 +155,7 @@ wifit3 bypasses the operating system's native Wi-Fi stack entirely. It ships wit
 
 Because register-level frame injection and monitor mode are performed entirely in user space, Windows NDIS restrictions and Linux kernel driver locking do not apply.
 
-For architecture details, driver porting methodology, and USB trace replay tooling, see the [Porting Documentation](https://github.com/derv82/wifit3/blob/master/docs/porting/METHODOLOGY.md).
+For how a driver is ported from the Linux source and checked against a USB capture of the Linux driver, see the [Porting Documentation](https://github.com/derv82/wifit3/blob/master/docs/porting/METHODOLOGY.md).
 
 ## License & Disclaimer
 

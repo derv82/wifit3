@@ -130,7 +130,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ### RTL8192CU
 
-*TP-Link TL-WN823N (`0bda:8178`) · 2.4 GHz*
+*TP-Link TL-WN823N v1 (`0bda:8178`) · 2.4 GHz*
 
 > Ported from the mainline Linux `rtlwifi` driver (`rtl8192cu/`, `rtl8192c/`, `usb.c`), Linux v6.12.107.
 > **No card in hand.** RX and TX are user-reported; nothing below is measured.
@@ -553,5 +553,5 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 
 **Wishlist (not yet bought):**
 
-- **TP-Link TL-WN823N**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
+- **TP-Link TL-WN823N v1**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
 - **Asus USB-AC68**: RTL8814AU [Issue#86](https://github.com/derv82/wifit3/issues/86) ("for the art")
