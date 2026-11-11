@@ -1,21 +1,19 @@
 """``DeviceID``: the VID:PID a driver claims (a leaf dataclass, used across the whole app)."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 @dataclass(frozen=True)
 class DeviceID:
     """One VID:PID a driver claims. ``chipset`` is the bare silicon (e.g. ``"RTL8812AU"``);
     ``vendor`` is the retail brand when the VID:PID names one unambiguously (else None, pending an
-    OUI read); ``product_name`` is the bare model, with the brand inlined when ``vendor`` is None.
-    ``extras`` carries driver-specific construction hints."""
+    OUI read); ``product_name`` is the bare model, with the brand inlined when ``vendor`` is None."""
     vid: int
     pid: int
     chipset: str
     vendor: Optional[str] = None
     product_name: Optional[str] = None
-    extras: dict[str, Any] = field(default_factory=dict)
     bus: Optional[int] = None       # None on the static SUPPORTED_IDS catalog entries;
     address: Optional[int] = None   # set on the live devices find_devices() returns
 

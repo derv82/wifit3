@@ -56,10 +56,9 @@ class RT5572Driver(Driver):
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT5572Driver":
-        chip_id_hint = id_entry.extras.get("chip_id", "")
-        return cls(dev, chip_id_hint=chip_id_hint)
+        return cls(dev)
 
-    def __init__(self, dev: usb.core.Device, *, chip_id_hint: str = ""):
+    def __init__(self, dev: usb.core.Device):
         super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.transport = RT5572Transport(dev)
@@ -92,7 +91,6 @@ class RT5572Driver(Driver):
         self.current_channel: int = 1
         self._rssi_cal = RssiCal()   # refreshed per channel once EEPROM is parsed
         self.chip_id: Optional[ChipId] = None
-        self.chip_id_hint = chip_id_hint   # from VID:PID; "rt5572"
         # Probed at connect() time from MAC_DEBUG_INDEX.XTAL; picks which of
         # rf_vals_5592_xtal20 / xtal40 the channel tune consults (PAU09 N600's
         # actual xtal isn't documented).

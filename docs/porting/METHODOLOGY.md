@@ -145,7 +145,7 @@ compare with the C, not a byte to copy.
 The chip package (`src/wifit3/chips/<name>/`):
 
 - **`__init__.py` declares the VID:PIDs**: `SUPPORTED_IDS: list[DeviceID]` (every VID:PID this driver claims, a
-  readable description, any chip-id discriminator in `extras={}`) and
+  readable description) and
   `def import_driver(): from .driver import <Class>; return <Class>`. It must NOT import `driver.py` at module
   top: discovery is a pkgutil walk over `chips/*` that reads each light `__init__` and imports the driver only
   on a VID:PID match. Copy the shape from `chips/rtl8812au/__init__.py`.

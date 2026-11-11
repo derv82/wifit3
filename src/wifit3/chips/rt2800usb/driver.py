@@ -1,8 +1,4 @@
-"""rt2800usb driver —Panda PAU09 (RT5572) / ALFA AWUS051NH v2 (RT3572).
-
-  * RT3572 (silicon RT3572): 2.4 GHz, 2T2R — DONE (M-A1).
-                              5 GHz, 2T2R — DONE (M-A2, awaiting hw-verify).
-  * RT5572 (silicon RT5592): 2.4 + 5 GHz, 2T2R — TBD (M-B1 + M-B2).
+"""rt2800usb driver — ALFA AWUS051NH v2 (RT3572), 2.4 + 5 GHz, 2T2R.
 
 Family-shared infrastructure (transport, FW upload, MAC config, RX/TX
 descriptor builders, USB end-pad / QSEL=2 / EP=0x02, EFUSE bring-up,
@@ -88,29 +84,21 @@ logger = logging.getLogger(__name__)
 
 
 class RT2800USBDriver(Driver):
-    """Driver for the rt2800usb family (RT3572 / RT5572).
+    """Driver for the ALFA AWUS051NH v2 (RT3572).
 
     Per-variant differences (RX/TX desc size, RF init, 5 GHz support)
-    are dispatched at runtime via the ``chip_id`` carried in DeviceID
-    extras + the silicon ID read from MAC_CSR0 at connect() time.
+    are dispatched at runtime via the silicon ID read from MAC_CSR0 at
+    connect() time.
     """
 
-    #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS
-    _CHANNELS_BY_CHIP: dict = {
-        "rt3572": Driver.CHANNELS_2G + Driver.CHANNELS_5G,
-    }
-    # Class-level fallback = union of all variants. Used only if a hint is
-    # missing (e.g. test code instantiates without going through
-    # from_usb_device). Instance __init__ overlays the per-chip list.
     SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":
-        chip_id_hint = id_entry.extras.get("chip_id", "")
-        return cls(dev, chip_id_hint=chip_id_hint)
+        return cls(dev)
 
-    def __init__(self, dev: usb.core.Device, *, chip_id_hint: str = ""):
+    def __init__(self, dev: usb.core.Device):
         super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.transport = RT2800USBTransport(dev)
@@ -143,13 +131,6 @@ class RT2800USBDriver(Driver):
         self.current_channel: int = 1
         self._rssi_cal = RssiCal()   # refreshed per channel once EEPROM is parsed
         self.chip_id: Optional[ChipId] = None
-        self.chip_id_hint = chip_id_hint   # from VID:PID; e.g. "rt5572"
-        # Narrow the channel capability to this specific chip if we know
-        # which one we're attached to. Falls through to the class-level
-        # union when the hint is empty (test paths, future variants).
-        per_chip = self._CHANNELS_BY_CHIP.get(chip_id_hint)
-        if per_chip is not None:
-            self.SUPPORTED_CHANNELS = per_chip
         # RT5592-only: probed at connect() time from MAC_DEBUG_INDEX.XTAL.
         # Picks which of rf_vals_5592_xtal20 / xtal40 the channel tune
         # consults (PAU09 N600's actual xtal isn't documented).
@@ -213,9 +194,9 @@ class RT2800USBDriver(Driver):
                 None, read_chip_id, self.transport
             )
             logger.info(
-                "chip_id: %s rev=0x%04x (raw MAC_CSR0=0x%08x, hint=%s)",
+                "chip_id: %s rev=0x%04x (raw MAC_CSR0=0x%08x)",
                 self.chip_id.name, self.chip_id.revision,
-                self.chip_id.raw, self.chip_id_hint,
+                self.chip_id.raw,
             )
             if not self.chip_id.is_supported:
                 raise BringUpError(

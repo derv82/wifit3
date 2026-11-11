@@ -85,9 +85,6 @@ def test_supported_ids_cover_all_variants():
     pids = {entry.pid for entry in SUPPORTED_IDS}
     assert pids == {USB_PID_RT3572}
     assert all(entry.vid == USB_VID_RALINK for entry in SUPPORTED_IDS)
-    # chip_id hints are populated for downstream variant dispatch
-    hints = {entry.extras["chip_id"] for entry in SUPPORTED_IDS}
-    assert hints == {"rt3572"}
 
 
 def test_supported_channels_covers_2g_plus_5g_non_dfs():
