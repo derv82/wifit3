@@ -342,6 +342,13 @@ def test_invalid_url_is_a_hashtopolis_error(monkeypatch, error):
         HashtopolisApi("http://server:8080,", "key").check_access()
 
 
+@pytest.mark.parametrize("url", ["://server", "http://[fe80::1:8080"])
+@pytest.mark.parametrize("access_key", ["key", "a.b.c"])
+def test_unparseable_url_is_a_hashtopolis_error(url, access_key):
+    with pytest.raises(HashtopolisError, match="Invalid server URL"):
+        HashtopolisApi(url, access_key).check_access()
+
+
 def test_non_http_reply_is_unreachable(monkeypatch):
     _answer(monkeypatch, http.client.BadStatusLine("SSH-2.0-OpenSSH_10.2p1"))
 

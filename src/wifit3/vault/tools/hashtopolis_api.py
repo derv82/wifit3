@@ -53,10 +53,8 @@ class HashtopolisApi:
 
     def call(self, section: str, request: str, **params) -> dict:
         body = {"section": section, "request": request, "accessKey": self.access_key, **params}
-        http_request = urllib.request.Request(
-            self.endpoint, data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"}, method="POST")
-        raw = self._read(http_request)
+        raw = self._read(self.endpoint, data=json.dumps(body).encode("utf-8"),
+                         headers={"Content-Type": "application/json"}, method="POST")
         try:
             data = json.loads(raw)
         except ValueError:
@@ -150,8 +148,10 @@ class HashtopolisApi:
             return
         self.call("task", "archiveTask", taskId=task_id)
 
-    def _read(self, request: urllib.request.Request, *, v2: bool = False) -> bytes:
+    def _read(self, url: str, *, data: bytes | None, headers: dict[str, str], method: str,
+              v2: bool = False) -> bytes:
         try:
+            request = urllib.request.Request(url, data=data, headers=headers, method=method)
             with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
                 return response.read()
         except urllib.error.HTTPError as e:
@@ -186,8 +186,7 @@ class HashtopolisApi:
         headers = {"Authorization": "Bearer " + self.access_key, "Accept": "application/json"}
         if data is not None:
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        raw = self._read(request, v2=True)
+        raw = self._read(url, data=data, headers=headers, method=method, v2=True)
         try:
             parsed = json.loads(raw)
         except ValueError:
