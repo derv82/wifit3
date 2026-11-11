@@ -353,9 +353,6 @@ class WlanSink:
         if frame_type in ("deauth", "disassoc") and client.bssid == bssid:
             client.akm_selected = None
 
-        if frame_type == "probe_req" and self._is_real_ssid(pkt.ssid):
-            client.probed_ssids.add(pkt.ssid)
-
         if frame_type in ("assoc_req", "reassoc_req"):
             ap = self.access_points.get(bssid)
             if ap is not None:

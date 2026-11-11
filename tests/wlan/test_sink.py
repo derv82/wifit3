@@ -628,7 +628,6 @@ def test_a_probe_request_registers_its_client():
     s.update(pkt({"type": "probe_req", "bssid": _OTHER_BSSID, "source": _STA_MAC,
                   "dest": "ff:ff:ff:ff:ff:ff", "ssid": "Some_SSID", "rssi": -60}), W0)
     assert _STA_MAC in s.clients
-    assert "Some_SSID" in s.clients[_STA_MAC].probed_ssids
 
 
 def _broadcast_probe(ssid: str):
