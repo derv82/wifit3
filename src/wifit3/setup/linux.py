@@ -8,8 +8,8 @@ chipset**, which writes a per-chipset *pair* of files:
 
 * ``/etc/modprobe.d/wifit3-<chip>.conf``   : ``blacklist``/``install`` the kernel module(s), so the
   kernel never binds + taints the card again (this is what keeps it cold).
-* ``/etc/udev/rules.d/60-wifit3-<chip>.rules`` : grant the user's admin group access to the raw USB
-  node, so wifit3 can open it without sudo.
+* ``/etc/udev/rules.d/60-wifit3-<chip>.rules`` : grant the user's admin group (or, outside sudo/wheel,
+  the user) access to the raw USB node, so wifit3 can open it without sudo.
 
 The module list is discovered *live* from the plugged-in card (sysfs bound-driver ∪ ``modprobe -R``
 on its modalias), with the driver's ``CONFLICTING_LINUX_MODULES`` as a fallback hint, so it reflects what's
@@ -189,9 +189,13 @@ def discover_kernel_modules(target: SetupTarget) -> list[str]:
 
 # --- file text emitters -------------------------------------------------------------------------
 
-def emit_udev_text(target: SetupTarget, group: str) -> str:
-    """The per-chipset access rule: every VID:PID this driver claims, granted to ``group``. The
-    blacklist displaces *all* of them from the kernel, so all of them need userland access too."""
+def emit_udev_text(target: SetupTarget, *, group: str | None, user: str | None) -> str:
+    """The per-chipset access rule: every VID:PID this driver claims, granted to ``group``, else to
+    ``user``. The blacklist displaces *all* of them from the kernel, so all need userland access."""
+    if group:
+        access = f'GROUP="{group}", MODE="0660"'
+    else:
+        access = f'OWNER="{user}", MODE="0600"'
     lines = [f"# wifit3 device-access rule: {target.description} ({target.key})", ""]
     seen: set[tuple[int, int]] = set()
     for vid, pid in target.ids:
@@ -200,7 +204,7 @@ def emit_udev_text(target: SetupTarget, group: str) -> str:
         seen.add((vid, pid))
         lines.append(
             f'SUBSYSTEM=="usb", ATTR{{idVendor}}=="{vid:04x}", '
-            f'ATTR{{idProduct}}=="{pid:04x}", GROUP="{group}", MODE="0660"')
+            f'ATTR{{idProduct}}=="{pid:04x}", {access}')
     return "\n".join(lines) + "\n"
 
 
@@ -222,7 +226,8 @@ def emit_blacklist_text(target: SetupTarget, modules: list[str]) -> str:
 # --- privileged shell builders ------------------------------------------------------------------
 
 def _install_cmd(*, tmp_rule: str | None, key: str, tmp_blacklist: str | None,
-                 modules: list[str], group: str | None, node: str | None) -> str:
+                 modules: list[str], group: str | None, user: str | None,
+                 node: str | None) -> str:
     # Every interpolated value is shlex.quote'd: this string is handed to `sh -c`, so an unquoted
     # path with a space (a temp dir, a repointed target) would word-split, and a metachar would be
     # worse. quote() is a no-op on the safe values we actually pass, so the shape is unchanged.
@@ -239,9 +244,11 @@ def _install_cmd(*, tmp_rule: str | None, key: str, tmp_blacklist: str | None,
         # keeps it from *loading* on a future cold boot.
         mods = " ".join(q(m) for m in modules)
         steps.append(f"(modprobe -r {mods} 2>/dev/null || true)")
+    # Ignore failures in the ch* commands in case the device re-enumerated to a different node.
     if group and node:
-        # Ignore failures in the ch* commands in case the device re-enumerated to a different node.
         steps += [f"(chgrp {q(group)} {q(node)} || true)", f"(chmod 0660 {q(node)} || true)"]
+    elif user and node:
+        steps += [f"(chown {q(user)} {q(node)} || true)", f"(chmod 0600 {q(node)} || true)"]
     return " && ".join(steps)
 
 
@@ -489,15 +496,10 @@ def install_rule(target: SetupTarget, *, run_with_terminal: RunWithTerminal,
     modules = discover_kernel_modules(target)
     is_root = os.geteuid() == 0
     group = None if is_root else _access_group()
-    if not is_root and group is None:
-        return SetupResult(
-            ok=False,
-            detail="Add yourself: `sudo usermod -aG sudo $USER`, then log out and back in. "
-                   "Or run `sudo .venv/bin/python3 -m wifit3`.",
-            message="You're not in the sudo or wheel group, so device access can't be granted.")
+    user = None if is_root or group else current_user()
 
     # As root the access rule is moot (root opens any node). Only the blacklist matters.
-    rule_text = emit_udev_text(target, group) if group else None
+    rule_text = None if is_root else emit_udev_text(target, group=group, user=user)
     blacklist_text = emit_blacklist_text(target, modules) if modules else None
 
     try:
@@ -508,7 +510,7 @@ def install_rule(target: SetupTarget, *, run_with_terminal: RunWithTerminal,
 
     try:
         cmd = _install_cmd(tmp_rule=tmp_rule, key=target.key, tmp_blacklist=tmp_blacklist,
-                           modules=modules, group=group, node=node)
+                           modules=modules, group=group, user=user, node=node)
 
         if is_root:
             rc = _run_as_root(cmd)

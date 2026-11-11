@@ -170,13 +170,19 @@ def test_paths_are_per_chipset_with_sort_safe_prefixes():
 
 
 def test_emit_udev_text_is_per_chipset_grouped_and_inline_comment_free():
-    text = emit_udev_text(_target(ids=(AR9271,)), "sudo")
+    text = emit_udev_text(_target(ids=(AR9271,)), group="sudo", user=None)
     assert text.count('SUBSYSTEM=="usb"') == 1            # just this chipset, not the fleet
     assert 'ATTR{idVendor}=="0cf3"' in text and 'ATTR{idProduct}=="9271"' in text
     assert 'GROUP="sudo", MODE="0660"' in text
     for line in text.splitlines():
         if line.startswith("SUBSYSTEM"):
             assert "#" not in line                        # inline # makes udev drop the rule
+
+
+def test_emit_udev_text_grants_user_when_no_group():
+    text = emit_udev_text(_target(ids=(AR9271,)), group=None, user="tester")
+    assert 'OWNER="tester", MODE="0600"' in text
+    assert "GROUP=" not in text
 
 
 def test_emit_blacklist_text_blacklists_and_neutralizes_each_module():
@@ -189,7 +195,8 @@ def test_emit_blacklist_text_blacklists_and_neutralizes_each_module():
 
 def test_install_cmd_writes_both_files_unloads_module_and_grants_node():
     cmd = lin._install_cmd(tmp_rule="/t/r.rules", key="ar9271", tmp_blacklist="/t/b.conf",
-                           modules=["ath9k_htc"], group="sudo", node="/dev/bus/usb/003/053")
+                           modules=["ath9k_htc"], group="sudo", user=None,
+                           node="/dev/bus/usb/003/053")
     assert f"install -m 0644 /t/r.rules {rule_path('ar9271')}" in cmd
     assert f"install -m 0644 /t/b.conf {blacklist_path('ar9271')}" in cmd
     assert "udevadm control --reload-rules" in cmd
@@ -197,11 +204,19 @@ def test_install_cmd_writes_both_files_unloads_module_and_grants_node():
     assert "(chgrp sudo /dev/bus/usb/003/053 || true) && (chmod 0660 /dev/bus/usb/003/053 || true)" in cmd
 
 
+def test_install_cmd_chowns_node_to_user_when_no_group():
+    cmd = lin._install_cmd(tmp_rule="/t/r.rules", key="ar9271", tmp_blacklist="/t/b.conf",
+                           modules=["ath9k_htc"], group=None, user="tester",
+                           node="/dev/bus/usb/003/053")
+    assert "(chown tester /dev/bus/usb/003/053 || true) && (chmod 0600 /dev/bus/usb/003/053 || true)" in cmd
+    assert "chgrp" not in cmd
+
+
 def test_install_cmd_root_skips_udev_rule_and_chgrp():
-    # group=None (root): no access rule, no chgrp, only the blacklist matters to root.
+    # group=None, user=None (root): no access rule, no chgrp/chown, only the blacklist matters to root.
     cmd = lin._install_cmd(tmp_rule=None, key="ar9271", tmp_blacklist="/t/b.conf",
-                           modules=["ath9k_htc"], group=None, node="/dev/bus/usb/003/053")
-    assert ".rules" not in cmd and "chgrp" not in cmd
+                           modules=["ath9k_htc"], group=None, user=None, node="/dev/bus/usb/003/053")
+    assert ".rules" not in cmd and "chgrp" not in cmd and "chown" not in cmd
     assert f"install -m 0644 /t/b.conf {blacklist_path('ar9271')}" in cmd
 
 
@@ -230,7 +245,7 @@ def test_remove_cmd_shell_quotes_paths_with_spaces(monkeypatch):
 
 def test_install_cmd_shell_quotes_staged_path_with_spaces():
     cmd = lin._install_cmd(tmp_rule=None, key="ar9271", tmp_blacklist="/tmp/a b/x.conf",
-                           modules=["ath9k_htc"], group=None, node=None)
+                           modules=["ath9k_htc"], group=None, user=None, node=None)
     assert "'/tmp/a b/x.conf'" in cmd
 
 
@@ -340,14 +355,21 @@ def test_install_rule_root_writes_blacklist_without_elevation(monkeypatch, tmp_p
     assert not list(tmp_path.glob("*wifit3-ar9271.rules"))
 
 
-def test_install_rule_fails_when_in_no_admin_group(monkeypatch, tmp_path):
+def test_install_rule_grants_user_when_in_no_admin_group(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
     monkeypatch.setattr(lin, "_access_group", lambda: None)
-    called = []
-    monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: called.append(cmd) or 0)
-    r = install_rule(_target(), run_with_terminal=_no_terminal)
-    assert not r.ok and not r.cancelled and not called
-    assert "sudo or wheel" in r.message.lower()
+    monkeypatch.setattr(lin, "current_user", lambda: "tester")
+    monkeypatch.setattr(lin, "_choose_escalation", lambda: PKEXEC)
+    seen = {}
+    def _run(cmd, method):
+        seen["cmd"] = cmd
+        seen["rule"] = next(tmp_path.glob("*wifit3-ar9271.rules")).read_text()
+        return 0
+    monkeypatch.setattr(lin, "run_privileged", _run)
+    r = install_rule(_target(), run_with_terminal=_no_terminal, node="/dev/bus/usb/003/053")
+    assert r.ok
+    assert 'OWNER="tester", MODE="0600"' in seen["rule"]
+    assert "chown tester /dev/bus/usb/003/053" in seen["cmd"]
 
 
 def test_install_rule_declined_is_cancelled(monkeypatch, tmp_path):
