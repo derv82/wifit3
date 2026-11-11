@@ -4,7 +4,7 @@ import asyncio
 import random
 import time
 
-from make_vault_fixture import RSN_IE, data_frame, m1_m2, mac_bytes
+from make_vault_fixture import data_frame, m1_m2, mac_bytes
 from vault_bench import bssid_of, open_vault, painted, select, terminal_size, wait_for
 from wifit3.models import AccessPoint, Handshake, HandshakeMessage
 from wifit3.ui.app import WifiteApp
@@ -24,10 +24,10 @@ def access_point_with_handshake(ssid: str, bssid: str, psk: str) -> AccessPoint:
     now = time.time()
     handshake.add_message(HandshakeMessage(
         raw=data_frame(aa, spa, messages.m1), msg_num=1, replay_hex=replay, nonce=messages.anonce,
-        mic=bytes(16), key_data_len=0, eapol_payload=messages.m1, akm=AKM_PSK, timestamp=now))
+        mic=bytes(16), eapol_payload=messages.m1, akm=AKM_PSK, timestamp=now))
     handshake.add_message(HandshakeMessage(
         raw=data_frame(aa, spa, messages.m2), msg_num=2, replay_hex=replay, nonce=messages.snonce,
-        mic=messages.mic, key_data_len=len(RSN_IE), eapol_payload=messages.m2, akm=AKM_PSK,
+        mic=messages.mic, eapol_payload=messages.m2, akm=AKM_PSK,
         timestamp=now + 0.01))
     ap = AccessPoint(bssid=bssid, ssid=ssid)
     ap.handshakes[CLIENT] = handshake

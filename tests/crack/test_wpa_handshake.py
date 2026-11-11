@@ -24,7 +24,6 @@ def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0, akm=None
         replay_hex=_rc(replay),
         nonce=(nonce if nonce is not None else bytes([msg]) * 32),
         mic=(b"\x11" * 16 if mic else b"\x00" * 16),
-        key_data_len=0,
         eapol_payload=bytes(payload),
         timestamp=ts,
         akm=akm,

@@ -407,7 +407,6 @@ class WlanSink:
                 replay_hex=replay.hex(),
                 nonce=pkt.nonce or b"",
                 mic=pkt.mic or b"",
-                key_data_len=pkt.key_data_len,
                 eapol_payload=pkt.payload,
                 akm=akm,
                 akm_selection_rejected=pkt.akm_selection_rejected,

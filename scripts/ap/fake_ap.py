@@ -172,11 +172,11 @@ class ApResponder:
                        beacon_frame=self.beacon_frame, akm_offered=[2, 8], akm_client=2)
         hs.messages.append(HandshakeMessage(
             raw=m1_frame, msg_num=1, replay_hex="0000000000000001",
-            nonce=anonce, mic=bytes(16), key_data_len=0,
+            nonce=anonce, mic=bytes(16),
             eapol_payload=m1_frame[32:], timestamp=time.time()))
         hs.messages.append(HandshakeMessage(
             raw=m2.raw, msg_num=2, replay_hex=(m2.replay_counter or b"").hex(),
-            nonce=m2.nonce or b"", mic=m2.mic or b"", key_data_len=m2.key_data_len,
+            nonce=m2.nonce or b"", mic=m2.mic or b"",
             eapol_payload=m2.payload, timestamp=time.time()))
         return hs
 

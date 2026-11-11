@@ -25,7 +25,6 @@ def _ef(msg, rc, nonce, ts):
         replay_hex=rc.to_bytes(8, "big").hex(),
         nonce=nonce,
         mic=b"\x11" * 16,
-        key_data_len=0,
         eapol_payload=bytes(120),
         timestamp=ts,
     )

@@ -241,7 +241,7 @@ def test_headline_enterprise_partial_eapol_does_not_ask_for_deauth():
                    akm_offered=[1])
     hs.add_message(HandshakeMessage(
         raw=b"m1", msg_num=1, replay_hex="0000000000000001", nonce=b"\x11" * 32,
-        mic=bytes(16), key_data_len=0, eapol_payload=bytes(99), akm=1,
+        mic=bytes(16), eapol_payload=bytes(99), akm=1,
     ))
     ap = build_ap(encryption="WPA2", akms=["EAP"], akm_suites=[1])
     ap.handshakes = {"11:22:33:44:55:66": hs}
@@ -324,7 +324,7 @@ def test_headline_unsupported_akm_partial_handshake_is_not_capturing():
     for msg in (1, 2):
         hs.add_message(HandshakeMessage(
             raw=bytes([msg]), msg_num=msg, replay_hex="0000000000000005",
-            nonce=bytes([msg]) * 32, mic=b"\x11" * 16, key_data_len=0,
+            nonce=bytes([msg]) * 32, mic=b"\x11" * 16,
             eapol_payload=bytes(120), akm=20))
     ap = build_ap(encryption="WPA2", akms=["PSK-SHA384"], akm_suites=[20])
     ap.handshakes = {"11:22:33:44:55:66": hs}
