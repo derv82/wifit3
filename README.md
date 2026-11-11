@@ -102,6 +102,9 @@ uv run pyinstaller wifit3.spec --noconfirm --clean
 ```
 Binary executable is written to `dist/` subdirectory.
 
+### Android (Termux, no root)
+[@OliverRhyme](https://github.com/OliverRhyme) maintains [**wifit3-termux**](https://github.com/OliverRhyme/wifit3-termux), a native Termux port: no root, proot or VM. It uses `termux-usb` and asks Android for permission when a card is plugged in. Install steps are in its README.
+
 ## One-Time Driver Setup
 
 wifit3 automatically handles hardware configuration within the app, after clicking the `START` button:
