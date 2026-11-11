@@ -1,4 +1,4 @@
-"""rt2800usb TX path: build TXINFO + TXWI + bulk-OUT inject.
+"""rt3572 TX path: build TXINFO + TXWI + bulk-OUT inject.
 
 Ported from rt2800_write_tx_data (rt2800lib.c:795-853) +
 rt2800usb_kick_tx_queue / rt2x00usb tx submit (USB transport bits).

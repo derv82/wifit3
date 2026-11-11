@@ -1,7 +1,7 @@
 """Acceptance gate: replay-diff rt2800usb (Ralink RT3572 / RT5372 / RT5572) against its
 cold-boot capture. Goal: the port emits the exact bytes the Linux kernel driver did.
 
-Drives the port's real ``RT2800USBTransport`` around a ``rt2x00_pcap_replay.ReplayDevice``
+Drives the port's real ``RT3572Transport`` around a ``rt2x00_pcap_replay.ReplayDevice``
 (a fake usb dev that replays the chip's recorded ctrl_transfers), so the port's real helpers
 run unchanged and must emit byte-identical writes or a Divergence is raised at the first
 mismatch.
@@ -30,7 +30,7 @@ Three sections, all fail-closed with 0 waivers:
 
 Exit is 0 only when all three reproduce with no divergence and no waiver.
 
-Run: uv run python scripts/chips/rt2800usb/verify_pcap.py [capture-1|capture-2]
+Run: uv run python scripts/chips/rt3572/verify_pcap.py [capture-1|capture-2]
 """
 from __future__ import annotations
 
@@ -43,13 +43,13 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rt2x00_pcap_replay as rp
-from wifit3.chips.rt2800usb import chan as _chan
-from wifit3.chips.rt2800usb import bbp as _bbp
-from wifit3.chips.rt2800usb import firmware as _fw
-from wifit3.chips.rt2800usb import mac as _mac
-from wifit3.chips.rt2800usb import reg_init as _reg
-from wifit3.chips.rt2800usb import rfcsr as _rfcsr
-from wifit3.chips.rt2800usb.constants import (
+from wifit3.chips.rt3572 import chan as _chan
+from wifit3.chips.rt3572 import bbp as _bbp
+from wifit3.chips.rt3572 import firmware as _fw
+from wifit3.chips.rt3572 import mac as _mac
+from wifit3.chips.rt3572 import reg_init as _reg
+from wifit3.chips.rt3572 import rfcsr as _rfcsr
+from wifit3.chips.rt3572.constants import (
     BBP_CSR_CFG,
     CH_IDLE_STA,
     FIF_ALLMULTI,
@@ -77,18 +77,18 @@ from wifit3.chips.rt2800usb.constants import (
     TXWI_W1_PACKETID_ENTRY,
     TXWI_W1_PACKETID_QUEUE,
 )
-from wifit3.chips.rt2800usb.link_tuner import (
+from wifit3.chips.rt3572.link_tuner import (
     get_default_vgc,
     set_vgc,
 )
-from wifit3.chips.rt2800usb.eeprom import (
+from wifit3.chips.rt3572.eeprom import (
     EEPROM_OFFSET_FREQ,
     parse_eeprom,
     read_eeprom_efuse,
 )
-from wifit3.chips.rt2800usb.firmware import load_firmware_blob
-from wifit3.chips.rt2800usb.transport import RT2800USBTransport
-from wifit3.chips.rt2800usb.tx import (
+from wifit3.chips.rt3572.firmware import load_firmware_blob
+from wifit3.chips.rt3572.transport import RT3572Transport
+from wifit3.chips.rt3572.tx import (
     build_tx_descriptors,
     txwi_size_for_silicon,
 )
@@ -114,7 +114,7 @@ class _Walk:
 
     def run(self, fn) -> int:
         rd = rp.ReplayDevice(self.ops[self.i:])
-        fn(RT2800USBTransport(rd))
+        fn(RT3572Transport(rd))
         self.i += rd.i
         return rd.i
 
@@ -158,7 +158,7 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
         step("init_registers (disable_wpdma+usb_reset+MAC block)",
              lambda t: _reg.init_registers(t, silicon))
         chip = box["chip"]
-        from wifit3.chips.rt2800usb.constants import (
+        from wifit3.chips.rt3572.constants import (
             EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK, EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT,
         )
         ant_div = (ev.nic_conf1 & EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK) \
@@ -240,7 +240,7 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
                        if (c <= 14) == is2g and (v[0] & 0xFF) == n_low]:
                 rd = rp.ReplayDevice(rem)
                 try:
-                    _chan.set_channel(RT2800USBTransport(rd), silicon, ch, **sc_kwargs(ch))
+                    _chan.set_channel(RT3572Transport(rd), silicon, ch, **sc_kwargs(ch))
                 except rp.Divergence:
                     pass
                 if rd.i > best_consumed:
@@ -458,7 +458,7 @@ def verify_channel_tune(pcap: Path, dev: int, silicon: int, ev) -> bool:
         best_ch, best_consumed, best_err = None, -1, None
         for ch in cands:
             rd = rp.ReplayDevice(allops[i:])
-            t = RT2800USBTransport(rd)
+            t = RT3572Transport(rd)
             p1, p2 = _chan.default_power(ev, RT_RT5592, ch, xtal)
             lna = ev.lna_gain_bg if ch <= 14 else ev.lna_gain_a
             err = None
@@ -590,7 +590,7 @@ def run(cap: str | None = None) -> int:
     print(f"  bulk-OUT TX inject: {tx_n} frames rebuilt byte-for-byte (CCK 2.4 GHz + OFDM 5 GHz).")
     print("  note: the walk reproduces the kernel's operational config_filter (0x97→0x93), but")
     print("  the LIVE connect() keeps its monitor-first RX_FILTER_CFG=0x11 shortcut (HW-validated,")
-    print("  deliberately not reconciled) — see RT2800USB.md. The new operational helpers")
+    print("  deliberately not reconciled) — see RT3572.md. The new operational helpers")
     print("  (config_ant/toggle_rx/config_ps/update_survey) are exercised by the walk, not connect().")
     if not cold_ok:
         print("  Remaining control frontier: the aireplay-ng TX-injection region (TX_STA_FIFO")

@@ -1,8 +1,8 @@
-"""rt2800usb RX dispatch: driver-specific decode (parse_rx_urb) wiring fed to
+"""rt3572 RX dispatch: driver-specific decode (parse_rx_urb) wiring fed to
 the shared RxReaderThread. (Thread/loop hand-off: tests/chips/test_rx_reader.py.)"""
 from unittest.mock import MagicMock
 
-import wifit3.chips.rt2800usb.driver as drv
+import wifit3.chips.rt3572.driver as drv
 
 
 def _rx(has_fcs_error=False, mpdu=b"mpdu", rssi=-40):
@@ -14,7 +14,7 @@ def _rx(has_fcs_error=False, mpdu=b"mpdu", rssi=-40):
 
 
 def test_rx_dispatch_parses_and_fires_callback(monkeypatch):
-    d = drv.RT2800USBDriver(MagicMock())
+    d = drv.RT3572Driver(MagicMock())
     monkeypatch.setattr(drv, "parse_rx_urb",
                         lambda buf, rxwi_size, rssi_cal: _rx() if buf == b"BULK" else None)
     monkeypatch.setattr(
@@ -28,7 +28,7 @@ def test_rx_dispatch_parses_and_fires_callback(monkeypatch):
 
 
 def test_rx_dispatch_drops_fcs_error(monkeypatch):
-    d = drv.RT2800USBDriver(MagicMock())
+    d = drv.RT3572Driver(MagicMock())
     monkeypatch.setattr(drv, "parse_rx_urb", lambda buf, rxwi_size, rssi_cal: _rx(has_fcs_error=True))
     got = []
     d.register_rx_callback(got.append)

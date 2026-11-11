@@ -1,4 +1,4 @@
-"""rt2800usb RX path: bulk-IN URB → 802.11 MPDU + RSSI.
+"""rt3572 RX path: bulk-IN URB → 802.11 MPDU + RSSI.
 
 URB layout (rt2800usb.c:481-518, rt2800lib.c:900-942):
 

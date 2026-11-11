@@ -15,7 +15,7 @@ FAMILY-SPECIFIC wire format (rt2x00usb, NOT Realtek's bRequest 0x05 / addr-in-wV
 
 Unlike the Realtek ReplayTransport (which reimplements read8/write8/...), this replays at
 the ctrl_transfer layer: ``ReplayDevice`` is a fake usb.core.Device whose ``ctrl_transfer``
-walks the recorded ops. The REAL chip transport (RT2500USBTransport / RT2800USBTransport)
+walks the recorded ops. The REAL chip transport (RT2500USBTransport / RT3572Transport)
 then drives it unchanged, so every helper -- regbusy_read, set_state's poll loop,
 write*_mask, read_eeprom, the single-writes -- replays with zero reimplementation.
 

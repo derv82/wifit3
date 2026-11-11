@@ -1,8 +1,8 @@
-"""rt2800usb chipset driver (Ralink RT3572)."""
+"""rt3572 chipset driver (Ralink RT3572)."""
 from wifit3.models.device_id import DeviceID
 
 from .constants import USB_PID_RT3572, USB_VID_RALINK
-from .transport import RT2800USBTransport
+from .transport import RT3572Transport
 from wifit3.chips.products import ALFA
 
 SUPPORTED_IDS = [
@@ -13,8 +13,8 @@ SUPPORTED_IDS = [
 
 
 def import_driver():
-    from .driver import RT2800USBDriver
-    return RT2800USBDriver
+    from .driver import RT3572Driver
+    return RT3572Driver
 
 
-__all__ = ["SUPPORTED_IDS", "RT2800USBTransport", "import_driver"]
+__all__ = ["SUPPORTED_IDS", "RT3572Transport", "import_driver"]

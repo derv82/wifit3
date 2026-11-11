@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 # Windows consoles default to cp1252; recipes print arrows / em-dashes in their status lines
-# (e.g. rt2800usb / rt5572). Force UTF-8 so a non-ASCII char can never crash a run mid-walk.
+# (e.g. rt3572 / rt5572). Force UTF-8 so a non-ASCII char can never crash a run mid-walk.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -87,7 +87,7 @@ REGISTRY: dict[str, Chip] = {
                       "Realtek RTL8922AU rtw89 802.11be (vendor 0x05); SCAFFOLD, M1 register access"),
     "rt2500usb": Chip("rt2500usb", "chips/rt2500usb/verify_pcap.py",
                       "Ralink RT2570 rt2x00 (vendor 0x06/0x07)"),
-    "rt2800usb": Chip("rt2800usb", "chips/rt2800usb/verify_pcap.py",
+    "rt3572": Chip("rt3572", "chips/rt3572/verify_pcap.py",
                       "Ralink RT3572/RT5372/RT5572 rt2x00 (vendor 0x06/0x07)"),
     "rt3070": Chip("rt3070", "chips/rt3070/verify_pcap.py",
                    "Ralink RT3070 / ALFA AWUS036NH clean-room (vendor 0x06/0x07)"),

@@ -64,7 +64,7 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 | RTL8187L   | only its own silicon MAC | silicon 1, spoofed 5-6 | N/A (no AM) | ~6 |
 | RT2500USB | yes, keyed on self-MAC | 2G 1/~15 (ack=off/on) | 2G 1 | 2G 1/~15 (ack=off/on) |
 
-RT3572 (rt2800usb) is omitted from this table: its unburned-EFUSE TX is too weak to elicit AP ACKs, so
+RT3572 (rt3572) is omitted from this table: its unburned-EFUSE TX is too weak to elicit AP ACKs, so
 its retry behaviour is unmeasured. Its auto-ACK still confirmed it SPOOFABLE (see below).
 
 The stop-on-ACK match splits by chip vendor. Realtek (8812 / 8821 / 8821cu / 8822 / 8814 / 8188eus) and
@@ -121,9 +121,9 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   retry table above (the Realtek and Atheros cards key on Addr2; the MediaTek mt76x0u / mt76x2u and the
   Ralink rt30xx / rt53xx / rt5572 need active monitor). Two notes: the missing-seq-stamp bug (every
   inject left seq 0, folding the retry histogram into one bucket) hit mt76x2u, mt76x0u, rt5572 and
-  rt2800usb, each now fixed to stamp an incrementing seqctl; the 8821cu came up warm so its silicon-MAC
+  rt3572, each now fixed to stamp an incrementing seqctl; the 8821cu came up warm so its silicon-MAC
   auto-ACK was not read (spoofed auto-ACK confirmed on both bands).
-- **RT3572 (rt2800usb driver)** auto-ACKs a spoofed MAC and its own silicon MAC (103 / 102 per 100), so
+- **RT3572 (rt3572 driver)** auto-ACKs a spoofed MAC and its own silicon MAC (103 / 102 per 100), so
   `SPOOFABLE` is confirmed. The one test unit has an unburned EFUSE, so its injected TX is too weak to
   reach the AP (0 ACKs back on every scenario): its retry family is unmeasured, not inferred. Its inject
   carried the same missing-seq-stamp bug, now fixed.

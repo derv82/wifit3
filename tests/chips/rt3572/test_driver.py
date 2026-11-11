@@ -1,4 +1,4 @@
-"""M1 unit tests for rt2800usb — chip-ID probe + warm detection.
+"""Unit tests for rt3572 — chip-ID probe + warm detection.
 
 Uses a tiny dict-backed mock transport so we can assert MAC_CSR0 / MAC
 / warm-bit decoding without touching hardware.
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from wifit3.chips.rt2800usb.constants import (
+from wifit3.chips.rt3572.constants import (
     MAC_ADDR_DW0,
     MAC_ADDR_DW1,
     MAC_CSR0,
@@ -20,9 +20,9 @@ from wifit3.chips.rt2800usb.constants import (
     USB_PID_RT3572,
     USB_VID_RALINK,
 )
-from wifit3.chips.rt2800usb import SUPPORTED_IDS
-from wifit3.chips.rt2800usb.driver import RT2800USBDriver
-from wifit3.chips.rt2800usb.mac import (
+from wifit3.chips.rt3572 import SUPPORTED_IDS
+from wifit3.chips.rt3572.driver import RT3572Driver
+from wifit3.chips.rt3572.mac import (
     is_chip_warm,
     read_chip_id,
     read_perm_mac,
@@ -81,7 +81,7 @@ RecordingTransport = FakeTransport
 
 def test_supported_ids_cover_all_variants():
     # 148f:5572 (RT5572 / PAU09) moved to the standalone chips/rt5572 driver;
-    # rt2800usb now claims only RT3572 (the AWUS051NH v2).
+    # rt3572 claims only RT3572 (the AWUS051NH v2).
     pids = {entry.pid for entry in SUPPORTED_IDS}
     assert pids == {USB_PID_RT3572}
     assert all(entry.vid == USB_VID_RALINK for entry in SUPPORTED_IDS)
@@ -90,12 +90,12 @@ def test_supported_ids_cover_all_variants():
 def test_supported_channels_covers_2g_plus_5g_non_dfs():
     """M-A2 extends to 5 GHz non-DFS channels. RT5392 will fail-soft on
     these (driver.set_channel returns False); RT3572 + RT5572 use them."""
-    from wifit3.chips.rt2800usb.chan import CHANNELS_5G_NON_DFS
+    from wifit3.chips.rt3572.chan import CHANNELS_5G_NON_DFS
     expected = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
-    assert RT2800USBDriver.SUPPORTED_CHANNELS == expected
+    assert RT3572Driver.SUPPORTED_CHANNELS == expected
     # Spot-check that the canonical non-DFS UNII channels are all present.
     for ch in (36, 40, 44, 48, 149, 153, 157, 161, 165):
-        assert ch in RT2800USBDriver.SUPPORTED_CHANNELS
+        assert ch in RT3572Driver.SUPPORTED_CHANNELS
 
 
 def _set_mac_csr0(t: FakeTransport, silicon: int, revision: int) -> None:
@@ -171,7 +171,7 @@ def test_read_perm_mac_assembles_dw0_dw1():
 def test_check_firmware_crc_accepts_valid_blob():
     """Build a synthetic 4096-byte chunk with a correct CRC-CCITT trailer
     and verify the checker accepts it."""
-    from wifit3.chips.rt2800usb.firmware import _crc_ccitt, check_firmware_crc
+    from wifit3.chips.rt3572.firmware import _crc_ccitt, check_firmware_crc
 
     payload = (bytes(range(256)) * 16)[:4094]  # exactly 4094 bytes
     crc = _crc_ccitt(payload)
@@ -183,7 +183,7 @@ def test_check_firmware_crc_accepts_valid_blob():
 
 def test_check_firmware_crc_rejects_corruption():
     """Flip one byte mid-payload and confirm CRC fails."""
-    from wifit3.chips.rt2800usb.firmware import _crc_ccitt, check_firmware_crc
+    from wifit3.chips.rt3572.firmware import _crc_ccitt, check_firmware_crc
 
     payload = (bytes(range(256)) * 16)[:4094]
     crc = _crc_ccitt(payload)
@@ -197,7 +197,7 @@ def test_bundled_rt5572_bin_passes_crc():
     """The shipped assets/rt5572.bin is 4096 bytes with a trailing CRC.
     Sanity-check that it survives our own CRC validation — otherwise
     M2a will reject it on the hw test before even attempting upload."""
-    from wifit3.chips.rt2800usb.firmware import check_firmware_crc, load_firmware_blob
+    from wifit3.chips.rt3572.firmware import check_firmware_crc, load_firmware_blob
 
     blob = load_firmware_blob()
     assert len(blob) == 4096, f"expected 4096-byte blob, got {len(blob)}"
@@ -210,7 +210,7 @@ def test_bundled_rt5572_bin_passes_crc():
 def test_set_field32_helper():
     """Verify the bit-field set helper matches kernel rt2x00_set_field32
     semantics across a few representative masks."""
-    from wifit3.chips.rt2800usb.reg_init import _set_field32
+    from wifit3.chips.rt3572.reg_init import _set_field32
 
     # Lowest-byte field
     assert _set_field32(0x00000000, 0x000000FF, 0x42) == 0x00000042
@@ -227,11 +227,11 @@ def test_set_field32_helper():
 def test_init_registers_writes_basic_rates(monkeypatch):
     """Smoke test: a known-good RecordingTransport sequence ends with
     LEGACY_BASIC_RATE = 0x13F and HT_BASIC_RATE = 0x8003 latched."""
-    from wifit3.chips.rt2800usb.constants import (
+    from wifit3.chips.rt3572.constants import (
         HT_BASIC_RATE, LEGACY_BASIC_RATE, RT_RT5392,
         WPDMA_GLO_CFG,
     )
-    from wifit3.chips.rt2800usb.reg_init import init_registers
+    from wifit3.chips.rt3572.reg_init import init_registers
 
     t = RecordingTransport()
     # Avoid the disable_wpdma read returning 0 forever; preseed something.
@@ -248,10 +248,10 @@ def test_init_registers_writes_basic_rates(monkeypatch):
 
 def test_init_registers_writes_tx_sw_cfg_for_rt5392(monkeypatch):
     """RT5392 path writes TX_SW_CFG0/1/2 = 0x404 / 0x080606 / 0."""
-    from wifit3.chips.rt2800usb.constants import (
+    from wifit3.chips.rt3572.constants import (
         RT_RT5392, TX_SW_CFG0, TX_SW_CFG1, TX_SW_CFG2, WPDMA_GLO_CFG,
     )
-    from wifit3.chips.rt2800usb.reg_init import init_registers
+    from wifit3.chips.rt3572.reg_init import init_registers
 
     t = RecordingTransport()
     t.write_bytes(WPDMA_GLO_CFG, [0, 0, 0, 0])
@@ -264,10 +264,10 @@ def test_init_registers_writes_tx_sw_cfg_for_rt5392(monkeypatch):
 
 def test_init_registers_picks_txop_hldr_et_per_chip(monkeypatch):
     """TXOP_HLDR_ET = 0x82 for RT5592, 0x02 for everything else."""
-    from wifit3.chips.rt2800usb.constants import (
+    from wifit3.chips.rt3572.constants import (
         RT_RT5392, RT_RT5592, TXOP_HLDR_ET, WPDMA_GLO_CFG,
     )
-    from wifit3.chips.rt2800usb.reg_init import init_registers
+    from wifit3.chips.rt3572.reg_init import init_registers
 
     for silicon, expected in ((RT_RT5392, 0x02), (RT_RT5592, 0x82)):
         t = RecordingTransport()
@@ -290,7 +290,7 @@ class BbpFakeTransport(FakeTransport):
         self.bbp_regs: dict[int, int] = {}
 
     def read32(self, addr: int) -> int:
-        from wifit3.chips.rt2800usb.constants import (
+        from wifit3.chips.rt3572.constants import (
             BBP_CSR_CFG, BBP_CSR_CFG_BUSY,
         )
         val = super().read32(addr)
@@ -300,7 +300,7 @@ class BbpFakeTransport(FakeTransport):
         return val
 
     def write32(self, addr: int, val: int) -> None:
-        from wifit3.chips.rt2800usb.constants import (
+        from wifit3.chips.rt3572.constants import (
             BBP_CSR_CFG, BBP_CSR_CFG_BUSY,
             BBP_CSR_CFG_READ_CONTROL, BBP_CSR_CFG_REGNUM, BBP_CSR_CFG_VALUE,
         )
@@ -326,7 +326,7 @@ class BbpFakeTransport(FakeTransport):
 
 
 def test_bbp_write_then_read_roundtrip():
-    from wifit3.chips.rt2800usb.bbp import bbp_read, bbp_write
+    from wifit3.chips.rt3572.bbp import bbp_read, bbp_write
     t = BbpFakeTransport()
     bbp_write(t, 65, 0x2C)
     bbp_write(t, 31, 0x08)
@@ -337,7 +337,7 @@ def test_bbp_write_then_read_roundtrip():
 
 
 def test_bbp4_mac_if_ctrl_sets_bit_0x40():
-    from wifit3.chips.rt2800usb.bbp import bbp4_mac_if_ctrl, bbp_read, bbp_write
+    from wifit3.chips.rt3572.bbp import bbp4_mac_if_ctrl, bbp_read, bbp_write
     t = BbpFakeTransport()
     # Pre-seed BBP[4] with some other bits to verify R-M-W preserves them.
     bbp_write(t, 4, 0x12)
@@ -348,8 +348,8 @@ def test_bbp4_mac_if_ctrl_sets_bit_0x40():
 def test_init_bbp_53xx_rt5392_path():
     """Verify the RT5392-specific BBP writes land (88, 95, 98, 134, 135)
     that the RT5390 path skips."""
-    from wifit3.chips.rt2800usb.bbp import bbp_read, init_bbp_53xx
-    from wifit3.chips.rt2800usb.constants import RT_RT5392
+    from wifit3.chips.rt3572.bbp import bbp_read, init_bbp_53xx
+    from wifit3.chips.rt3572.constants import RT_RT5392
     t = BbpFakeTransport()
     init_bbp_53xx(t, silicon_id=RT_RT5392)
     # Common writes (both RT5390 and RT5392)
@@ -370,8 +370,8 @@ def test_init_bbp_53xx_rt5392_path():
 
 
 def test_init_bbp_53xx_rt5390_path_uses_different_106():
-    from wifit3.chips.rt2800usb.bbp import bbp_read, init_bbp_53xx
-    from wifit3.chips.rt2800usb.constants import RT_RT5390
+    from wifit3.chips.rt3572.bbp import bbp_read, init_bbp_53xx
+    from wifit3.chips.rt3572.constants import RT_RT5390
     t = BbpFakeTransport()
     init_bbp_53xx(t, silicon_id=RT_RT5390)
     # RT5390 writes 0x03 to BBP[106]; RT5392 writes 0x12
@@ -384,8 +384,8 @@ def test_init_bbp_53xx_rt5390_path_uses_different_106():
 
 def test_init_bbp_53xx_rejects_unsupported_silicon():
     import pytest
-    from wifit3.chips.rt2800usb.bbp import init_bbp_53xx
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt3572.bbp import init_bbp_53xx
+    from wifit3.chips.rt3572.constants import RT_RT3572
     t = BbpFakeTransport()
     with pytest.raises(ValueError, match="unsupported silicon"):
         init_bbp_53xx(t, silicon_id=RT_RT3572)
@@ -394,7 +394,7 @@ def test_init_bbp_53xx_rejects_unsupported_silicon():
 def test_init_bbp_3572_lays_down_kernel_table():
     """Spot-check the init_bbp_3572 writes against the kernel table
     [SRC rt2800lib.c:6764-6798]."""
-    from wifit3.chips.rt2800usb.bbp import bbp_read, init_bbp_3572
+    from wifit3.chips.rt3572.bbp import bbp_read, init_bbp_3572
     t = BbpFakeTransport()
     init_bbp_3572(t, txpath=2, rxpath=2)
     expected = {
@@ -412,8 +412,8 @@ def test_init_bbp_dispatcher_routes_by_silicon():
     """init_bbp(silicon=RT5392) should hit the 53xx path; init_bbp(silicon=RT3572)
     should hit the 3572 path. Easy discriminator: BBP[106] is 0x12 for RT5392,
     0x35 for RT3572 — different bytes per kernel table."""
-    from wifit3.chips.rt2800usb.bbp import bbp_read, init_bbp
-    from wifit3.chips.rt2800usb.constants import RT_RT3572, RT_RT5392
+    from wifit3.chips.rt3572.bbp import bbp_read, init_bbp
+    from wifit3.chips.rt3572.constants import RT_RT3572, RT_RT5392
 
     t_5392 = BbpFakeTransport()
     init_bbp(t_5392, RT_RT5392, txpath=1, rxpath=1)
@@ -427,7 +427,7 @@ def test_init_bbp_dispatcher_routes_by_silicon():
 def test_disable_unused_dac_adc_noop_for_2t2r():
     """RT3572 2T2R hw should NOT trigger either BBP138 mutation —
     the kernel only writes when txpath==1 or rxpath==1."""
-    from wifit3.chips.rt2800usb.bbp import bbp_read, bbp_write, disable_unused_dac_adc
+    from wifit3.chips.rt3572.bbp import bbp_read, bbp_write, disable_unused_dac_adc
     t = BbpFakeTransport()
     bbp_write(t, 138, 0x55)   # arbitrary pre-state
     disable_unused_dac_adc(t, txpath=2, rxpath=2)
@@ -445,7 +445,7 @@ class RfcsrFakeTransport(BbpFakeTransport):
         self.rf_regs: dict[int, int] = {}
 
     def read32(self, addr: int) -> int:
-        from wifit3.chips.rt2800usb.constants import (
+        from wifit3.chips.rt3572.constants import (
             RF_CSR_CFG, RF_CSR_CFG_BUSY,
         )
         val = super().read32(addr)
@@ -454,7 +454,7 @@ class RfcsrFakeTransport(BbpFakeTransport):
         return val
 
     def write32(self, addr: int, val: int) -> None:
-        from wifit3.chips.rt2800usb.constants import (
+        from wifit3.chips.rt3572.constants import (
             RF_CSR_CFG, RF_CSR_CFG_BUSY, RF_CSR_CFG_DATA,
             RF_CSR_CFG_REGNUM, RF_CSR_CFG_WRITE,
         )
@@ -477,7 +477,7 @@ class RfcsrFakeTransport(BbpFakeTransport):
 
 
 def test_rfcsr_write_then_read_roundtrip():
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read, rfcsr_write
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read, rfcsr_write
     t = RfcsrFakeTransport()
     rfcsr_write(t, 1, 0x17)
     rfcsr_write(t, 33, 0xC0)
@@ -490,11 +490,11 @@ def test_rfcsr_write_then_read_roundtrip():
 def test_init_rfcsr_5392_writes_full_table(monkeypatch):
     """Spot-check a representative sample of the 56-entry RT5392 RF
     init table landed."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
 
-    from wifit3.chips.rt2800usb.constants import RT_RT5392
-    from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
+    from wifit3.chips.rt3572.constants import RT_RT5392
+    from wifit3.chips.rt3572.rfcsr import init_rfcsr, rfcsr_read
 
     t = RfcsrFakeTransport()
     init_rfcsr(t, RT_RT5392)
@@ -510,11 +510,11 @@ def test_init_rfcsr_5392_writes_full_table(monkeypatch):
 def test_init_rfcsr_5392_runs_normal_mode_setup(monkeypatch):
     """After init_rfcsr_5392 finishes, RFCSR38.RX_LO1_EN should be
     cleared and RFCSR30 should have RX_VCM = 2 (bits[4:3] = 0b10)."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
 
-    from wifit3.chips.rt2800usb.constants import RT_RT5392
-    from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
+    from wifit3.chips.rt3572.constants import RT_RT5392
+    from wifit3.chips.rt3572.rfcsr import init_rfcsr, rfcsr_read
 
     t = RfcsrFakeTransport()
     init_rfcsr(t, RT_RT5392)
@@ -527,8 +527,8 @@ def test_init_rfcsr_5392_runs_normal_mode_setup(monkeypatch):
 
 def test_init_rfcsr_rejects_unsupported_silicon():
     import pytest
-    from wifit3.chips.rt2800usb.constants import RT_RT5390
-    from wifit3.chips.rt2800usb.rfcsr import init_rfcsr
+    from wifit3.chips.rt3572.constants import RT_RT5390
+    from wifit3.chips.rt3572.rfcsr import init_rfcsr
     t = RfcsrFakeTransport()
     # RT5390 path isn't ported yet (NotImplementedError).
     # RT5592 was ported in M-B1; its routing is exercised by
@@ -539,12 +539,12 @@ def test_init_rfcsr_rejects_unsupported_silicon():
 
 def test_init_rfcsr_3572_lays_down_kernel_table(monkeypatch):
     """Spot-check the RT3572 RFCSR init table [SRC rt2800lib.c:7907-7937]."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "_RX_FILTER_SETTLE_S", 0)   # skip the RX-filter-cal busy-wait
 
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import init_rfcsr, rfcsr_read
 
     t = RfcsrFakeTransport()
     cal = init_rfcsr(t, RT_RT3572)
@@ -562,7 +562,7 @@ def test_init_rfcsr_3572_lays_down_kernel_table(monkeypatch):
     # RfFilterCal must be populated (init_rfcsr_3572 returns it).
     assert cal is not None
     # RT5392 path returns None to distinguish.
-    from wifit3.chips.rt2800usb.constants import RT_RT5392
+    from wifit3.chips.rt3572.constants import RT_RT5392
     t2 = RfcsrFakeTransport()
     assert init_rfcsr(t2, RT_RT5392) is None
 
@@ -570,12 +570,12 @@ def test_init_rfcsr_3572_lays_down_kernel_table(monkeypatch):
 def test_init_rfcsr_3572_sets_rfcsr6_r2_bit(monkeypatch):
     """init_rfcsr_3572 R-M-W's RFCSR6_R2 (bit 6) after the table write
     of 0x4A. 0x4A already has bit 6 set, so the visible result is 0x4A."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "_RX_FILTER_SETTLE_S", 0)   # skip the RX-filter-cal busy-wait
 
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import init_rfcsr, rfcsr_read
 
     t = RfcsrFakeTransport()
     init_rfcsr(t, RT_RT3572)
@@ -586,12 +586,12 @@ def test_init_rfcsr_3572_sets_rfcsr6_r2_bit(monkeypatch):
 def test_init_rfcsr_3572_clears_rfcsr17_tx_lo1_en(monkeypatch):
     """normal_mode_setup_3xxx clears RFCSR17_TX_LO1_EN (bit 3) after
     the table writes RFCSR17=0x23. Expected after-state: 0x23 & ~0x08 = 0x23."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "_RX_FILTER_SETTLE_S", 0)   # skip the RX-filter-cal busy-wait
 
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import init_rfcsr, rfcsr_read
 
     t = RfcsrFakeTransport()
     init_rfcsr(t, RT_RT3572)
@@ -610,7 +610,7 @@ def _build_rt2800_rx_urb(frame_body: bytes, *, rssi_byte: int = 40, crc_error: b
       [RXINFO 4B] [RXWI 16B] [802.11 frame] [RXD 4B]
 
     Kernel docs say MPDU byte count includes a trailing 4-byte FCS, but
-    live RT5572 / RT5372 diagnostics (see chips/rt2800usb/rx.py:168-181)
+    live RT5572 / RT5372 diagnostics (see chips/rt3572/rx.py:168-181)
     showed the chip pre-strips FCS before the URB lands. Verified on
     PAU09 + PAU05 via PMKID harvest landing a clean 16-byte hash; the
     older `[:-4]` strip was clipping real EAPOL M1 payload. So this
@@ -643,7 +643,7 @@ def _build_rt2800_rx_urb(frame_body: bytes, *, rssi_byte: int = 40, crc_error: b
 def test_parse_rx_urb_decodes_trailer():
     """RX URB decode produces the 802.11 frame bytes verbatim — no
     synthetic FCS strip, since the chip pre-strips before delivery."""
-    from wifit3.chips.rt2800usb.rx import parse_rx_urb
+    from wifit3.chips.rt3572.rx import parse_rx_urb
     body = b"\x80\x00" + b"\x00" * 22 + b"BEACON"   # 30-byte body
     urb = _build_rt2800_rx_urb(body, rssi_byte=40)
     rx = parse_rx_urb(urb)
@@ -657,7 +657,7 @@ def test_parse_rx_urb_decodes_trailer():
 
 def test_parse_rx_urb_handles_signed_rssi_byte():
     """Negative RSSI bytes (signed) should still produce sensible dBm."""
-    from wifit3.chips.rt2800usb.rx import parse_rx_urb
+    from wifit3.chips.rt3572.rx import parse_rx_urb
     body = b"\x00" * 30
     # RSSI byte 0x80 = signed -128 → -12 - (-128) = +116 dBm (nonsense
     # but proves the sign extension works). Real chip values are 30-90.
@@ -669,13 +669,13 @@ def test_parse_rx_urb_handles_signed_rssi_byte():
 
 
 def test_parse_rx_urb_returns_none_on_short_buffer():
-    from wifit3.chips.rt2800usb.rx import parse_rx_urb
+    from wifit3.chips.rt3572.rx import parse_rx_urb
     assert parse_rx_urb(b"") is None
     assert parse_rx_urb(b"\x00" * 23) is None   # 1 short of 4+16+4 min
 
 
 def test_parse_rx_urb_flags_crc_error():
-    from wifit3.chips.rt2800usb.rx import parse_rx_urb
+    from wifit3.chips.rt3572.rx import parse_rx_urb
     body = b"\x00" * 30
     rx = parse_rx_urb(_build_rt2800_rx_urb(body, crc_error=True))
     assert rx is not None
@@ -683,10 +683,10 @@ def test_parse_rx_urb_flags_crc_error():
 
 
 def test_rxwi_size_for_silicon():
-    from wifit3.chips.rt2800usb.constants import (
+    from wifit3.chips.rt3572.constants import (
         RT_RT3572, RT_RT5390, RT_RT5392, RT_RT5592,
     )
-    from wifit3.chips.rt2800usb.rx import rxwi_size_for_silicon
+    from wifit3.chips.rt3572.rx import rxwi_size_for_silicon
     assert rxwi_size_for_silicon(RT_RT5392) == 16
     assert rxwi_size_for_silicon(RT_RT5390) == 16
     assert rxwi_size_for_silicon(RT_RT3572) == 16
@@ -702,9 +702,9 @@ def test_set_channel_rejects_out_of_range(monkeypatch):
     band's kernel table (15, 50, 99, 142 — half-channels exist there
     so we pick truly unused numbers)."""
     import pytest
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572, RT_RT5392
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572, RT_RT5392
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0x00, bbp26=0x00)
@@ -720,9 +720,9 @@ def test_set_channel_rejects_out_of_range(monkeypatch):
 def test_set_channel_3572_5g_synth_table_channel_36(monkeypatch):
     """5 GHz channel 36 → rf1=0x56, rf2=0, rf3=4. RT3572 routes these
     to RFCSR 2/6_R1/3."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = RfcsrFakeTransport()
@@ -743,9 +743,9 @@ def test_set_channel_3572_5g_synth_table_channel_36(monkeypatch):
 
 def test_set_channel_3572_5g_band_dependent_r1_txdiv(monkeypatch):
     """RFCSR5.R1 and RFCSR6.TXDIV must flip per band."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -771,9 +771,9 @@ def test_set_channel_3572_5g_band_dependent_r1_txdiv(monkeypatch):
 
 def test_set_channel_3572_5g_subband_unii1(monkeypatch):
     """ch <= 64 sub-band (UNII-1/2): RFCSR19=0xB7, 20=0xF6, 25=0x3D."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -789,9 +789,9 @@ def test_set_channel_3572_5g_subband_unii1(monkeypatch):
 
 def test_set_channel_3572_5g_subband_hyperlan(monkeypatch):
     """64 < ch <= 128 sub-band: RFCSR19=0x74, 20=0xF4, 25=0x01."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -805,9 +805,9 @@ def test_set_channel_3572_5g_subband_hyperlan(monkeypatch):
 
 def test_set_channel_3572_5g_subband_unii3(monkeypatch):
     """ch > 128 sub-band: RFCSR19=0x72, 20=0xF3, 25=0x01."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -821,10 +821,10 @@ def test_set_channel_3572_5g_subband_unii3(monkeypatch):
 
 def test_set_channel_3572_5g_writes_bbp82_0x94(monkeypatch):
     """RT3572 5 GHz post-RF BBP82 = 0x94 (vs 0x84 for 2.4 GHz)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -847,10 +847,10 @@ def test_set_channel_3572_2g_bbp82_75_honor_external_lna_bg(monkeypatch):
     BBP82=0x84 + BBP75=0x50. [SRC] rt2800lib.c:4312-4322. [WIRE] the
     AWUS051NH v2 takes the external-LNA branch (captures_rt3572_tx_diff/
     aireplay.pcap: BBP82=0x62 ×2 + BBP75=0x46 on every 2.4 GHz tune)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -873,10 +873,10 @@ def test_set_channel_3572_2g_bbp82_75_honor_external_lna_bg(monkeypatch):
 def test_set_channel_3572_5g_bbp25_26_hardcoded(monkeypatch):
     """5 GHz hardcodes BBP25 = 0x09, BBP26 = 0xFF (IQ phase correction);
     2.4 GHz restores from cal_result.bbp25/26."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0x44, bbp26=0x55)
@@ -897,10 +897,10 @@ def test_set_channel_3572_5g_bbp25_26_hardcoded(monkeypatch):
 def test_set_channel_3572_5g_agc_formula(monkeypatch):
     """5 GHz AGC: BBP66 = 0x22 + (lna_gain * 5) // 3.
     2.4 GHz: BBP66 = 0x1C + 2*lna_gain."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -936,9 +936,9 @@ def test_set_channel_3572_5g_rfcsr7_bits_set(monkeypatch):
     = (0xD8 & ~(0x08 | 0xC0)) | (0x04 | 0x10) = 0x10 | 0x14 = 0x14.
 
     Then the channel-tune kick adds RF_TUNING (bit 0) → 0x15."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read, rfcsr_write
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read, rfcsr_write
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -958,9 +958,9 @@ def test_set_channel_3572_5g_rfcsr7_bits_set(monkeypatch):
 
 def test_set_channel_3572_5g_gpio_ctrl_val7_clear(monkeypatch):
     """GPIO_CTRL bit 7 (band switch): 1 for 2.4G, 0 for 5G."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import GPIO_CTRL, GPIO_CTRL_VAL7, RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import GPIO_CTRL, GPIO_CTRL_VAL7, RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -979,13 +979,13 @@ def test_set_channel_3572_5g_gpio_ctrl_val7_clear(monkeypatch):
 def test_set_channel_3572_5g_tx_pin_uses_a_pa(monkeypatch):
     """5 GHz TX_PIN_CFG: PA_PE_A0_EN (bit 0) for primary, PA_PE_A1_EN
     (bit 2) for secondary. 2.4G uses G0/G1 instead."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import (
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import (
         RT_RT3572, TX_PIN_CFG_REG,
         TX_PIN_CFG_PA_PE_A0_EN_BIT, TX_PIN_CFG_PA_PE_A1_EN,
         TX_PIN_CFG_PA_PE_G0_EN_BIT, TX_PIN_CFG_PA_PE_G1_EN,
     )
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -1013,11 +1013,11 @@ def test_set_channel_3572_5g_tx_pin_uses_a_pa(monkeypatch):
 
 def test_set_channel_3572_5g_tx_band_cfg(monkeypatch):
     """TX_BAND_CFG: 5G sets A bit, clears BG bit. 2.4G is reversed."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import (
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import (
         RT_RT3572, TX_BAND_CFG_A, TX_BAND_CFG_BG_BIT, TX_BAND_CFG_REG,
     )
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -1042,9 +1042,9 @@ def test_set_channel_3572_5g_freq_offset_to_rfcsr23(monkeypatch):
     on the 5 GHz path (the bug-prone area highlighted in the M-A2
     handoff doc — easy to miss if the 5G branch shadows the RFCSR23
     write)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
                       bbp25=0, bbp26=0)
@@ -1059,7 +1059,7 @@ def test_eeprom_unburned_default_is_60():
     RFCSR23 channel-tune writes = 0x35 (53 decimal) on a burned dongle.
     Sweep on user's unburned dongle peaks at 60. We pick 60 as the
     'sweep-peak' default — see eeprom.py module comment for rationale."""
-    from wifit3.chips.rt2800usb.eeprom import (
+    from wifit3.chips.rt3572.eeprom import (
         UNBURNED_FREQ_OFFSET_DEFAULT, parse_eeprom,
     )
     assert UNBURNED_FREQ_OFFSET_DEFAULT == 60
@@ -1087,7 +1087,7 @@ def test_eeprom_nic_conf0_0x0f0f_treated_as_unburned():
     """PAU09 N600 EFUSE returns NIC_CONF0=0x0F0F (txpath=0, rxpath=15 —
     both physically impossible). Must apply the kernel default of
     1 TX / 1 RX so set_channel matches the wire (RFCSR1=0xf1)."""
-    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    from wifit3.chips.rt3572.eeprom import parse_eeprom
     buf = bytearray(0x200)
     # NIC_CONF0 at word 0x1A → byte 0x34.
     buf[0x34] = 0x0F
@@ -1100,7 +1100,7 @@ def test_eeprom_nic_conf0_0x0f0f_treated_as_unburned():
 def test_eeprom_nic_conf0_impossible_values_treated_as_unburned():
     """Any NIC_CONF0 with txpath==0 or rxpath > 3 is by definition
     unburned (max physical chain count is 3T3R)."""
-    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    from wifit3.chips.rt3572.eeprom import parse_eeprom
 
     def _ee(nc0: int):
         buf = bytearray(0x200)
@@ -1128,7 +1128,7 @@ def test_eeprom_nic_conf0_impossible_values_treated_as_unburned():
 def test_eeprom_rf_type_decodes_nic_conf0_bits_11_8():
     """NIC_CONF0.RF_TYPE = FIELD16(0x0f00) — the RF-chip nibble a burned RT3572
     EEPROM encodes (RF3052 = 0x9), independent of the antenna low byte."""
-    from wifit3.chips.rt2800usb.eeprom import RF3052, parse_eeprom
+    from wifit3.chips.rt3572.eeprom import RF3052, parse_eeprom
     buf = bytearray(0x200)
     # NIC_CONF0 word 0x1A → byte 0x34/0x35; RF3052 (0x9 in the high nibble) + 2T2R.
     buf[0x34] = 0x22   # txpath=2, rxpath=2
@@ -1139,7 +1139,7 @@ def test_eeprom_rf_type_decodes_nic_conf0_bits_11_8():
 
 
 def test_resolve_rf_chip_rt3572_burned_is_rf3052_ported():
-    from wifit3.chips.rt2800usb.eeprom import RF3052, parse_eeprom, resolve_rf_chip
+    from wifit3.chips.rt3572.eeprom import RF3052, parse_eeprom, resolve_rf_chip
     buf = bytearray(0x200)
     buf[0x34] = 0x22   # 2T2R
     buf[0x35] = 0x09   # RF3052
@@ -1153,7 +1153,7 @@ def test_resolve_rf_chip_rt3572_unburned_gives_zero_not_fail():
     """Reference AWUS051NH v2: unburned NIC_CONF0=0x0000 → RF_TYPE 0. Kernel
     would -ENODEV; we return rf_id=0 (ported=False) and the caller runs the
     silicon default (RF3052) so the erased-EEPROM dongle still comes up."""
-    from wifit3.chips.rt2800usb.eeprom import parse_eeprom, resolve_rf_chip
+    from wifit3.chips.rt3572.eeprom import parse_eeprom, resolve_rf_chip
     rf = resolve_rf_chip(RT_RT3572, parse_eeprom(bytes(0x200)))
     assert rf.rf_id == 0
     assert rf.ported is False
@@ -1162,7 +1162,7 @@ def test_resolve_rf_chip_rt3572_unburned_gives_zero_not_fail():
 def test_resolve_rf_chip_rt5392_reads_chip_id_word():
     """RT5390/RT5392 silicon take the RF id from EEPROM_CHIP_ID (word 0), not
     NIC_CONF0.RF_TYPE. [SRC] rt2800lib.c:11187-11191."""
-    from wifit3.chips.rt2800usb.eeprom import RF5392, parse_eeprom, resolve_rf_chip
+    from wifit3.chips.rt3572.eeprom import RF5392, parse_eeprom, resolve_rf_chip
     buf = bytearray(0x200)
     buf[0x00] = 0x92   # EEPROM_CHIP_ID = 0x5392 (RF5392)
     buf[0x01] = 0x53
@@ -1174,7 +1174,7 @@ def test_resolve_rf_chip_rt5392_reads_chip_id_word():
 def test_resolve_rf_chip_rt5592_hardcoded_rf5592():
     """RT5592 silicon hardcodes RF5592 regardless of EEPROM contents.
     [SRC] rt2800lib.c:11198-11199."""
-    from wifit3.chips.rt2800usb.eeprom import RF5592, parse_eeprom, resolve_rf_chip
+    from wifit3.chips.rt3572.eeprom import RF5592, parse_eeprom, resolve_rf_chip
     rf = resolve_rf_chip(RT_RT5592, parse_eeprom(bytes(0x200)))
     assert rf.rf_id == RF5592
     assert rf.ported is True
@@ -1184,7 +1184,7 @@ def test_resolve_rf_chip_unknown_rf_marked_unported():
     """A burned RT3572 EEPROM claiming an RF the port has no tune path for
     (RF3022 = 0x8) is flagged unported, not crashed — the driver still runs the
     silicon default and logs an 'untested variant' warning."""
-    from wifit3.chips.rt2800usb.eeprom import RF3022, parse_eeprom, resolve_rf_chip
+    from wifit3.chips.rt3572.eeprom import RF3022, parse_eeprom, resolve_rf_chip
     buf = bytearray(0x200)
     buf[0x34] = 0x22   # 2T2R
     buf[0x35] = 0x08   # RF3022 nibble — not a ported path
@@ -1196,7 +1196,7 @@ def test_resolve_rf_chip_unknown_rf_marked_unported():
 def test_eeprom_exposes_lna_gain_a_and_capabilities():
     """M-A2: per-band LNA + NIC_CONF1 capability flags must be plumbed
     so _channel_kwargs() can hand the right values to set_channel."""
-    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    from wifit3.chips.rt3572.eeprom import parse_eeprom
     buf = bytearray(0x200)
     # LNA word at offset 0x22 × 2 = 0x44.
     buf[0x44] = 0x10    # lna_bg
@@ -1233,7 +1233,7 @@ def test_eeprom_txmixer_gain_decode_and_fallback():
     bits[2:0], with the kernel's low-byte-0xff -> 0 fallback. This is the field
     that was pinned to 0, killing 2.4 GHz TX on the burned-mixer/unburned-conf0
     AWUS051NH v2. [SRC] rt2800lib.c:10996 / 11011."""
-    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    from wifit3.chips.rt3572.eeprom import parse_eeprom
     # AWUS051NH v2 profile: word 0x24 = 0x0004, word 0x26 = 0x0002.
     buf = bytearray(0x200)
     buf[0x24 * 2] = 0x04    # 24g low byte -> gain bits[2:0] = 4
@@ -1255,7 +1255,7 @@ def test_eeprom_txmixer_gain_decode_and_fallback():
     assert ee.txmixer_gain_bg == 0
 
     # A hand-built EepromValues with no raw dump -> 0 (no EEPROM to read).
-    from wifit3.chips.rt2800usb.eeprom import EepromValues
+    from wifit3.chips.rt3572.eeprom import EepromValues
     bare = EepromValues(
         mac_address=b"\x00" * 6, nic_conf0=0, nic_conf1=0, freq_offset=0,
         lna_gain_bg=0, lna_gain_a=0, rssi_bg_offset0=0, rssi_bg_offset1=0,
@@ -1269,9 +1269,9 @@ def test_set_channel_3572_2g_rfcsr16_honors_txmixer_gain(monkeypatch):
     from the EEPROM. gain 4 -> 0x4c (matches the in-tree capture); gain 0 ->
     0x48 (the old pinned-to-0 bug that zeroed the 2.4 GHz TX mixer gain).
     [SRC] rt2800lib.c:2739-2742."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15, bbp25=0x44, bbp26=0x55)
 
@@ -1289,9 +1289,9 @@ def test_set_channel_3572_2g_rfcsr16_honors_txmixer_gain(monkeypatch):
 def test_set_channel_3572_5g_rfcsr16_honors_txmixer_gain(monkeypatch):
     """RF3052 5 GHz tune: RFCSR16 base 0x7a with TXMIXER_GAIN from EEPROM.
     gain 2 -> 0x7a. [SRC] rt2800lib.c:2761-2764."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15, bbp25=0x44, bbp26=0x55)
 
@@ -1305,7 +1305,7 @@ def test_set_channel_rejects_unsupported_silicon(monkeypatch):
     """An unknown silicon ID raises NotImplementedError. (RT5592 was
     ported in M-B1 — exercised by test_set_channel_5592_2g_* below.)"""
     import pytest
-    import wifit3.chips.rt2800usb.chan as chan_mod
+    import wifit3.chips.rt3572.chan as chan_mod
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     t = RfcsrFakeTransport()
     with pytest.raises(NotImplementedError):
@@ -1315,9 +1315,9 @@ def test_set_channel_rejects_unsupported_silicon(monkeypatch):
 def test_set_channel_3572_writes_rfcsr2_for_channel_1(monkeypatch):
     """RT3572 uses RFCSR2 (not RFCSR8) for the synthesizer N value;
     channel 1 → rf1=241 → RFCSR2 = 241."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
-    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
+    from wifit3.chips.rt3572.rfcsr import RfFilterCal, rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = RfcsrFakeTransport()
@@ -1339,8 +1339,8 @@ def test_set_channel_3572_requires_cal_result(monkeypatch):
     """The RT3572 path needs the filter calibration captured at init
     time; a None cal_result should raise."""
     import pytest
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT3572
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     t = RfcsrFakeTransport()
     with pytest.raises(ValueError, match="cal_result"):
@@ -1349,9 +1349,9 @@ def test_set_channel_3572_requires_cal_result(monkeypatch):
 
 def test_set_channel_writes_rfcsr8_for_channel_1(monkeypatch):
     """Channel 1 → rf1=241 → RFCSR8 = 241."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT5392
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT5392
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     # Skip the MCU freq cal request (needs H2M_MAILBOX_CSR plumbing).
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
@@ -1364,9 +1364,9 @@ def test_set_channel_writes_rfcsr8_for_channel_1(monkeypatch):
 def test_set_channel_writes_correct_synth_for_each_2g_channel(monkeypatch):
     """Spot-check rf1/rf2/rf3 values from the rf_vals_3x table land in
     RFCSR 8/9/11."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT5392
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import RT_RT5392
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1397,7 +1397,7 @@ def test_build_tx_descriptors_default_shape():
     QSEL = EDCA (2), TX_OP = HT_TXOP_NONE (3), PACKETID_QUEUE = 0,
     PACKETID_ENTRY = 2."""
     import struct
-    from wifit3.chips.rt2800usb.tx import build_tx_descriptors
+    from wifit3.chips.rt3572.tx import build_tx_descriptors
     desc = build_tx_descriptors(26, txwi_size=16, use_no_ack=True)
     assert len(desc) == 4 + 16  # TXINFO + TXWI
 
@@ -1425,7 +1425,7 @@ def test_build_tx_descriptors_default_shape():
 
 def test_build_tx_descriptors_use_ack_sets_ack_bit():
     import struct
-    from wifit3.chips.rt2800usb.tx import build_tx_descriptors
+    from wifit3.chips.rt3572.tx import build_tx_descriptors
     desc = build_tx_descriptors(26, txwi_size=16, use_no_ack=False)
     _, _, txwi_w1, _, _ = struct.unpack("<5I", desc)
     assert (txwi_w1 & 1) == 1, "ACK should be set when use_no_ack=False"
@@ -1433,7 +1433,7 @@ def test_build_tx_descriptors_use_ack_sets_ack_bit():
 
 def test_build_tx_descriptors_rt5592_uses_5word_txwi():
     """RT5592 silicon needs a 5-word (20-byte) TXWI; total prefix = 24 B."""
-    from wifit3.chips.rt2800usb.tx import build_tx_descriptors
+    from wifit3.chips.rt3572.tx import build_tx_descriptors
     desc = build_tx_descriptors(26, txwi_size=20)
     assert len(desc) == 4 + 20
 
@@ -1442,8 +1442,8 @@ def test_build_tx_descriptors_phymode_matches_rt5572_capture():
     """5 GHz TX is OFDM, 2.4 GHz is CCK — the only TXWI byte that differs by band
     is W0[30:31] PHYMODE. Prefixes are byte-exact vs the kernel rt2800usb RT5572
     deauth (ch1 CCK, ch149 OFDM)."""
-    from wifit3.chips.rt2800usb.constants import TXWI_PHYMODE_CCK, TXWI_PHYMODE_OFDM
-    from wifit3.chips.rt2800usb.tx import build_tx_descriptors
+    from wifit3.chips.rt3572.constants import TXWI_PHYMODE_CCK, TXWI_PHYMODE_OFDM
+    from wifit3.chips.rt3572.tx import build_tx_descriptors
     cck = build_tx_descriptors(26, txwi_size=20, use_no_ack=True, mcs=0, phymode=TXWI_PHYMODE_CCK)
     ofdm = build_tx_descriptors(26, txwi_size=20, use_no_ack=True, mcs=0, phymode=TXWI_PHYMODE_OFDM)
     assert cck.hex() == "300000050003000000001a80000000000000000000000000"
@@ -1451,15 +1451,15 @@ def test_build_tx_descriptors_phymode_matches_rt5572_capture():
 
 
 def test_txwi_size_for_silicon():
-    from wifit3.chips.rt2800usb.constants import RT_RT3572, RT_RT5392, RT_RT5592
-    from wifit3.chips.rt2800usb.tx import txwi_size_for_silicon
+    from wifit3.chips.rt3572.constants import RT_RT3572, RT_RT5392, RT_RT5592
+    from wifit3.chips.rt3572.tx import txwi_size_for_silicon
     assert txwi_size_for_silicon(RT_RT5392) == 16
     assert txwi_size_for_silicon(RT_RT3572) == 16
     assert txwi_size_for_silicon(RT_RT5592) == 20
 
 
 def test_build_deauth_structure():
-    from wifit3.chips.rt2800usb.tx import BROADCAST_MAC, build_deauth
+    from wifit3.chips.rt3572.tx import BROADCAST_MAC, build_deauth
     bssid = bytes.fromhex("aabbccddeeff")
     f = build_deauth(BROADCAST_MAC, bssid)
     assert len(f) == 26
@@ -1478,7 +1478,7 @@ def test_init_bbp_dispatcher_routes_5592(monkeypatch):
     """RT5592 routes to init_bbp_5592 — discriminator: BBP[20]=0x06
     (only init_bbp_5592 writes this) and BBP[68]=0xDD (vs init_bbp_3572's
     0x0B from init_bbp_early — overwritten by 5592 body)."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
+    import wifit3.chips.rt3572.bbp as bbp_mod
     monkeypatch.setattr(bbp_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = BbpFakeTransport()
@@ -1493,7 +1493,7 @@ def test_init_bbp_5592_writes_full_table(monkeypatch):
     """Spot-check the kernel init_bbp_5592 table writes land (using the
     final-value rule for registers the kernel writes more than once).
     [SRC] rt2800lib.c:6967-7039."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
+    import wifit3.chips.rt3572.bbp as bbp_mod
     monkeypatch.setattr(bbp_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = BbpFakeTransport()
@@ -1521,7 +1521,7 @@ def test_init_bbp_5592_glrt_table_replay(monkeypatch):
     """The 70-byte GLRT table writes BBP195=offset + BBP196=value pairs
     for offsets 128..211. After init_bbp_5592 finishes, the BBP195/196
     indirect pair holds the LAST written entry: offset=211, value=0x6e."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
+    import wifit3.chips.rt3572.bbp as bbp_mod
     monkeypatch.setattr(bbp_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = BbpFakeTransport()
@@ -1533,7 +1533,7 @@ def test_init_bbp_5592_glrt_table_replay(monkeypatch):
 
 def test_init_bbp_5592_main_antenna_default():
     """ant_diversity != 3 (kernel default-path) → BBP152 bit 7 SET."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
+    import wifit3.chips.rt3572.bbp as bbp_mod
     t = BbpFakeTransport()
     bbp_mod.init_bbp_5592(t, rxpath=2, ant_diversity=0, chip_rev=0)
     assert (bbp_mod.bbp_read(t, 152) & 0x80) == 0x80
@@ -1541,7 +1541,7 @@ def test_init_bbp_5592_main_antenna_default():
 
 def test_init_bbp_5592_aux_antenna_when_div_3():
     """ant_diversity == 3 → BBP152 bit 7 CLEAR (aux antenna)."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
+    import wifit3.chips.rt3572.bbp as bbp_mod
     t = BbpFakeTransport()
     bbp_mod.init_bbp_5592(t, rxpath=2, ant_diversity=3, chip_rev=0)
     assert (bbp_mod.bbp_read(t, 152) & 0x80) == 0x00
@@ -1549,8 +1549,8 @@ def test_init_bbp_5592_aux_antenna_when_div_3():
 
 def test_init_bbp_5592_rev_5592c_extra_writes(monkeypatch):
     """chip_rev >= REV_RT5592C (0x0221) triggers BBP254 bit 7 + BBP103=0xC0."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
-    from wifit3.chips.rt2800usb.constants import REV_RT5592C
+    import wifit3.chips.rt3572.bbp as bbp_mod
+    from wifit3.chips.rt3572.constants import REV_RT5592C
     monkeypatch.setattr(bbp_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = BbpFakeTransport()
@@ -1564,7 +1564,7 @@ def test_init_bbp_5592_rev_5592c_extra_writes(monkeypatch):
 
 def test_init_bbp_5592_pre_rev_5592c_no_bbp254(monkeypatch):
     """chip_rev < REV_RT5592C → BBP254 untouched (left at 0)."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
+    import wifit3.chips.rt3572.bbp as bbp_mod
     monkeypatch.setattr(bbp_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = BbpFakeTransport()
@@ -1575,7 +1575,7 @@ def test_init_bbp_5592_pre_rev_5592c_no_bbp254(monkeypatch):
 def test_init_rfcsr_dispatcher_routes_5592(monkeypatch):
     """RT5592 routes to init_rfcsr_5592 — discriminator: RFCSR1 = 0x3F
     (RT5392 writes 0x17 here; RT3572 writes 0x81)."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1588,7 +1588,7 @@ def test_init_rfcsr_dispatcher_routes_5592(monkeypatch):
 def test_init_rfcsr_5592_writes_full_table(monkeypatch):
     """Spot-check the 21-entry RT5592 RFCSR table.
     [SRC] rt2800lib.c:8466-8486."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1607,7 +1607,7 @@ def test_init_rfcsr_5592_writes_full_table(monkeypatch):
 
 def test_init_rfcsr_5592_kicks_rfcsr2(monkeypatch):
     """RFCSR2 = 0x80 (cal kick) fires after the bulk table write."""
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1618,8 +1618,8 @@ def test_init_rfcsr_5592_kicks_rfcsr2(monkeypatch):
 
 def test_init_rfcsr_5592_rev_gate_pre_5592c_writes_rfcsr27(monkeypatch):
     """chip_rev < REV_RT5592C → RFCSR27 = 0x03; BBP103 untouched."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
-    import wifit3.chips.rt2800usb.rfcsr as rfm
+    import wifit3.chips.rt3572.bbp as bbp_mod
+    import wifit3.chips.rt3572.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1631,9 +1631,9 @@ def test_init_rfcsr_5592_rev_gate_pre_5592c_writes_rfcsr27(monkeypatch):
 
 def test_init_rfcsr_5592_rev_gate_5592c_writes_bbp103(monkeypatch):
     """chip_rev >= REV_RT5592C → BBP103 = 0xC0; RFCSR27 untouched."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
-    import wifit3.chips.rt2800usb.rfcsr as rfm
-    from wifit3.chips.rt2800usb.constants import REV_RT5592C
+    import wifit3.chips.rt3572.bbp as bbp_mod
+    import wifit3.chips.rt3572.rfcsr as rfm
+    from wifit3.chips.rt3572.constants import REV_RT5592C
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(rfm, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1646,7 +1646,7 @@ def test_init_rfcsr_5592_rev_gate_5592c_writes_bbp103(monkeypatch):
 def test_set_channel_5592_rejects_channel_not_in_table(monkeypatch):
     """A non-table channel (e.g. ch 2.4 GHz 15) raises ValueError."""
     import pytest
-    import wifit3.chips.rt2800usb.chan as chan_mod
+    import wifit3.chips.rt3572.chan as chan_mod
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = RfcsrFakeTransport()
@@ -1656,8 +1656,8 @@ def test_set_channel_5592_rejects_channel_not_in_table(monkeypatch):
 
 def test_set_channel_5592_2g_xtal40_writes_rfcsr8_for_ch1(monkeypatch):
     """xtal40 ch 1 → N=241, RFCSR8 = 0xF1."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1671,8 +1671,8 @@ def test_set_channel_5592_2g_xtal40_writes_rfcsr8_for_ch1(monkeypatch):
 
 def test_set_channel_5592_2g_xtal20_writes_rfcsr8_for_ch1(monkeypatch):
     """xtal20 ch 1 → N=482, RFCSR8 = 482 & 0xff = 0xE2."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1689,8 +1689,8 @@ def test_set_channel_5592_2g_synth_pack_for_each_channel(monkeypatch):
     channels. RFCSR9 is hard to verify directly (kernel R-M-W from
     prior state) so we just nail RFCSR8 — RFCSR9/11 packing math is
     covered by the unit test on _RF_VALS_5592_XTAL40_2G content."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1709,8 +1709,8 @@ def test_set_channel_5592_2g_synth_pack_for_each_channel(monkeypatch):
 
 def test_set_channel_5592_2g_ch_edge_rfcsr23_low(monkeypatch):
     """ch 1-10 → RFCSR23 = RFCSR59 = 0x07."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1725,8 +1725,8 @@ def test_set_channel_5592_2g_ch_edge_rfcsr23_low(monkeypatch):
 
 def test_set_channel_5592_2g_ch_edge_rfcsr23_high(monkeypatch):
     """ch 11-14 → RFCSR23 = RFCSR59 = 0x06."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1742,8 +1742,8 @@ def test_set_channel_5592_2g_ch_edge_rfcsr23_high(monkeypatch):
 def test_set_channel_5592_2g_writes_bbp82_0x84_final(monkeypatch):
     """The post-RF tail overwrites the rt2800_config_channel_rf55xx-
     written BBP82 (0x62) with 0x84 (no ext_lna_bg default branch)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1759,8 +1759,8 @@ def test_set_channel_5592_2g_writes_bbp82_0x84_final(monkeypatch):
 def test_set_channel_5592_2g_writes_bbp141_glrt_0x1a(monkeypatch):
     """RT5592-only block (rt2800lib.c:4485-4493): BBP141 GLRT = 0x1a
     for HT20. Writes go through the BBP195/196 indirect pair."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1781,8 +1781,8 @@ def test_set_channel_5592_2g_writes_bbp141_glrt_0x1a(monkeypatch):
 def test_set_channel_5592_2g_bbp66_agc_formula(monkeypatch):
     """BBP66 AGC for 2.4 GHz: (0x1c + 2 * lna_gain) fanned across
     rx_chain_num chains. Verify final BBP66 (last chain written wins)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1797,8 +1797,8 @@ def test_set_channel_5592_2g_bbp66_agc_formula(monkeypatch):
 
 def test_is_xtal_40mhz_reads_mac_debug_index_bit():
     """is_xtal_40mhz returns True iff MAC_DEBUG_INDEX bit 31 is set."""
-    from wifit3.chips.rt2800usb.chan import is_xtal_40mhz
-    from wifit3.chips.rt2800usb.constants import MAC_DEBUG_INDEX
+    from wifit3.chips.rt3572.chan import is_xtal_40mhz
+    from wifit3.chips.rt3572.constants import MAC_DEBUG_INDEX
 
     t = FakeTransport()
     t.write32(MAC_DEBUG_INDEX, 0x00000000)
@@ -1819,7 +1819,7 @@ def test_iq_calibration_struct_ff_only_globals_map_to_zero():
     only the two global RF-IQ comp/imbalance bytes get the 0xFF → 0 fallback
     (rt2800lib.c:4103, 4109). The old port applied 0xFF → 0 to all of them,
     diverging from a burned-EEPROM 5 GHz tune."""
-    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    from wifit3.chips.rt3572.eeprom import parse_eeprom
     buf = bytearray(0x200)
     # All-FF EFUSE bytes — typical for an unprogrammed dongle.
     for i in range(len(buf)):
@@ -1841,7 +1841,7 @@ def test_iq_calibration_struct_ff_only_globals_map_to_zero():
 
 def test_iq_calibration_picks_correct_band_for_channel():
     """for_channel(N) selects the right per-band byte tuple."""
-    from wifit3.chips.rt2800usb.eeprom import IqCalibration
+    from wifit3.chips.rt3572.eeprom import IqCalibration
     iq = IqCalibration(
         tx0_gain_2g=0x10, tx0_phase_2g=0x11, tx1_gain_2g=0x12, tx1_phase_2g=0x13,
         tx0_gain_5g_lo=0x20, tx0_phase_5g_lo=0x21, tx1_gain_5g_lo=0x22, tx1_phase_5g_lo=0x23,
@@ -1878,9 +1878,9 @@ def test_iq_calibration_picks_correct_band_for_channel():
 def test_iq_calibrate_writes_bbp158_159_pairs():
     """iq_calibrate writes 6 BBP158/159 index/data pairs (TX0/TX1
     gain/phase + global RF IQ compensation + imbalance)."""
-    import wifit3.chips.rt2800usb.bbp as bbp_mod
-    from wifit3.chips.rt2800usb.chan import iq_calibrate
-    from wifit3.chips.rt2800usb.eeprom import IqCalChannel
+    import wifit3.chips.rt3572.bbp as bbp_mod
+    from wifit3.chips.rt3572.chan import iq_calibrate
+    from wifit3.chips.rt3572.eeprom import IqCalChannel
 
     iq = IqCalChannel(
         tx0_gain=0x11, tx0_phase=0x22,
@@ -1897,8 +1897,8 @@ def test_iq_calibrate_writes_bbp158_159_pairs():
 
 def test_set_channel_5592_5g_unii1_writes_rfcsr10_0x97(monkeypatch):
     """5 GHz fixed-block first write — RFCSR10 = 0x97 (vs 2.4G's 0x90)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1912,8 +1912,8 @@ def test_set_channel_5592_5g_unii1_writes_rfcsr10_0x97(monkeypatch):
 
 def test_set_channel_5592_5g_synth_pack_xtal40(monkeypatch):
     """xtal40 ch 36 → N=86 → RFCSR8 = 0x56. Spot-check across UNII bands."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1932,8 +1932,8 @@ def test_set_channel_5592_5g_synth_pack_xtal40(monkeypatch):
 
 def test_set_channel_5592_5g_unii1_ch36_uses_rfcsr24_0x09(monkeypatch):
     """ch <= 50 in UNII-1/2 → RFCSR24 = 0x09."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1947,8 +1947,8 @@ def test_set_channel_5592_5g_unii1_ch36_uses_rfcsr24_0x09(monkeypatch):
 
 def test_set_channel_5592_5g_unii1_ch52_uses_rfcsr24_0x07(monkeypatch):
     """ch >= 52 in UNII-1/2 → RFCSR24 = 0x07 + RFCSR55 = 0x04 + RFCSR56 = 0xBB."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1964,8 +1964,8 @@ def test_set_channel_5592_5g_unii1_ch52_uses_rfcsr24_0x07(monkeypatch):
 
 def test_set_channel_5592_5g_unii3_ch153_uses_rfcsr23_0x3c(monkeypatch):
     """ch <= 153 in UNII-2-ext/UNII-3 block → RFCSR23 = 0x3C, RFCSR24 = 0x06."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1980,8 +1980,8 @@ def test_set_channel_5592_5g_unii3_ch153_uses_rfcsr23_0x3c(monkeypatch):
 
 def test_set_channel_5592_5g_unii3_ch157_uses_rfcsr23_0x38(monkeypatch):
     """ch >= 155 in UNII-3 → RFCSR23 = 0x38, RFCSR24 = 0x05."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -1996,8 +1996,8 @@ def test_set_channel_5592_5g_unii3_ch157_uses_rfcsr23_0x38(monkeypatch):
 
 def test_set_channel_5592_5g_unii2ext_ch100_breakpoints(monkeypatch):
     """ch <= 138 in 100-165 block uses the 'low' tuple for RFCSR39/43/44/46."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -2014,8 +2014,8 @@ def test_set_channel_5592_5g_unii2ext_ch100_breakpoints(monkeypatch):
 
 def test_set_channel_5592_5g_unii2ext_ch140_breakpoints(monkeypatch):
     """ch >= 140 in 100-165 block uses the 'high' tuple for RFCSR39/43/44/46."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -2032,8 +2032,8 @@ def test_set_channel_5592_5g_unii2ext_ch140_breakpoints(monkeypatch):
 
 def test_set_channel_5592_5g_writes_bbp82_0xf2(monkeypatch):
     """5 GHz post-RF tail overwrites BBP82 with 0xF2 (vs 2.4G's 0x84)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -2047,8 +2047,8 @@ def test_set_channel_5592_5g_writes_bbp82_0xf2(monkeypatch):
 
 def test_set_channel_5592_5g_bbp75_with_ext_lna_a(monkeypatch):
     """has_cap_external_lna_a=True → BBP75 = 0x46 (vs default 0x50)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -2071,8 +2071,8 @@ def test_set_channel_5592_5g_bbp75_with_ext_lna_a(monkeypatch):
 
 def test_set_channel_5592_5g_tx_band_cfg_a_bit(monkeypatch):
     """5 GHz → TX_BAND_CFG.A = 1, .BG = 0."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import (
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import (
         TX_BAND_CFG_A, TX_BAND_CFG_BG_BIT, TX_BAND_CFG_REG,
     )
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
@@ -2091,8 +2091,8 @@ def test_set_channel_5592_5g_tx_band_cfg_a_bit(monkeypatch):
 def test_set_channel_5592_5g_tx_pin_cfg_uses_a_side_pas(monkeypatch):
     """5 GHz TX_PIN_CFG: A-side PAs (A0+A1), LNAs on both A+G sides per
     active chain. G-side PAs must be clear."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import (
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.constants import (
         TX_PIN_CFG_LNA_PE_A0_EN_BIT, TX_PIN_CFG_LNA_PE_A1_EN,
         TX_PIN_CFG_LNA_PE_G0_EN_BIT, TX_PIN_CFG_LNA_PE_G1_EN,
         TX_PIN_CFG_PA_PE_A0_EN_BIT, TX_PIN_CFG_PA_PE_A1_EN,
@@ -2122,8 +2122,8 @@ def test_set_channel_5592_5g_tx_pin_cfg_uses_a_side_pas(monkeypatch):
 
 def test_set_channel_5592_5g_bbp66_agc_formula(monkeypatch):
     """5 GHz BBP66 AGC = 0x24 + 2*lna_gain (vs 0x1c for 2.4G)."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -2139,9 +2139,9 @@ def test_set_channel_5592_5g_bbp66_agc_formula(monkeypatch):
 def test_set_channel_5592_5g_iq_cal_runs_per_tune(monkeypatch):
     """When iq_cal is plumbed in, the BBP158/159 last-pair leaves
     BBP158=0x03 (RF IQ imbalance index) + BBP159=<imbal byte>."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.eeprom import IqCalibration
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.eeprom import IqCalibration
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -2167,9 +2167,9 @@ def test_set_channel_5592_5g_iq_cal_runs_per_tune(monkeypatch):
 def test_set_channel_5592_2g_iq_cal_still_runs(monkeypatch):
     """2 GHz path now also calls iq_calibrate (was deferred in M-B1).
     Final BBP158/159 = 0x03 / rf_iq_imbal."""
-    import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.eeprom import IqCalibration
+    import wifit3.chips.rt3572.chan as chan_mod
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.eeprom import IqCalibration
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
     monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
 
@@ -2220,7 +2220,7 @@ def test_is_chip_warm_distinguishes_cold_pre_init_from_warm():
 # ----------------------------------------------------------------------
 def _burned_eeprom(byte_overrides=None):
     """Build an EepromValues from a synthetic BURNED EFUSE dump."""
-    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    from wifit3.chips.rt3572.eeprom import parse_eeprom
     buf = bytearray(0x200)
     buf[0x34] = 0x22          # NIC_CONF0 (word 0x1a): txpath=2 rxpath=2 -> burned
     buf[0x3a] = 0x11          # FREQ (word 0x1d) non-FF so the unburned default is skipped
@@ -2232,7 +2232,7 @@ def _burned_eeprom(byte_overrides=None):
 
 def test_txpower_to_dev_clamps_per_band():
     """rt2800_txpower_to_dev: 2.4 GHz clamps to [0, 31], 5 GHz to [-7, 15]."""
-    from wifit3.chips.rt2800usb.eeprom import txpower_to_dev
+    from wifit3.chips.rt3572.eeprom import txpower_to_dev
     assert txpower_to_dev(1, 17) == 17
     assert txpower_to_dev(1, 40) == 31       # over MAX_G -> 31
     assert txpower_to_dev(1, -1) == 0        # unburned 0xFF(-1) -> 0, NOT a fallback value
@@ -2243,7 +2243,7 @@ def test_txpower_to_dev_clamps_per_band():
 
 def test_default_power_2g_from_bg_tables():
     """2.4 GHz (power1, power2) = TXPOWER_BG1/BG2[ch-1], clamped."""
-    import wifit3.chips.rt2800usb.chan as chan
+    import wifit3.chips.rt3572.chan as chan
     ev = _burned_eeprom({0x52: 17, 0x57: 13, 0x60: 15})  # BG1 ch1/ch6, BG2 ch1
     assert chan.default_power(ev, RT_RT5592, 1) == (17, 15)
     assert chan.default_power(ev, RT_RT5592, 6)[0] == 13
@@ -2252,8 +2252,8 @@ def test_default_power_2g_from_bg_tables():
 def test_default_power_5g_index_is_per_silicon():
     """5 GHz uses TXPOWER_A1/A2 indexed by the channel's position in THIS
     silicon's RF table — RF5592 and RF3052 give different indices."""
-    import wifit3.chips.rt2800usb.chan as chan
-    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    import wifit3.chips.rt3572.chan as chan
+    from wifit3.chips.rt3572.constants import RT_RT3572
     ev = _burned_eeprom({0x78: 23})        # A1[0] -> ch36 -> clamp 23 to 15
     assert chan.default_power(ev, RT_RT5592, 36, xtal_40mhz=True)[0] == 15
     assert chan.txpower_5g_index(RT_RT5592, 149) != chan.txpower_5g_index(RT_RT3572, 149)
@@ -2261,9 +2261,9 @@ def test_default_power_5g_index_is_per_silicon():
 
 def test_config_txpower_byrate_min_0xc():
     """config_txpower (RF55xx, delta=0): each TX_PWR_CFG rate nibble = min(BYRATE, 0xC)."""
-    import wifit3.chips.rt2800usb.chan as chan
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.constants import TX_PWR_CFG_0
+    import wifit3.chips.rt3572.chan as chan
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.constants import TX_PWR_CFG_0
     # BYRATE word0 (0xde) = 0x6666 -> rate0..3 = 6; word1 (0xe0) = 0xaaaa -> 0xa.
     ev = _burned_eeprom({0xde: 0x66, 0xdf: 0x66, 0xe0: 0xaa, 0xe1: 0xaa})
     assert ev.power_limit is False

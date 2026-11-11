@@ -1,4 +1,4 @@
-"""rt2800usb driver — ALFA AWUS051NH v2 (RT3572), 2.4 + 5 GHz, 2T2R.
+"""rt3572 driver — ALFA AWUS051NH v2 (RT3572), 2.4 + 5 GHz, 2T2R.
 
 Family-shared infrastructure (transport, FW upload, MAC config, RX/TX
 descriptor builders, USB end-pad / QSEL=2 / EP=0x02, EFUSE bring-up,
@@ -77,13 +77,13 @@ from .rx import (
     rxwi_size_for_silicon,
 )
 from ..rx_reader import RxReaderThread
-from .transport import RT2800USBTransport
+from .transport import RT3572Transport
 from .tx import inject_frame as _tx_inject_frame, txwi_size_for_silicon
 
 logger = logging.getLogger(__name__)
 
 
-class RT2800USBDriver(Driver):
+class RT3572Driver(Driver):
     """Driver for the ALFA AWUS051NH v2 (RT3572).
 
     Per-variant differences (RX/TX desc size, RF init, 5 GHz support)
@@ -95,13 +95,13 @@ class RT2800USBDriver(Driver):
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
-    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":
+    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT3572Driver":
         return cls(dev)
 
     def __init__(self, dev: usb.core.Device):
         super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
-        self.transport = RT2800USBTransport(dev)
+        self.transport = RT3572Transport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
@@ -430,7 +430,7 @@ class RT2800USBDriver(Driver):
             eps = probe_endpoints(self.dev)
             self._bulk_in_ep = eps.primary_bulk_in
             self._rx_reader = RxReaderThread(
-                loop, self._rx_read_once, self._rx_dispatch, name="rt2800usb-rx",
+                loop, self._rx_read_once, self._rx_dispatch, name="rt3572-rx",
                 on_fatal=lambda e: self._on_lost and self._on_lost(e))
             self._rx_reader.start()
 
@@ -614,10 +614,10 @@ class RT2800USBDriver(Driver):
                     ),
                 )
         except ValueError as e:
-            logger.warning("rt2800usb set_channel: %s", e)
+            logger.warning("rt3572 set_channel: %s", e)
             return False
         except (IOError, usb.core.USBError, NotImplementedError) as e:
-            logger.error("rt2800usb set_channel(%d): %s", channel, e)
+            logger.error("rt3572 set_channel(%d): %s", channel, e)
             return False
         self.current_channel = channel
         if self._eeprom is not None:
@@ -668,10 +668,10 @@ class RT2800USBDriver(Driver):
                 ),
             )
         except ValueError as e:
-            logger.warning("rt2800usb inject_frame bad frame: %s", e)
+            logger.warning("rt3572 inject_frame bad frame: %s", e)
             return False
         except usb.core.USBError as e:
-            logger.error("rt2800usb inject_frame USBError: %s", e)
+            logger.error("rt3572 inject_frame USBError: %s", e)
             return False
         logger.trace("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
                      self.current_channel, len(frame_bytes), txwi_sz, phymode, sent)
@@ -794,4 +794,4 @@ class RT2800USBDriver(Driver):
             await self._rx_reader.stop()
             self._rx_reader = None
         self._release()
-        logger.debug("rt2800usb driver closed")
+        logger.debug("rt3572 driver closed")

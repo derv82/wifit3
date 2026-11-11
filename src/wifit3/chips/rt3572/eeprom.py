@@ -1,4 +1,4 @@
-"""EFUSE-backed EEPROM reader for rt2800usb.
+"""EFUSE-backed EEPROM reader for rt3572.
 
 The rt2800 chips store per-unit calibration data (MAC address, RF cal,
 LNA gain, TX power per channel, antenna config, etc.) in an embedded
@@ -47,7 +47,7 @@ import time
 from dataclasses import dataclass
 
 from .constants import REGISTER_BUSY_COUNT
-from .transport import RT2800USBTransport
+from .transport import RT3572Transport
 
 logger = logging.getLogger(__name__)
 
@@ -142,12 +142,12 @@ def _set_field32(reg: int, mask: int, value: int) -> int:
     return ((reg & ~mask) | ((value << shift) & mask)) & 0xFFFFFFFF
 
 
-def efuse_detect(t: RT2800USBTransport) -> bool:
+def efuse_detect(t: RT3572Transport) -> bool:
     """Check EFUSE_CTRL.PRESENT bit — kernel rt2800_efuse_detect."""
     return bool(t.read32(EFUSE_CTRL) & EFUSE_CTRL_PRESENT)
 
 
-def _efuse_read_chunk(t: RT2800USBTransport, byte_offset: int) -> bytes:
+def _efuse_read_chunk(t: RT3572Transport, byte_offset: int) -> bytes:
     """Read 16 bytes from EFUSE starting at byte_offset.
 
     Mirrors rt2800_efuse_read (rt2800lib.c:10909-10953) — request,
@@ -182,7 +182,7 @@ def _efuse_read_chunk(t: RT2800USBTransport, byte_offset: int) -> bytes:
     return bytes(chunk)
 
 
-def read_eeprom_efuse(t: RT2800USBTransport) -> bytes:
+def read_eeprom_efuse(t: RT3572Transport) -> bytes:
     """Dump all 512 bytes of EFUSE-backed EEPROM.
 
     Wire order mirrors rt2800usb_read_eeprom (rt2800usb.c:594-608): autorun_detect

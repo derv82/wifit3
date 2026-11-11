@@ -314,7 +314,7 @@ class WlanFrameParser:
                     fields["payload"] = bytes(frame[eapol_start: structured_pdu_end])
                 # PMKID KDE (M1) and the client's negotiated AKM (M2's cleartext RSN IE) both sit
                 # at the START of Key Data, so a truncated tail still yields them (seen on
-                # mt76x0u / rt2800usb RT5572).
+                # mt76x0u / rt5572).
                 if key_data_len > 0:
                     key_data = frame[eapol_start + 99: min(structured_pdu_end, readable_end)]
                     if key_data:

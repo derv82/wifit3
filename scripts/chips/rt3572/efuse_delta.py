@@ -1,4 +1,4 @@
-"""EFUSE byte-vs-word ADDRESS_IN delta probe for rt2800usb.
+"""EFUSE byte-vs-word ADDRESS_IN delta probe for rt3572.
 
 The shipping ``read_eeprom_efuse`` writes ``EFUSE_CTRL.ADDRESS_IN = byte_offset``
 (0, 16, 32, ...), but the EFUSE treats ADDRESS_IN as a u16-**word** index — the
@@ -16,7 +16,7 @@ the fix lands.
 Read-only: only EFUSE_CTRL + EFUSE_DATA reads. No fuse writes, no bring-up
 state change. Safe on a warm card. Run with the card plugged + WinUSB-bound:
 
-    uv run python scripts/chips/rt2800usb/efuse_delta.py
+    uv run python scripts/chips/rt3572/efuse_delta.py
 """
 from __future__ import annotations
 
@@ -29,13 +29,13 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rt2800usb.constants import (
+from wifit3.chips.rt3572.constants import (
     USB_PID_RT3572,
     USB_PID_RT5372,
     USB_PID_RT5572,
     USB_VID_RALINK,
 )
-from wifit3.chips.rt2800usb.eeprom import (
+from wifit3.chips.rt3572.eeprom import (
     EEPROM_OFFSET_NIC_CONF0,
     EEPROM_OFFSET_NIC_CONF1,
     EEPROM_OFFSET_FREQ,
@@ -49,13 +49,13 @@ from wifit3.chips.rt2800usb.eeprom import (
     parse_eeprom,
     read_eeprom_efuse,
 )
-from wifit3.chips.rt2800usb.mac import read_chip_id
-from wifit3.chips.rt2800usb.transport import RT2800USBTransport
+from wifit3.chips.rt3572.mac import read_chip_id
+from wifit3.chips.rt3572.transport import RT3572Transport
 
 
 def open_device():
     """Find any of RT3572/RT5372/RT5572 plugged in. First-match wins.
-    Mirrors test_hw_rt2800usb.open_device (kept standalone on purpose)."""
+    Mirrors test_hw_rt3572.open_device (kept standalone on purpose)."""
     backend = libusb_package.get_libusb1_backend()
     for pid, label in (
         (USB_PID_RT5372, "RT5372 (Panda PAU05)"),
@@ -68,7 +68,7 @@ def open_device():
             break
     else:
         sys.exit(
-            "No rt2800usb dongle found (VID 0x148f, PID 0x5372/0x3572/0x5572). "
+            "No rt3572 dongle found (VID 0x148f, PID 0x5372/0x3572/0x5572). "
             "Plug one in, confirm Zadig bound it to WinUSB, and retry."
         )
 
@@ -82,7 +82,7 @@ def open_device():
     return dev
 
 
-def read_eeprom_corrected(t: RT2800USBTransport) -> bytes:
+def read_eeprom_corrected(t: RT3572Transport) -> bytes:
     """Read mirroring the kernel: ADDRESS_IN is the u16-word index (byte // 2).
     Storage block stays at the same byte offset; only the fetched fuse
     address is corrected. Mirrors the proposed fix to read_eeprom_efuse."""
@@ -126,9 +126,9 @@ def _decode(img: bytes) -> dict:
 
 
 def main() -> None:
-    print("[*] Opening rt2800usb dongle (read-only EFUSE probe)...")
+    print("[*] Opening rt3572 dongle (read-only EFUSE probe)...")
     dev = open_device()
-    t = RT2800USBTransport(dev)
+    t = RT3572Transport(dev)
     try:
         chip = read_chip_id(t)
         print(f"  chip = {chip.name}  silicon=0x{chip.silicon_id:04x}  rev=0x{chip.revision:04x}\n")

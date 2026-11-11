@@ -482,7 +482,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | ACKs | ✅ | 2026-07-25 | WPS PIN/PBC → auto-ACK. |
 | Stress | ✅ | 2026-07-30 | 30-min 14-ch soak, flat (PAU05 1.13, PAU06 0.91). |
 
-→ [RT5372.md](../src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](../src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
+→ [RT5372.md](../src/wifit3/chips/rt5372/RT5372.md) 
 
 ### RT5572
 <img align="right" width="140" height="160" src="../assets/cardart/card-pau09n600.png" alt="Panda PAU09 N600">
@@ -514,7 +514,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 Our only unit (bought 2015) has a blank EFUSE (no factory RF calibration), so it can't
 validate the chip.
 
-→ [RT2800USB.md](../src/wifit3/chips/rt2800usb/RT2800USB.md)
+→ [RT3572.md](../src/wifit3/chips/rt3572/RT3572.md)
 
 ## Stress soak
 

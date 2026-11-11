@@ -1,4 +1,4 @@
-"""Hardware test for rt2800usb bring-up (RT3572 / RT5372 / RT5572).
+"""Hardware test for rt3572 bring-up (RT3572 / RT5372 / RT5572).
 
 Phase summary (mirrors the milestone breakdown):
   --phase open     : USB enumeration + chip ID + MAC + warm probe. (M1)
@@ -15,13 +15,13 @@ Phase summary (mirrors the milestone breakdown):
                      parse 802.11 frames. (M3)
 
 Usage:
-    uv run python scripts/chips/rt2800usb/test_hw_rt2800usb.py                  # all
-    uv run python scripts/chips/rt2800usb/test_hw_rt2800usb.py --phase open     # M1
-    uv run python scripts/chips/rt2800usb/test_hw_rt2800usb.py --phase fw       # M2a
-    uv run python scripts/chips/rt2800usb/test_hw_rt2800usb.py --phase usbinit  # M2b-1
-    uv run python scripts/chips/rt2800usb/test_hw_rt2800usb.py --phase macinit  # M2b-2
-    uv run python scripts/chips/rt2800usb/test_hw_rt2800usb.py --phase bbpinit  # M2b-3
-    uv run python scripts/chips/rt2800usb/test_hw_rt2800usb.py --phase rfinit   # M2c
+    uv run python scripts/chips/rt3572/test_hw_rt3572.py                  # all
+    uv run python scripts/chips/rt3572/test_hw_rt3572.py --phase open     # M1
+    uv run python scripts/chips/rt3572/test_hw_rt3572.py --phase fw       # M2a
+    uv run python scripts/chips/rt3572/test_hw_rt3572.py --phase usbinit  # M2b-1
+    uv run python scripts/chips/rt3572/test_hw_rt3572.py --phase macinit  # M2b-2
+    uv run python scripts/chips/rt3572/test_hw_rt3572.py --phase bbpinit  # M2b-3
+    uv run python scripts/chips/rt3572/test_hw_rt3572.py --phase rfinit   # M2c
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rt2800usb.constants import (
+from wifit3.chips.rt3572.constants import (
     MAC_CSR0,
     PBF_SYS_CTRL,
     PBF_SYS_CTRL_READY,
@@ -48,10 +48,10 @@ from wifit3.chips.rt2800usb.constants import (
     WLAN_FUN_CTRL,
     WLAN_FUN_CTRL_WLAN_EN,
 )
-from wifit3.chips.rt2800usb.firmware import load_firmware, load_firmware_blob
-from wifit3.chips.rt2800usb.chan import set_channel as _set_channel
-from wifit3.chips.rt2800usb.eeprom import parse_eeprom, read_eeprom_efuse
-from wifit3.chips.rt2800usb.mac import (
+from wifit3.chips.rt3572.firmware import load_firmware, load_firmware_blob
+from wifit3.chips.rt3572.chan import set_channel as _set_channel
+from wifit3.chips.rt3572.eeprom import parse_eeprom, read_eeprom_efuse
+from wifit3.chips.rt3572.mac import (
     enable_radio,
     is_chip_warm,
     read_chip_id,
@@ -59,17 +59,17 @@ from wifit3.chips.rt2800usb.mac import (
     usb_init_registers,
     write_mac_address,
 )
-from wifit3.chips.rt2800usb.bbp import bbp_read, init_bbp, prepare_bbp
-from wifit3.chips.rt2800usb.reg_init import init_registers
-from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
-from wifit3.chips.rt2800usb.rx import (
+from wifit3.chips.rt3572.bbp import bbp_read, init_bbp, prepare_bbp
+from wifit3.chips.rt3572.reg_init import init_registers
+from wifit3.chips.rt3572.rfcsr import init_rfcsr, rfcsr_read
+from wifit3.chips.rt3572.rx import (
     parse_rx_urb,
     probe_endpoints,
     read_rx_burst,
     rxwi_size_for_silicon,
 )
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.chips.rt2800usb.transport import RT2800USBTransport
+from wifit3.chips.rt3572.transport import RT3572Transport
 
 
 def setup_logging(debug: bool) -> None:
@@ -108,7 +108,7 @@ def open_device():
             break
     else:
         fail(
-            "No rt2800usb dongle found (looking for VID 0x148f, "
+            "No rt3572 dongle found (looking for VID 0x148f, "
             "PID 0x5372/0x3572/0x5572). Plug one in, confirm Zadig "
             "bound it to WinUSB, and retry."
         )
@@ -133,7 +133,7 @@ def open_device():
     return dev
 
 
-def phase_open(transport: RT2800USBTransport) -> None:
+def phase_open(transport: RT3572Transport) -> None:
     step("Read MAC_CSR0 (chip ID + revision)")
     chip = read_chip_id(transport)
     print(f"  MAC_CSR0  = 0x{chip.raw:08x}")
@@ -174,7 +174,7 @@ def phase_open(transport: RT2800USBTransport) -> None:
         ok("chip is COLD (WLAN_EN or PBF.READY clear — normal on first plug-in)")
 
 
-def phase_fw(transport: RT2800USBTransport) -> None:
+def phase_fw(transport: RT3572Transport) -> None:
     """M2a: read chip ID then upload rt5572.bin + verify PBF.READY."""
     step("Read chip ID (need silicon_id for FW section selection)")
     chip = read_chip_id(transport)
@@ -213,7 +213,7 @@ def phase_fw(transport: RT2800USBTransport) -> None:
     ok("PBF.READY latched — firmware is running")
 
 
-def phase_usbinit(transport: RT2800USBTransport) -> None:
+def phase_usbinit(transport: RT3572Transport) -> None:
     """M2b-1: run rt2800usb_init_registers after FW upload + verify
     that the PBF pre-init bit (bit 13) clears."""
     # Run fw phase first (FW must be booted before MAC init runs).
@@ -242,7 +242,7 @@ def phase_usbinit(transport: RT2800USBTransport) -> None:
     ok("chip still responsive — M2b-1 complete")
 
 
-def phase_macinit(transport: RT2800USBTransport) -> None:
+def phase_macinit(transport: RT3572Transport) -> None:
     """M2b-2: run init_registers + spot-check a handful of writes
     landed (read back known-good values)."""
     # Earlier phases (FW + usb_init_registers) must run first.
@@ -260,7 +260,7 @@ def phase_macinit(transport: RT2800USBTransport) -> None:
     ok(f"init_registers completed in {dt * 1000:.0f} ms")
 
     step("Spot-check known-good values")
-    from wifit3.chips.rt2800usb.constants import (
+    from wifit3.chips.rt3572.constants import (
         AUTO_RSP_CFG, HT_BASIC_RATE, LEGACY_BASIC_RATE,
         PBF_MAX_PCNT, TX_SW_CFG0,
     )
@@ -292,7 +292,7 @@ def phase_macinit(transport: RT2800USBTransport) -> None:
         fail("some MAC registers don't read back as expected")
 
 
-def phase_bbpinit(transport: RT2800USBTransport) -> None:
+def phase_bbpinit(transport: RT3572Transport) -> None:
     """M2b-3: run init_bbp via BBP_CSR_CFG indirect protocol,
     then silicon-aware spot-check a handful of writes landed.
 
@@ -435,7 +435,7 @@ def phase_bbpinit(transport: RT2800USBTransport) -> None:
     ok("all BBP spot-checks passed — baseband init complete")
 
 
-def phase_rfinit(transport: RT2800USBTransport) -> "object":
+def phase_rfinit(transport: RT3572Transport) -> "object":
     """M2c: run init_rfcsr + spot-check a few RFCSR values landed.
 
     Per-silicon spot-checks pull from the kernel init_rfcsr_* table for
@@ -610,14 +610,14 @@ def phase_rfinit(transport: RT2800USBTransport) -> "object":
     return cal
 
 
-def phase_diag(transport: RT2800USBTransport) -> None:
+def phase_diag(transport: RT3572Transport) -> None:
     """Dump the post-init state of every register that gates RX.
 
     Doesn't run any bring-up — assumes you've just run --phase rx (or
     rfinit) and want to see why RX isn't delivering.
     """
-    from wifit3.chips.rt2800usb.bbp import bbp_read
-    from wifit3.chips.rt2800usb.constants import (
+    from wifit3.chips.rt3572.bbp import bbp_read
+    from wifit3.chips.rt3572.constants import (
         MAC_CSR0, MAC_SYS_CTRL, PBF_SYS_CTRL, USB_DMA_CFG,
         WPDMA_GLO_CFG,
     )
@@ -654,7 +654,7 @@ def phase_diag(transport: RT2800USBTransport) -> None:
         (24, "RFCSR24 — RX filter cal value (bw20)"),
         (31, "RFCSR31 — RX_H20M cleared for BW20"),
     ]
-    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read as _rfcsr_read
+    from wifit3.chips.rt3572.rfcsr import rfcsr_read as _rfcsr_read
     for word, desc in rfcsr_regs:
         val = _rfcsr_read(transport, word)
         print(f"  RFCSR[{word:3d}] = 0x{val:02x}  — {desc}")
@@ -680,7 +680,7 @@ def phase_diag(transport: RT2800USBTransport) -> None:
         print(f"  BBP[{word:3d}] = 0x{val:02x}  — {desc}")
 
     step("RX/TX packet counters — does the chip see frames at all?")
-    from wifit3.chips.rt2800usb.constants import (
+    from wifit3.chips.rt3572.constants import (
         RX_STA_CNT0, RX_STA_CNT1, RX_STA_CNT2,
         TX_STA_CNT0, TX_STA_CNT1,
     )
@@ -709,7 +709,7 @@ def phase_diag(transport: RT2800USBTransport) -> None:
 
 def phase_rx(
     dev,
-    transport: RT2800USBTransport,
+    transport: RT3572Transport,
     channel: int = 1,
     freq_offset_override: Optional[int] = None,
 ) -> None:
@@ -773,7 +773,7 @@ def phase_rx(
             has_cap_external_lna_a=ee.has_cap_external_lna_a,
         )
     elif chip.silicon_id == 0x5592:
-        from wifit3.chips.rt2800usb.chan import is_xtal_40mhz
+        from wifit3.chips.rt3572.chan import is_xtal_40mhz
         xtal_40 = is_xtal_40mhz(transport)
         print(f"  MAC_DEBUG_INDEX.XTAL → xtal_40mhz={xtal_40}")
         channel_kwargs.update(
@@ -898,7 +898,7 @@ def main() -> None:
     setup_logging(args.debug)
 
     dev = open_device()
-    transport = RT2800USBTransport(dev)
+    transport = RT3572Transport(dev)
     try:
         if args.phase == "open":
             phase_open(transport)

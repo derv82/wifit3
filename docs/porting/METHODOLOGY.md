@@ -23,7 +23,7 @@ FINAL-CHECKLIST.md (before calling the port done).
 - **Active monitor mode:** `enter_active_monitor(mac)` makes the chip hardware-ACK a forged MAC and retry until
   ACKed. Declare what the silicon can do in `FAKE_MAC` (`FakeMacSupport`: `NONE`, `FIXED_MAC`, `SPOOFABLE`;
   the default `UNIMPLEMENTED` means not ported). Ports that implement it, one per family: mt76 `mt7921au`,
-  rt2x00 `rt2800usb`, Realtek DKMS `rtl8812au_dkms`, rtw89 `rtl8922au`.
+  rt2x00 `rt3572`, Realtek DKMS `rtl8812au_dkms`, rtw89 `rtl8922au`.
 - **ACKs reach RX** when asked: `_enable_rx_acks` / `_disable_rx_acks` admit ACK control frames so `record_ack`
   can count them.
 - **RX** hands each frame to the `register_rx_callback` sink as a parsed `Packet`, built from the MPDU without

@@ -9,7 +9,7 @@ against the cold-boot capture by ``scripts/porting/verify_pcap.py rt3070`` (the 
 TX (``inject_frame`` → ``tx.send_frame``) is wired but **never fired by
 the driver** — injection/deauth is the user's explicit action [[passive_by_default]].
 
-Standalone port (NOT a ``chips/rt2800usb`` DeviceID delta — that shared base has a
+Standalone port (NOT a ``chips/rt3572`` DeviceID delta — that shared base has a
 confirmed EFUSE addressing bug); see ``chips/rt3070/RT3070.md`` for the ground-truth facts.
 """
 from __future__ import annotations

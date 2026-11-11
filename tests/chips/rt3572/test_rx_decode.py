@@ -1,11 +1,11 @@
-"""rt2800usb parse_rx_urb byte-level decode: the RXINFO/RXWI prefix strip,
+"""rt3572 parse_rx_urb byte-level decode: the RXINFO/RXWI prefix strip,
 L2-pad removal, and the MPDU_TOTAL_BYTE_COUNT trim. Guards the
 order-of-operations that keeps EAPOL key_data intact -- remove the L2 pad
 BEFORE trimming to mpdu_len (see rx.parse_rx_urb)."""
 import struct
 
-import wifit3.chips.rt2800usb.rx as rx
-from wifit3.chips.rt2800usb.constants import RXD_W0_CRC_ERROR, RXD_W0_L2PAD
+import wifit3.chips.rt3572.rx as rx
+from wifit3.chips.rt3572.constants import RXD_W0_CRC_ERROR, RXD_W0_L2PAD
 
 
 def _urb(frame_region: bytes, *, mpdu_len: int, rxd_w0: int = 0) -> bytes:
@@ -49,7 +49,7 @@ def test_no_l2pad_trims_to_mpdu_len():
 
 
 def test_crc_error_flag_surfaced():
-    # rt2800usb surfaces CRC via has_fcs_error (it does not drop the frame).
+    # rt3572 surfaces CRC via has_fcs_error (it does not drop the frame).
     region = _QOS_HDR + _BODY
     frame = rx.parse_rx_urb(_urb(region, mpdu_len=_MPDU_LEN, rxd_w0=RXD_W0_CRC_ERROR))
     assert frame is not None
@@ -64,7 +64,7 @@ def test_agc_to_rssi_subtracts_offset_and_lna():
 
 
 def test_rssi_cal_for_channel_selects_band_and_lna():
-    from wifit3.chips.rt2800usb.eeprom import EepromValues
+    from wifit3.chips.rt3572.eeprom import EepromValues
     ee = EepromValues(
         mac_address=b"\x00" * 6, nic_conf0=0, nic_conf1=0, freq_offset=0,
         lna_gain_bg=8, lna_gain_a=5, rssi_bg_offset0=1, rssi_bg_offset1=2,
@@ -79,7 +79,7 @@ def test_rssi_cal_for_channel_selects_band_and_lna():
 
 
 def test_eeprom_rssi_offset_and_lna_sanitized():
-    from wifit3.chips.rt2800usb.eeprom import _sanitize_lna, _sanitize_rssi_offset
+    from wifit3.chips.rt3572.eeprom import _sanitize_lna, _sanitize_rssi_offset
     assert _sanitize_rssi_offset(8) == 8
     assert _sanitize_rssi_offset(200) == 0     # abs > 10 -> junk -> 0
     assert _sanitize_lna(0x00, 5) == 5         # unburned -> default (LNA_A0)

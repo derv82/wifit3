@@ -7,7 +7,7 @@ real EEPROM, which ``parse_eeprom`` then decodes.
 
 **The word-offset fix** [[feedback_port_completeness]]: ``rt2800_read_eeprom_efuse``
 loops a u16-WORD index (0, 8, 16, …) into ``EFUSE_CTRL_ADDRESS_IN`` — NOT a byte
-offset. The shared ``chips/rt2800usb/eeprom.py`` passes a byte offset and so
+offset. The shared ``chips/rt3572/eeprom.py`` passes a byte offset and so
 fetches from double the address on every block past the first; block 0 (the MAC)
 happens to be correct, which hid the bug behind a firmware-only gate — and on the
 RT5392 it lands freq_offset/NIC_CONF0/LNA/RSSI on the wrong bytes. This clean-room

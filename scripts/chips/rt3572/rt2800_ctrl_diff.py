@@ -4,18 +4,18 @@ bring-up against the kernel's known-good sequence.
 Usage:
 
     # Just dump the kernel's bring-up sequence (frames during airmon-ng):
-    python scripts/chips/rt2800usb/rt2800_ctrl_diff.py kernel
+    python scripts/chips/rt3572/rt2800_ctrl_diff.py kernel
 
     # Dump our wifit3 sequence from a capture you took:
-    python scripts/chips/rt2800usb/rt2800_ctrl_diff.py ours <our.pcap>
+    python scripts/chips/rt3572/rt2800_ctrl_diff.py ours <our.pcap>
 
     # Diff the two:
-    python scripts/chips/rt2800usb/rt2800_ctrl_diff.py diff <our.pcap>
+    python scripts/chips/rt3572/rt2800_ctrl_diff.py diff <our.pcap>
 
 Per-record format:
     [frame.number]  bReq  bmReq  wValue  wIndex  wLen  data...   -> decoded
 
-Per-spec for rt2x00usb (see chips/rt2800usb/transport.py module docstring):
+Per-spec for rt2x00usb (see chips/rt3572/transport.py module docstring):
   * bRequest 6 = USB_MULTI_WRITE     wIndex = register address, data = u32 LE
   * bRequest 7 = USB_MULTI_READ      wIndex = register address
   * bRequest 1 = USB_DEVICE_MODE     wValue = mode (USB_MODE_FIRMWARE etc.)

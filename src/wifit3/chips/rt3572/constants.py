@@ -1,4 +1,4 @@
-"""rt2800usb USB + register constants.
+"""rt3572 USB + register constants.
 
 Ported from:
 

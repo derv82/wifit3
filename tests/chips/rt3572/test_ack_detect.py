@@ -1,4 +1,4 @@
-"""rt2800usb TX-ACK detection on the redesigned Driver base: the RX tap that counts the AP's
+"""rt3572 TX-ACK detection on the redesigned Driver base: the RX tap that counts the AP's
 link-layer ACKs to a MAC we inject as, the software seq-stamp, and the ACK-bit inject wiring.
 No hardware — synthetic frames. The Ralink monitor RX filter already admits ACKs, so
 ``_enable_rx_acks`` is a documented no-op; the tally + arming live on the ``Driver`` base
@@ -6,7 +6,7 @@ No hardware — synthetic frames. The Ralink monitor RX filter already admits AC
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import wifit3.chips.rt2800usb.driver as drv
+import wifit3.chips.rt3572.driver as drv
 
 
 def _ack_mpdu(ra: bytes) -> bytes:
@@ -31,8 +31,8 @@ def _rx(mpdu: bytes, has_fcs_error=False, rssi=-40):
     return o
 
 
-def _driver(monkeypatch, mpdu: bytes) -> drv.RT2800USBDriver:
-    d = drv.RT2800USBDriver(MagicMock())
+def _driver(monkeypatch, mpdu: bytes) -> drv.RT3572Driver:
+    d = drv.RT3572Driver(MagicMock())
     monkeypatch.setattr(drv, "parse_rx_urb", lambda buf, rxwi_size, rssi_cal: _rx(mpdu))
     d._parsed = []
     d.register_rx_callback(d._parsed.append)
@@ -76,7 +76,7 @@ async def test_disable_rx_acks_stops_the_tally(monkeypatch):
 
 
 def test_stamp_tx_seq_increments_and_copies():
-    d = drv.RT2800USBDriver(MagicMock())
+    d = drv.RT3572Driver(MagicMock())
     frame = _mgmt_frame()
     first = d._stamp_tx_seq(frame)
     second = d._stamp_tx_seq(frame)
@@ -87,7 +87,7 @@ def test_stamp_tx_seq_increments_and_copies():
 
 
 async def test_inject_sets_ack_bit_and_stamps_seq(monkeypatch):
-    d = drv.RT2800USBDriver(MagicMock())
+    d = drv.RT3572Driver(MagicMock())
     d.chip_id = SimpleNamespace(silicon_id=0x5390)
     sent: list = []
     monkeypatch.setattr(

@@ -1,4 +1,4 @@
-"""Vendor control-transfer transport for rt2800usb chips.
+"""Vendor control-transfer transport for rt3572.
 
 Mirrors the rt2x00usb register-access helpers (rt2x00usb.c:45-80,
 ``rt2x00usb_vendor_request``).
@@ -58,7 +58,7 @@ _DEFAULT_TIMEOUT_MS = 1000   # kernel rt2x00usb default is 1000 ms
 CSR_CACHE_SIZE = 64
 
 
-class RT2800USBTransport:
+class RT3572Transport:
     """Vendor control-transfer transport. Bulk endpoints are claimed by
     the rx/tx modules, not here."""
 
