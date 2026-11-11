@@ -566,7 +566,7 @@ def test_wep_ivs_tallied_onto_ap():
                       "dest": "aa:bb:cc:dd:ee:01", "rssi": -45, "wep_iv": iv,
                       "wep_keyid": 0, "raw": b"\x00" * 40}), W0)
     ap = s.access_points[bssid]
-    assert ap.wep is not None and ap.wep.unique_ivs == 2 and ap.wep.total_frames == 3
+    assert ap.wep is not None and ap.wep.unique_ivs == 2
     assert s.clients["aa:bb:cc:dd:ee:01"].bssid == bssid
 
 

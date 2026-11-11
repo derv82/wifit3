@@ -185,16 +185,15 @@ class WepCaptureStore:
     def record(self, bssid: str, iv: bytes, now: Optional[float] = None) -> WepStats:
         """Tally one WEP Data frame's IV for ``bssid``.
 
-        Always bumps ``total_frames``; bumps ``unique_ivs`` and marks the
-        rate tracker only when ``iv`` is one we haven't seen for this BSSID
-        (unique IVs are what cracking actually needs: replayed frames reuse
+        Bumps ``unique_ivs`` and marks the rate tracker only when ``iv`` is
+        one we haven't seen for this BSSID (unique IVs are what cracking
+        actually needs: replayed frames reuse
         a fixed IV and must not inflate the count or the rate). Returns the
         BSSID's ``WepStats`` so the caller can attach it to the AP on first
         sight.
         """
         stats = self._stats.setdefault(bssid, WepStats())
         seen = self._unique_ivs.setdefault(bssid, set())
-        stats.total_frames += 1
         if iv not in seen:
             seen.add(iv)
             stats.unique_ivs += 1

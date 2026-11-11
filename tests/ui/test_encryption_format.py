@@ -10,7 +10,7 @@ def _ap(**kw) -> AccessPoint:
 # ---- WEP ENCRYPT cell (attackable, carries an IV count) --------------------
 
 def test_wep_is_attackable_with_iv_count():
-    ap = _ap(encryption="WEP", wep=WepStats(unique_ivs=1234, total_frames=5000))
+    ap = _ap(encryption="WEP", wep=WepStats(unique_ivs=1234))
     m = format_encryption_markup(ap, detailed=False, muted="dim")
     assert "[bright_green]WEP[/bright_green]" in m
     assert "1.2k IVs" in m
