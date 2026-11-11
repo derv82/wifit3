@@ -21,7 +21,7 @@ from wifit3.dot11 import build_deauth
 from wifit3.dot11.ap import auth_resp, assoc_resp, eapol_m1
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.ie import iter_information_elements
-from wifit3.dot11.packet import AssocRequestPacket, Packet
+from wifit3.dot11.packet import AssocRequestPacket, EapolPacket, Packet
 from wifit3.dot11.rsn import SAE_AKM_SUITES
 
 logger = logging.getLogger(__name__)
@@ -191,7 +191,7 @@ class FakeAP:
         self._tx(build_deauth(client, self.bssid, self.bssid, 7))
 
     def _on_probe(self, pkt, client: bytes) -> None:
-        ssid = getattr(pkt, "ssid", None)
+        ssid = pkt.ssid
         if ssid in (None, "", "<hidden>"):
             self.stats.probes_wildcard += 1
         elif ssid == self.ssid:
@@ -251,7 +251,7 @@ class FakeAP:
             task.cancel()
 
     def _on_m2(self, pkt, client: bytes) -> None:
-        if getattr(pkt, "msg_num", 0) != 2:
+        if not isinstance(pkt, EapolPacket) or pkt.msg_num != 2:
             return
         cs = mac_to_str(client)
         self._cancel_m1(cs)

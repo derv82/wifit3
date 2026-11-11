@@ -130,7 +130,7 @@ def wps_status_markup(camp) -> str:
         return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
                 f"[{color}]{kind} {countdown}[/{color}]")
     if camp.status in ("failed", "error"):
-        reason = getattr(camp, "fail_reason", None)
+        reason = camp.fail_reason
         suffix = f" · [dim]{escape(reason)}[/dim]" if reason else f" [dim]({tested}/11k)[/dim]"
         return f"WPS PIN: [red]{camp.status}[/red]{suffix}"
     eta = _fmt_eta(camp.eta_seconds)
@@ -158,14 +158,13 @@ class WpsCampaign(Campaign):
 
     @classmethod
     def visible(cls, ap) -> bool:
-        return ((getattr(ap, "encryption", None) or "").upper() != "WEP"
-                and bool(getattr(ap, "wps", False)))
+        return (ap.encryption or "").upper() != "WEP" and ap.wps
 
     @classmethod
     def ineligible_reason(cls, ap):
         if ap.is_hidden:
             return "hidden SSID: can't associate"
-        return "WPS locked" if getattr(ap, "wps_locked", False) else None
+        return "WPS locked" if ap.wps_locked else None
 
     def check_auto_stop(self) -> bool:
         return self.state.phase == "done" or self.status in ("failed", "error")
@@ -591,7 +590,7 @@ class WpsCampaign(Campaign):
 
     def _beacon_locked(self) -> bool:
         ap = self.array.access_points.get(self.bssid)
-        return bool(getattr(ap, "wps_locked", False)) if ap else False
+        return ap is not None and ap.wps_locked
 
     async def _handle_lock(self, beacon_locked: bool, wait: bool = True) -> None:
         """Mark the lock state, optionally wait it out, then release."""

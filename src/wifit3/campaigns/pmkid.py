@@ -72,19 +72,19 @@ class PmkidHarvestAttack(Campaign):
     def visible(cls, ap) -> bool:
         """Shown when the AP's RSN element advertises a harvestable (PSK) AKM, OR when its
         encryption isn't confirmed yet. Hidden for WPA1: the PMKID is an RSN KDE."""
-        akms = set(getattr(ap, "akm_suites", None) or ())
+        akms = set(ap.akm_suites)
         if set(_HARVESTABLE_AKMS) & akms and ap.rsn_valid:
             return True   # confirmed harvestable PSK
         if akms:
             return False  # confirmed AKM(s), none harvestable
-        return getattr(ap, "encryption", None) in (None, "Unknown")  # unconfirmed → disabled
+        return ap.encryption in (None, "Unknown")  # unconfirmed → disabled
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
         """None (enabled) once a PSK AKM is confirmed and the SSID is known."""
         if ap.is_hidden:
             return "hidden SSID: can't associate"
-        if set(_HARVESTABLE_AKMS) & set(getattr(ap, "akm_suites", None) or ()):
+        if set(_HARVESTABLE_AKMS) & set(ap.akm_suites):
             return None
         return "encryption not confirmed yet (no beacon RSN)"
 

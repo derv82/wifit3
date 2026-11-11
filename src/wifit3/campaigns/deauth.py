@@ -90,7 +90,7 @@ class DeauthCampaign(Campaign):
                 if (c.bssid or "").lower() == target and mac not in own]
 
     def _csa_frame(self) -> Optional[bytes]:
-        beacon = getattr(self.target, "last_beacon_frame", None)
+        beacon = self.target.last_beacon_frame
         if not beacon:
             return None
         channel = self.target.channel

@@ -63,7 +63,7 @@ class WepCampaign(Campaign):
 
     @classmethod
     def visible(cls, ap) -> bool:
-        return (getattr(ap, "encryption", None) or "").upper() == "WEP"
+        return (ap.encryption or "").upper() == "WEP"
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
@@ -250,13 +250,13 @@ class WepCampaign(Campaign):
 
     def status_headlines(self, vault) -> list[str]:
         from wifit3.crack.wep import CRACK_READY_THRESHOLD
-        n_ivs = self.target.wep.unique_ivs if getattr(self.target, "wep", None) else 0
-        cracker_samples = getattr(self.cracker, "sample_count", 0)
+        n_ivs = self.target.wep.unique_ivs if self.target.wep else 0
+        cracker_samples = self.cracker.sample_count
 
         if self.chop_active:
             action = "Chopping a packet"
         else:
-            state = getattr(self.replay, "state", None)
+            state = self.replay.state
             action = {
                 "replaying": "Replaying ARP",
                 "testing": "Testing a packet",
