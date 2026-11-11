@@ -22,26 +22,36 @@
 
 ### Reconnaissance & Analysis
 - **Multi-Card Aggregation:** Capture packets across multiple adapters simultaneously; pick a dedicated card to inject.
-- **Real-time Scanner:** 2.4GHz & 5GHz channel-hopping (split for multi-cards); tracks signal strength, encryption suites, WPA3/SAE transition modes.
-- **AP & Client Identification:** Fingerprints device vendors and categories; extracts router make and model from WPS beacons.
-- **VAP Decloaking:** Identifies hidden networks by correlating their BSSIDs with known visible siblings.
+- **Real-time Scanner:** 2.4GHz & 5GHz channel-hopping (split for multi-cards), DFS channels optional; tracks signal strength, encryption suites, WPA3/SAE transition modes; filter by channel and power.
+- **AP & Client Identification:** Fingerprints device vendors and categories; extracts router make and model from WPS beacons, chipset from vendor IEs; WPS M1 identity probe.
+- **Security Posture:** Detects WPA2/WPA3-Enterprise and PMF (skips attacks that can't work); flags Broadcom routers exposed to WPSplinter.
+- **Decloaking:** Reveals hidden SSIDs passively (BSSID siblings of visible networks) or actively; saves the SSIDs it finds.
 - **Packet Dashboard:** Visualizes real-time beacon, data, injection, and deauthentication packet rates.
 
 ### Attacks & Captures
-- **WPA/WPA2 Handshakes:** Passive sniffing and targeted deauthentication; validates crackable pairs; exports `.pcap` and `.hc22000` files.
+- **WPA/WPA2 Handshakes:** Passive sniffing and targeted deauthentication; validates crackable pairs; WPA1, PSK-SHA256 and FT-PSK (802.11r); exports `.pcap` and `.hc22000` files.
 - **PMKID Harvesting:** Active association harvest and passive sniffing for WPA/WPA2 PMKID key material (`.hc22000`).
-- **EvilTwin WPA3 Downgrade:** Clones the AP and evicts clients (via CSA, BTM, and de-auths) to capture handshakes. Works on single and multiple cards.
+- **EvilTwin WPA3 Downgrade:** *(Experimental)* Clones the AP and evicts clients (via CSA, BTM, and de-auths) to capture handshakes.
 - **WPS Recovery Suite:**
-  - **PixieDust (2 Modes):** Instant offline PIN recovery exploiting *Null Secret* and *Static Secret* PRNG weaknesses.
+  - **PixieDust:** Instant offline PIN recovery: *Null Secret*, *Static Secret*, and Ralink, RTL819x and eCos PRNG recovery.
   - **PushButton (PBC):** Detects physical WPS button presses and immediately extracts the plaintext WPA PSK.
   - **PIN Brute-Force:** Resumable WPS PIN cracking with known-PIN database and AP lock monitoring.
 - **WEP Suite:** Pure Python ARP replay, ChopChop, Fake Authentication, and PTW key recovery.
+
+### Vault & Cracking
+- **Vault:** Shows every capture per AP, its PSK status (current, stale or uncracked); search, nicknames, add credentials by hand; `Show AP` and `Verify` against the live AP.
+- **Cracking:** Built-in CPU Crack, Hashcat (multiple wordlists; pause, resume, skip) and Hashtopolis; auto-crack after each capture; remembers which wordlists were tried.
+- **Wordlists:** Built-in default passwords, SSID variants, BSSID-based PSKs and probed SSIDs (also saved to a wordlist file).
 
 ## Screenshots
 
 | Scanner | Focus (single target) |
 |---|---|
-| ![Scanner](assets/wifit3-2-scanner.png) | ![Focus](assets/wifit3-3-focus-handshake.png) |
+| ![Scanner](assets/wifit3-2-scanner.png) | ![Focus](assets/wifit3-3-focus-pmkid.png) |
+
+| Vault (captures, keys and crackers) |
+|---|
+| ![Vault](assets/wifit3-4-vault.png) |
 
 ## Supported Hardware
 
