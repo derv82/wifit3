@@ -66,6 +66,7 @@ def _load(key: str, path: Path):
     file is named verify_pcap.py, so a plain ``import`` would collide in sys.modules."""
     spec = importlib.util.spec_from_file_location(f"_recipe_{key}", path)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod     # dataclasses resolve annotations through sys.modules
     spec.loader.exec_module(mod)
     return mod
 
@@ -88,7 +89,7 @@ REGISTRY: dict[str, Chip] = {
     "rt2500usb": Chip("rt2500usb", "chips/rt2500usb/verify_pcap.py",
                       "Ralink RT2570 rt2x00 (vendor 0x06/0x07)"),
     "rt3572": Chip("rt3572", "chips/rt3572/verify_pcap.py",
-                      "Ralink RT3572/RT5372/RT5572 rt2x00 (vendor 0x06/0x07)"),
+                      "Ralink RT3572 / ALFA AWUS051NH v2 rt2x00 (vendor 0x06/0x07)"),
     "rt3070": Chip("rt3070", "chips/rt3070/verify_pcap.py",
                    "Ralink RT3070 / ALFA AWUS036NH clean-room (vendor 0x06/0x07)"),
     "rt5370": Chip("rt5370", "chips/rt5370/verify_pcap.py",

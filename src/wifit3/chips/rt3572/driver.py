@@ -189,241 +189,7 @@ class RT3572Driver(Driver):
             _progress(0.10, "Claiming USB interface")
             await loop.run_in_executor(None, self._claim)
 
-            _progress(0.40, "Reading MAC_CSR0 (chip ID + revision)")
-            self.chip_id = await loop.run_in_executor(
-                None, read_chip_id, self.transport
-            )
-            logger.info(
-                "chip_id: %s rev=0x%04x (raw MAC_CSR0=0x%08x)",
-                self.chip_id.name, self.chip_id.revision,
-                self.chip_id.raw,
-            )
-            if not self.chip_id.is_supported:
-                raise BringUpError(
-                    "chip-id",
-                    f"silicon ID 0x{self.chip_id.silicon_id:04x} not in the supported set "
-                    f"(RT3572, RT5390, RT5592)",
-                )
-
-            _progress(0.60, "Reading permanent MAC")
-            mac_bytes = await loop.run_in_executor(
-                None, read_perm_mac, self.transport
-            )
-            self.mac_address = ":".join(f"{b:02x}" for b in mac_bytes)
-            logger.info("mac_address: %s", self.mac_address)
-
-            _progress(0.30, "Probing warm/cold state")
-            warm = await loop.run_in_executor(
-                None, is_chip_warm, self.transport
-            )
-            self.is_warm = warm
-            logger.info("is_warm: %s", warm)
-            if warm:
-                logger.info("warm chip, re-running FW upload anyway")
-
-            _progress(0.40, "Uploading rt2870.bin firmware + MCU boot")
-            fw_bytes = await loop.run_in_executor(None, load_firmware_blob)
-            try:
-                await loop.run_in_executor(
-                    None,
-                    lambda: load_firmware(
-                        self.transport,
-                        fw_bytes,
-                        silicon_id=self.chip_id.silicon_id,
-                        progress_cb=lambda p, m: _progress(0.40 + 0.55 * p, m),
-                    ),
-                )
-            except IOError as e:
-                raise BringUpError("firmware", str(e)) from e
-
-            _progress(0.95, "Verifying post-FW state (PBF.READY)")
-            from .constants import PBF_SYS_CTRL, PBF_SYS_CTRL_READY
-            pbf = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
-            if not (pbf & PBF_SYS_CTRL_READY):
-                raise BringUpError("firmware", f"post-FW PBF.READY not set (PBF_SYS_CTRL=0x{pbf:08x})")
-            logger.debug("post-FW PBF_SYS_CTRL=0x%08x - READY latched", pbf)
-
-            # rt2800usb_init_registers (the USB-reset drv hook) is nested inside
-            # init_registers now (matching rt2800_init_registers: disable_wpdma →
-            # drv_init_registers → MAC block), so it is no longer called separately.
-
-            _progress(0.93, "Reading EFUSE (MAC + LNA + freq calibration)")
-            try:
-                eeprom_buf = await loop.run_in_executor(None, read_eeprom_efuse, self.transport)
-                self._eeprom = parse_eeprom(eeprom_buf)
-                self.mac_address = ":".join(f"{b:02x}" for b in self._eeprom.mac_address)
-                logger.debug(
-                    "EFUSE: MAC=%s, lna_gain_bg=%d, freq_offset=%d, "
-                    "nic_conf0=0x%04x, nic_conf1=0x%04x",
-                    self.mac_address, self._eeprom.lna_gain_bg,
-                    self._eeprom.freq_offset, self._eeprom.nic_conf0,
-                    self._eeprom.nic_conf1,
-                )
-            except (IOError, usb.core.USBError) as e:
-                raise BringUpError("efuse", str(e)) from e
-
-            # Kernel rt2800_init_eeprom RF-chip + antenna identification, ported
-            # so this driver runs on ANY card with its PID regardless of the
-            # EEPROM's RF variant / antenna config. [SRC] rt2800lib.c:11182-11243.
-            rf = resolve_rf_chip(self.chip_id.silicon_id, self._eeprom)
-            logger.info(
-                "detected config: silicon=%s rf=%s antenna=%dT%dR freq_off=%d "
-                "ext_lna(bg/a)=%s/%s bt_coex=%s eeprom=%s",
-                self.chip_id.name, rf.name, self._eeprom.txpath, self._eeprom.rxpath,
-                self._eeprom.freq_offset, self._eeprom.has_cap_external_lna_bg,
-                self._eeprom.has_cap_external_lna_a, self._eeprom.has_cap_bt_coexist,
-                "unburned" if self._eeprom.looks_unburned else "burned",
-            )
-            if not rf.ported and rf.rf_id != 0:
-                logger.warning(
-                    "untested variant: EEPROM RF chip %s on %s silicon has no "
-                    "ported config_channel path — running the silicon default "
-                    "tune (kernel would too)", rf.name, self.chip_id.name,
-                )
-
-            _progress(0.96, "Running rt2800_init_registers (M2b-2 MAC config)")
-            try:
-                await loop.run_in_executor(
-                    None,
-                    lambda: init_registers(self.transport, self.chip_id.silicon_id),
-                )
-            except (IOError, usb.core.USBError) as e:
-                raise BringUpError("init_registers", str(e)) from e
-
-            _progress(0.965, "Preparing BBP (MCU_BOOT_SIGNAL + wait_bbp_ready)")
-            try:
-                await loop.run_in_executor(None, prepare_bbp, self.transport)
-            except (IOError, usb.core.USBError) as e:
-                raise BringUpError("prepare_bbp", str(e)) from e
-
-            # init_bbp consumes txpath/rxpath only to gate
-            # disable_unused_dac_adc (and, on RT5592, to pick BBP antenna
-            # paths); the validated chain counts are right for those.
-            txpath = self._eeprom.txpath if self._eeprom else 1
-            rxpath = self._eeprom.rxpath if self._eeprom else 1
-            # RT3572 is the exception: its disable_unused_dac_adc powers down
-            # DAC1 only when the NIC_CONF0 TXPATH field == 1 (ADC1 when RXPATH
-            # == 1) — gated on the RAW EEPROM field, not a chain count.
-            # [SRC] rt2800lib.c:6434-6446. On an unburned EFUSE both fields read
-            # 0, so the kernel powers down neither: DAC1/ADC1 stay in their reset
-            # state for the single live chain, no chain-forcing needed. Pass the
-            # raw fields so we match that exactly. The TX/RX chain counts that
-            # drive RFCSR1 + the PAs are separate and validated — see
-            # _channel_kwargs.
-            if (self.chip_id is not None
-                    and self.chip_id.silicon_id == 0x3572
-                    and self._eeprom is not None):
-                txpath = (self._eeprom.nic_conf0 & 0x00F0) >> 4
-                rxpath = self._eeprom.nic_conf0 & 0x000F
-            # RT5592 needs ANT_DIVERSITY from NIC_CONF1 to pick BBP152
-            # (main vs aux antenna). Kernel default-path: ant=0 (main)
-            # when NIC_CONF1.ANT_DIVERSITY != 3.
-            ant_diversity = 0
-            if self._eeprom is not None:
-                ant_diversity = (
-                    (self._eeprom.nic_conf1 & EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK)
-                    >> EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT
-                )
-            chip_rev = self.chip_id.revision
-
-            _progress(0.97, "Running init_bbp (M2b-3 baseband init)")
-            try:
-                await loop.run_in_executor(
-                    None,
-                    lambda: init_bbp(
-                        self.transport, self.chip_id.silicon_id,
-                        txpath=txpath, rxpath=rxpath,
-                        ant_diversity=ant_diversity,
-                        chip_rev=chip_rev,
-                    ),
-                )
-            except (IOError, usb.core.USBError, ValueError, NotImplementedError) as e:
-                raise BringUpError("init_bbp", str(e)) from e
-
-            _progress(0.98, "Running init_rfcsr (M2c RF init)")
-            try:
-                self._rf_cal = await loop.run_in_executor(
-                    None,
-                    lambda: init_rfcsr(
-                        self.transport, self.chip_id.silicon_id,
-                        freq_offset=self._eeprom.freq_offset if self._eeprom else 0,
-                        chip_rev=chip_rev,
-                        txpath=self._eeprom.txpath if self._eeprom else 2,
-                        rxpath=self._eeprom.rxpath if self._eeprom else 2,
-                    ),
-                )
-            except (IOError, usb.core.USBError, NotImplementedError) as e:
-                raise BringUpError("init_rfcsr", str(e)) from e
-            if self._rf_cal is not None:
-                logger.debug(
-                    "RF filter cal: bw20=0x%02x bw40=0x%02x bbp25=0x%02x bbp26=0x%02x",
-                    self._rf_cal.calibration_bw20, self._rf_cal.calibration_bw40,
-                    self._rf_cal.bbp25, self._rf_cal.bbp26,
-                )
-
-            _progress(0.984, "Sending MCU_WAKEUP (chip → STATE_AWAKE)")
-            # Kernel rt2800usb_set_device_state(STATE_RADIO_ON) does this
-            # before enable_radio: send MCU_WAKEUP (0x31), sleep 1 ms,
-            # then enable the radio. Without WAKEUP, the chip may stay in
-            # a half-asleep state where the MAC TX FSM dequeues frames and
-            # reports TX_SUCCESS in TX_STA_FIFO but the analog PA never
-            # powers up — so frames go nowhere on-air even though every
-            # digital indicator looks fine. RX may still work because
-            # incoming-frame detection auto-wakes part of the chip.
-            # [SRC] rt2800usb.c:336-351
-            from .firmware import mcu_request
-            try:
-                await loop.run_in_executor(
-                    None,
-                    lambda: mcu_request(
-                        self.transport, command=0x31, token=0xFF,
-                        arg0=0, arg1=2,
-                    ),
-                )
-                await asyncio.sleep(0.001)
-            except (IOError, usb.core.USBError) as e:
-                logger.warning("MCU_WAKEUP failed (continuing): %s", e)
-
-            _progress(0.985, "Enabling radio (MAC TX/RX + WPDMA + USB DMA)")
-            try:
-                await loop.run_in_executor(
-                    None,
-                    lambda: enable_radio(self.transport, self.chip_id.silicon_id,
-                                         ev=self._eeprom),
-                )
-            except (IOError, usb.core.USBError) as e:
-                raise BringUpError("enable_radio", str(e)) from e
-
-            # Program the EEPROM-derived MAC so RX matching engine has identity.
-            await loop.run_in_executor(
-                None, write_mac_address, self.transport, self._eeprom.mac_address,
-            )
-
-
-            # Probe xtal for RT5592 (RF5592 has dual xtal-20/40 channel
-            # tables; the silicon surfaces which crystal is fitted via
-            # MAC_DEBUG_INDEX.XTAL — NOT EEPROM).
-            if self.chip_id.silicon_id == RT_RT5592:
-                self._xtal_40mhz = await loop.run_in_executor(
-                    None, is_xtal_40mhz, self.transport
-                )
-                logger.debug(
-                    "RT5592 xtal: %s MHz (MAC_DEBUG_INDEX.XTAL=%d)",
-                    "40" if self._xtal_40mhz else "20", int(self._xtal_40mhz),
-                )
-
-            _progress(0.99, "Tuning to default channel 1 (M4)")
-            try:
-                await loop.run_in_executor(
-                    None,
-                    lambda: _set_channel(
-                        self.transport, self.chip_id.silicon_id, 1,
-                        **self._channel_kwargs(1),
-                    ),
-                )
-                self.current_channel = 1
-            except (ValueError, IOError, usb.core.USBError, NotImplementedError) as e:
-                logger.warning("default-channel tune failed: %s", e)
+            await self._bringup(_progress)
 
             _progress(1.00, "Probing endpoints + starting RX loop")
             self._rxwi_size = rxwi_size_for_silicon(self.chip_id.silicon_id)
@@ -444,6 +210,246 @@ class RT3572Driver(Driver):
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
             raise BringUpError("init", str(e)) from e
+
+    async def _bringup(self, progress: Callable[[float, str], None]) -> None:
+        """connect() minus the USB interface claim: chip id through the default-channel tune."""
+        loop = asyncio.get_event_loop()
+
+        progress(0.40, "Reading MAC_CSR0 (chip ID + revision)")
+        self.chip_id = await loop.run_in_executor(
+            None, read_chip_id, self.transport
+        )
+        logger.info(
+            "chip_id: %s rev=0x%04x (raw MAC_CSR0=0x%08x)",
+            self.chip_id.name, self.chip_id.revision,
+            self.chip_id.raw,
+        )
+        if not self.chip_id.is_supported:
+            raise BringUpError(
+                "chip-id",
+                f"silicon ID 0x{self.chip_id.silicon_id:04x} not in the supported set "
+                f"(RT3572, RT5390, RT5592)",
+            )
+
+        progress(0.60, "Reading permanent MAC")
+        mac_bytes = await loop.run_in_executor(
+            None, read_perm_mac, self.transport
+        )
+        self.mac_address = ":".join(f"{b:02x}" for b in mac_bytes)
+        logger.info("mac_address: %s", self.mac_address)
+
+        progress(0.30, "Probing warm/cold state")
+        warm = await loop.run_in_executor(
+            None, is_chip_warm, self.transport
+        )
+        self.is_warm = warm
+        logger.info("is_warm: %s", warm)
+        if warm:
+            logger.info("warm chip, re-running FW upload anyway")
+
+        progress(0.40, "Uploading rt2870.bin firmware + MCU boot")
+        fw_bytes = await loop.run_in_executor(None, load_firmware_blob)
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: load_firmware(
+                    self.transport,
+                    fw_bytes,
+                    silicon_id=self.chip_id.silicon_id,
+                    progress_cb=lambda p, m: progress(0.40 + 0.55 * p, m),
+                ),
+            )
+        except IOError as e:
+            raise BringUpError("firmware", str(e)) from e
+
+        progress(0.95, "Verifying post-FW state (PBF.READY)")
+        from .constants import PBF_SYS_CTRL, PBF_SYS_CTRL_READY
+        pbf = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
+        if not (pbf & PBF_SYS_CTRL_READY):
+            raise BringUpError("firmware", f"post-FW PBF.READY not set (PBF_SYS_CTRL=0x{pbf:08x})")
+        logger.debug("post-FW PBF_SYS_CTRL=0x%08x - READY latched", pbf)
+
+        # rt2800usb_init_registers (the USB-reset drv hook) is nested inside
+        # init_registers now (matching rt2800_init_registers: disable_wpdma →
+        # drv_init_registers → MAC block), so it is no longer called separately.
+
+        progress(0.93, "Reading EFUSE (MAC + LNA + freq calibration)")
+        try:
+            eeprom_buf = await loop.run_in_executor(None, read_eeprom_efuse, self.transport)
+            self._eeprom = parse_eeprom(eeprom_buf)
+            self.mac_address = ":".join(f"{b:02x}" for b in self._eeprom.mac_address)
+            logger.debug(
+                "EFUSE: MAC=%s, lna_gain_bg=%d, freq_offset=%d, "
+                "nic_conf0=0x%04x, nic_conf1=0x%04x",
+                self.mac_address, self._eeprom.lna_gain_bg,
+                self._eeprom.freq_offset, self._eeprom.nic_conf0,
+                self._eeprom.nic_conf1,
+            )
+        except (IOError, usb.core.USBError) as e:
+            raise BringUpError("efuse", str(e)) from e
+
+        # Kernel rt2800_init_eeprom RF-chip + antenna identification, ported
+        # so this driver runs on ANY card with its PID regardless of the
+        # EEPROM's RF variant / antenna config. [SRC] rt2800lib.c:11182-11243.
+        rf = resolve_rf_chip(self.chip_id.silicon_id, self._eeprom)
+        logger.info(
+            "detected config: silicon=%s rf=%s antenna=%dT%dR freq_off=%d "
+            "ext_lna(bg/a)=%s/%s bt_coex=%s eeprom=%s",
+            self.chip_id.name, rf.name, self._eeprom.txpath, self._eeprom.rxpath,
+            self._eeprom.freq_offset, self._eeprom.has_cap_external_lna_bg,
+            self._eeprom.has_cap_external_lna_a, self._eeprom.has_cap_bt_coexist,
+            "unburned" if self._eeprom.looks_unburned else "burned",
+        )
+        if not rf.ported and rf.rf_id != 0:
+            logger.warning(
+                "untested variant: EEPROM RF chip %s on %s silicon has no "
+                "ported config_channel path — running the silicon default "
+                "tune (kernel would too)", rf.name, self.chip_id.name,
+            )
+
+        progress(0.96, "Running rt2800_init_registers (M2b-2 MAC config)")
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: init_registers(self.transport, self.chip_id.silicon_id),
+            )
+        except (IOError, usb.core.USBError) as e:
+            raise BringUpError("init_registers", str(e)) from e
+
+        progress(0.965, "Preparing BBP (MCU_BOOT_SIGNAL + wait_bbp_ready)")
+        try:
+            await loop.run_in_executor(None, prepare_bbp, self.transport)
+        except (IOError, usb.core.USBError) as e:
+            raise BringUpError("prepare_bbp", str(e)) from e
+
+        # init_bbp consumes txpath/rxpath only to gate
+        # disable_unused_dac_adc (and, on RT5592, to pick BBP antenna
+        # paths); the validated chain counts are right for those.
+        txpath = self._eeprom.txpath if self._eeprom else 1
+        rxpath = self._eeprom.rxpath if self._eeprom else 1
+        # RT3572 is the exception: its disable_unused_dac_adc powers down
+        # DAC1 only when the NIC_CONF0 TXPATH field == 1 (ADC1 when RXPATH
+        # == 1) — gated on the RAW EEPROM field, not a chain count.
+        # [SRC] rt2800lib.c:6434-6446. On an unburned EFUSE both fields read
+        # 0, so the kernel powers down neither: DAC1/ADC1 stay in their reset
+        # state for the single live chain, no chain-forcing needed. Pass the
+        # raw fields so we match that exactly. The TX/RX chain counts that
+        # drive RFCSR1 + the PAs are separate and validated — see
+        # _channel_kwargs.
+        if (self.chip_id is not None
+                and self.chip_id.silicon_id == 0x3572
+                and self._eeprom is not None):
+            txpath = (self._eeprom.nic_conf0 & 0x00F0) >> 4
+            rxpath = self._eeprom.nic_conf0 & 0x000F
+        # RT5592 needs ANT_DIVERSITY from NIC_CONF1 to pick BBP152
+        # (main vs aux antenna). Kernel default-path: ant=0 (main)
+        # when NIC_CONF1.ANT_DIVERSITY != 3.
+        ant_diversity = 0
+        if self._eeprom is not None:
+            ant_diversity = (
+                (self._eeprom.nic_conf1 & EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK)
+                >> EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT
+            )
+        chip_rev = self.chip_id.revision
+
+        progress(0.97, "Running init_bbp (M2b-3 baseband init)")
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: init_bbp(
+                    self.transport, self.chip_id.silicon_id,
+                    txpath=txpath, rxpath=rxpath,
+                    ant_diversity=ant_diversity,
+                    chip_rev=chip_rev,
+                ),
+            )
+        except (IOError, usb.core.USBError, ValueError, NotImplementedError) as e:
+            raise BringUpError("init_bbp", str(e)) from e
+
+        progress(0.98, "Running init_rfcsr (M2c RF init)")
+        try:
+            self._rf_cal = await loop.run_in_executor(
+                None,
+                lambda: init_rfcsr(
+                    self.transport, self.chip_id.silicon_id,
+                    freq_offset=self._eeprom.freq_offset if self._eeprom else 0,
+                    chip_rev=chip_rev,
+                    txpath=self._eeprom.txpath if self._eeprom else 2,
+                    rxpath=self._eeprom.rxpath if self._eeprom else 2,
+                ),
+            )
+        except (IOError, usb.core.USBError, NotImplementedError) as e:
+            raise BringUpError("init_rfcsr", str(e)) from e
+        if self._rf_cal is not None:
+            logger.debug(
+                "RF filter cal: bw20=0x%02x bw40=0x%02x bbp25=0x%02x bbp26=0x%02x",
+                self._rf_cal.calibration_bw20, self._rf_cal.calibration_bw40,
+                self._rf_cal.bbp25, self._rf_cal.bbp26,
+            )
+
+        progress(0.984, "Sending MCU_WAKEUP (chip → STATE_AWAKE)")
+        # Kernel rt2800usb_set_device_state(STATE_RADIO_ON) does this
+        # before enable_radio: send MCU_WAKEUP (0x31), sleep 1 ms,
+        # then enable the radio. Without WAKEUP, the chip may stay in
+        # a half-asleep state where the MAC TX FSM dequeues frames and
+        # reports TX_SUCCESS in TX_STA_FIFO but the analog PA never
+        # powers up — so frames go nowhere on-air even though every
+        # digital indicator looks fine. RX may still work because
+        # incoming-frame detection auto-wakes part of the chip.
+        # [SRC] rt2800usb.c:336-351
+        from .firmware import mcu_request
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: mcu_request(
+                    self.transport, command=0x31, token=0xFF,
+                    arg0=0, arg1=2,
+                ),
+            )
+            await asyncio.sleep(0.001)
+        except (IOError, usb.core.USBError) as e:
+            logger.warning("MCU_WAKEUP failed (continuing): %s", e)
+
+        progress(0.985, "Enabling radio (MAC TX/RX + WPDMA + USB DMA)")
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: enable_radio(self.transport, self.chip_id.silicon_id,
+                                     ev=self._eeprom),
+            )
+        except (IOError, usb.core.USBError) as e:
+            raise BringUpError("enable_radio", str(e)) from e
+
+        # Program the EEPROM-derived MAC so RX matching engine has identity.
+        await loop.run_in_executor(
+            None, write_mac_address, self.transport, self._eeprom.mac_address,
+        )
+
+
+        # Probe xtal for RT5592 (RF5592 has dual xtal-20/40 channel
+        # tables; the silicon surfaces which crystal is fitted via
+        # MAC_DEBUG_INDEX.XTAL — NOT EEPROM).
+        if self.chip_id.silicon_id == RT_RT5592:
+            self._xtal_40mhz = await loop.run_in_executor(
+                None, is_xtal_40mhz, self.transport
+            )
+            logger.debug(
+                "RT5592 xtal: %s MHz (MAC_DEBUG_INDEX.XTAL=%d)",
+                "40" if self._xtal_40mhz else "20", int(self._xtal_40mhz),
+            )
+
+        progress(0.99, "Tuning to default channel 1 (M4)")
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: _set_channel(
+                    self.transport, self.chip_id.silicon_id, 1,
+                    **self._channel_kwargs(1),
+                ),
+            )
+            self.current_channel = 1
+        except (ValueError, IOError, usb.core.USBError, NotImplementedError) as e:
+            logger.warning("default-channel tune failed: %s", e)
 
     # ---- RX loop --------------------------------------------------------
     # ---- RX callables for the shared RxReaderThread ---------------------

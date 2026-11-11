@@ -174,6 +174,16 @@ def extract_bulk_out(pcap: Path, dev: int) -> list[dict]:
     return out
 
 
+def frame_epochs(pcap: Path) -> tuple[list[int], list[float]]:
+    """(frame_numbers, epochs) across the whole pcap, for mapping a frame to a main.log step."""
+    nums, eps = [], []
+    for frame, epoch in _tshark(pcap, "frame", ["frame.number", "frame.time_epoch"]):
+        if frame and epoch:
+            nums.append(int(frame))
+            eps.append(float(epoch))
+    return nums, eps
+
+
 class Divergence(AssertionError):
     pass
 
@@ -181,18 +191,32 @@ class Divergence(AssertionError):
 class ReplayDevice:
     """A fake usb.core.Device: ``ctrl_transfer`` walks the recorded op stream, returning
     recorded read bytes and byte-checking writes. The real chip transport drives it, so
-    the whole transport surface replays unchanged. First mismatch raises Divergence."""
+    the whole transport surface replays unchanged. First mismatch raises Divergence; the
+    cursor stays on the mismatched op, and the first Divergence is kept in ``divergence``
+    and re-raised on every later transfer, so a port that catches it cannot walk on.
 
-    def __init__(self, ops: list[dict]):
+    ``absorb(ops, i) -> (name, n) | None`` names a run of ``n`` capture ops at ``i`` that
+    no port call produces (async kernel work matched by its signature). It is tried at the
+    cursor before every transfer and on ``drain()``; absorbed ops are counted per name."""
+
+    def __init__(self, ops: list[dict], absorb=None):
         self.ops = ops
         self.i = 0
+        self.matched = 0
+        self.absorb = absorb
+        self.waived_hits: Counter = Counter()
+        self.waived_ops: Counter = Counter()
+        self.divergence: Divergence | None = None
 
-    def _next(self) -> dict:
-        if self.i >= len(self.ops):
-            raise Divergence("port issued a transfer past the end of the capture")
-        op = self.ops[self.i]
-        self.i += 1
-        return op
+    def drain(self) -> None:
+        while self.absorb is not None and self.i < len(self.ops):
+            hit = self.absorb(self.ops, self.i)
+            if hit is None:
+                return
+            name, n = hit
+            self.waived_hits[name] += 1
+            self.waived_ops[name] += n
+            self.i += n
 
     @staticmethod
     def _fmt(op: dict) -> str:
@@ -201,24 +225,37 @@ class ReplayDevice:
                 else f" wVal=0x{op['wval']:04x}")
         return f"{op['dir']} req{op['breq']} 0x{op['addr']:04x}{body} @f{op['frame']}"
 
+    def _diverge(self, message: str) -> Divergence:
+        self.divergence = Divergence(message)
+        return self.divergence
+
     def ctrl_transfer(self, bmRequestType, bRequest, wValue, wIndex,
                       data_or_wLength, timeout=None):
-        op = self._next()
+        if self.divergence is not None:
+            raise self.divergence
+        self.drain()
         is_in = bool(bmRequestType & 0x80)
         exp = "IN" if is_in else "OUT"
+        want = f"{exp} req{bRequest} 0x{wIndex:04x} wVal=0x{wValue:04x}"
+        if self.i >= len(self.ops):
+            raise self._diverge(f"port issued {want} past the end of the capture")
+        op = self.ops[self.i]
         if (op["dir"] != exp or op["breq"] != bRequest
                 or op["wval"] != wValue or op["addr"] != wIndex):
-            want = f"{exp} req{bRequest} 0x{wIndex:04x} wVal=0x{wValue:04x}"
-            raise Divergence(f"port issued {want}, capture has {self._fmt(op)}")
+            raise self._diverge(f"port issued {want}, capture has {self._fmt(op)}")
         if is_in:
             if op["width"] != data_or_wLength:
-                raise Divergence(
+                raise self._diverge(
                     f"read 0x{wIndex:04x}: port wants {data_or_wLength}B, capture has "
                     f"{op['width']}B @f{op['frame']}")
+            self.i += 1
+            self.matched += 1
             return op["data"]                    # bytes; transport does bytes(data)[...]
         payload = bytes(data_or_wLength) if data_or_wLength else b""
         if op["data"] != payload:
-            raise Divergence(
+            raise self._diverge(
                 f"write 0x{wIndex:04x}: port {payload.hex() or '(no data)'} != capture "
                 f"{op['data'].hex() or '(no data)'} @f{op['frame']}")
+        self.i += 1
+        self.matched += 1
         return len(payload)
