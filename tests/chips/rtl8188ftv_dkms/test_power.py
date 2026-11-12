@@ -42,8 +42,9 @@ def test_parser_skips_sdio_rows_on_usb():
     assert t.writes[-1] == (0x27, 1, 0x35)
 
 
-def test_parser_poll_timeout_fails():
+def test_parser_poll_timeout_fails(monkeypatch):
     from wifit3.chips.rtl8188ftv_dkms import pwrseq
+    monkeypatch.setattr(pwrseq.time, "sleep", lambda _s: None)
     flow = [(0x06, 0xFF, 0x0F, 0x0F, 0x00, 2, 0x02, 0x02),
             (0xFFFF, 0xFF, 0x0F, 0x0F, 0, 4, 0, 0)]
     t = FakeTransport(reads=[0x00] * 6000)

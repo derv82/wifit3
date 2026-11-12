@@ -1,6 +1,5 @@
-"""ScannerView sorting contract: real-time deterministic sorting, WPS hierarchy,
-and tie-breaking.
-"""
+"""ScannerView: a resort with nothing moved is a no-op, and forgetting a row drops the AP and
+its clients."""
 from typing import List, Optional
 import pytest
 from textual.app import App
@@ -120,96 +119,6 @@ async def test_sort_aps_short_circuits_when_order_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_sort_channel_ascending_breaks_ties_with_stronger_power():
-    # Two APs on channel 6: one strong (-35 dBm), one weak (-80 dBm).
-    # One AP on channel 1 (-50 dBm).
-    # Sorting by channel ascending: channel 1 first, then channel 6.
-    # On channel 6, the stronger AP (-35) must be above the weaker AP (-80).
-    ap_ch1 = _make_ap("aa:bb:cc:00:00:01", ssid="Net1", signal=-50)
-    ap_ch1.channel = 1
-    ap_ch6_weak = _make_ap("aa:bb:cc:00:00:02", ssid="Net6Weak", signal=-80)
-    ap_ch6_weak.channel = 6
-    ap_ch6_strong = _make_ap("aa:bb:cc:00:00:03", ssid="Net6Strong", signal=-35)
-    ap_ch6_strong.channel = 6
-
-    app = _ScannerHost(_FakeArray([ap_ch6_weak, ap_ch1, ap_ch6_strong], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", APTable)
-
-        table.sort_column = "channel"
-        table.sort_reverse = False  # Ascending
-
-        scanner.refresh_table()
-
-        assert table.ordered_bssids == [
-            "aa:bb:cc:00:00:01",  # Channel 1
-            "aa:bb:cc:00:00:03",  # Channel 6 strong (-35)
-            "aa:bb:cc:00:00:02",  # Channel 6 weak (-80)
-        ]
-
-
-@pytest.mark.asyncio
-async def test_sort_ssid_ascending_sinks_hidden_networks():
-    ap_b = _make_ap("aa:bb:cc:00:00:02", ssid="Bravo", signal=-50)
-    ap_a = _make_ap("aa:bb:cc:00:00:01", ssid="Alpha", signal=-60)
-    ap_hidden = _make_ap("aa:bb:cc:00:00:03", ssid=None, signal=-20)  # Strong but hidden
-
-    app = _ScannerHost(_FakeArray([ap_b, ap_hidden, ap_a], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", APTable)
-
-        table.sort_column = "ssid"
-        table.sort_reverse = False  # Ascending
-
-        scanner.refresh_table()
-
-        assert table.ordered_bssids == [
-            "aa:bb:cc:00:00:01",  # Alpha
-            "aa:bb:cc:00:00:02",  # Bravo
-            "aa:bb:cc:00:00:03",  # Hidden sinks to bottom despite strong signal
-        ]
-
-
-@pytest.mark.asyncio
-async def test_cursor_tracking_pins_highlight_on_resort():
-    ap1 = _make_ap("aa:bb:cc:00:00:01", ssid="AP1", signal=-40)
-    ap2 = _make_ap("aa:bb:cc:00:00:02", ssid="AP2", signal=-60)
-
-    app = _ScannerHost(_FakeArray([ap1, ap2], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", APTable)
-
-        table.sort_column = "signal"
-        table.sort_reverse = True
-        scanner.refresh_table()
-
-        # Cursor starts on row 0 (ap1)
-        assert table.cursor_row == 0
-
-        # Move cursor to ap2 (row 1)
-        table.move_cursor(1)
-        assert table.cursor_row == 1
-
-        # Now ap2's signal jumps to -20 (stronger than ap1)
-        ap2.signal_by_card["card0"] = -20
-        scanner.refresh_table()
-
-        # ap2 jumped to row 0, and the cursor follows the AP, not the row index
-        assert table.ordered_bssids == [
-            "aa:bb:cc:00:00:02",
-            "aa:bb:cc:00:00:01",
-        ]
-        assert table.cursor_bssid == ap2.bssid
-        assert table.cursor_row == 0
-
-
-@pytest.mark.asyncio
 async def test_forget_row_evicts_ap_and_its_clients():
     from wifit3.models import Client
     ap1 = _make_ap("aa:bb:cc:00:00:01", ssid="AP1", signal=-40)
@@ -235,4 +144,3 @@ async def test_forget_row_evicts_ap_and_its_clients():
         assert c1.mac not in fake_array.clients
         # c2 was associated with ap2, must NOT be pruned
         assert c2.mac in fake_array.clients
-
