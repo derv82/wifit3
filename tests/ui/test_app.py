@@ -243,3 +243,18 @@ async def test_cancelling_vault_preload_stops_before_the_next_ap(mocker):
             await app.workers.wait_for_complete()
 
     assert loads == ["aa:bb:cc:dd:ee:01"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_an_unhandled_exception_in_a_timer_is_logged(caplog):
+    def explode():
+        raise RuntimeError("tick failed")
+
+    app = WifiteApp()
+    with pytest.raises(RuntimeError, match="tick failed"):
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.set_timer(0.01, explode)
+            await pilot.pause(0.1)
+    logged = [r for r in caplog.records if r.levelname == "CRITICAL"]
+    assert logged and logged[0].exc_info[1].args == ("tick failed",)

@@ -221,6 +221,10 @@ class WifiteApp(App):
         except ConfigError as e:
             self.notify(str(e), severity="error", title="Config")
 
+    def _handle_exception(self, error: Exception) -> None:
+        logger.critical("Unhandled exception, exiting", exc_info=error)
+        super()._handle_exception(error)
+
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
         if self._config_error:
