@@ -70,12 +70,14 @@ class AccessPoint:
     # Most recent beacon/probe-resp timestamp.
     last_seen: float = field(default_factory=time.time)
     wpa3: bool = False
+    sae_h2e: str = "unknown"
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False
     beacon_protection: bool = False
     # Passively observed EAP method Type numbers (EAPOL-Type-0), aggregated across clients.
     observed_eap_methods: Set[int] = field(default_factory=set)
+    observed_sae_methods: Set[str] = field(default_factory=set)
 
     chipset: Optional[str] = None  # from a chipset driver's vendor IE
 
