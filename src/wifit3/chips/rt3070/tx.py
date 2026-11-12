@@ -12,7 +12,7 @@ Wire layout (``rt2800usb_get_tx_data_len`` :440-451):
     | TXINFO(4) | TXWI(16) | 802.11 frame | 4-byte align pad | USB end pad(4) |
                 |<------------- USB_DMA_TX_PKT_LEN ---------->|
 
-Family scars honored (re-derived; see chips/rt2800usb/RT2800USB.md §TX): the trailing
+Family scars honored (re-derived; see chips/rt3572/RT3572.md §TX): the trailing
 +4 USB end pad is mandatory (the chip silently drops bulk-OUT without it); ``QSEL=2``
 (EDCA — the only QSEL the data path accepts); ``TX_OP=HT_NONE`` so the chip skips the
 RTS/CTS handshake that otherwise eats a spoofed-source mgmt frame; ``WIV=1`` + zeroed

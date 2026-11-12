@@ -48,7 +48,7 @@ def _ef(msg_num: int, nonce: bytes, key_data_len: int = 0,
     mic = b"\xAA" * 16
     return HandshakeMessage(
         raw=b"\x00" * 24, msg_num=msg_num, replay_hex=(5).to_bytes(8, "big").hex(),
-        nonce=nonce, mic=mic, key_data_len=key_data_len,
+        nonce=nonce, mic=mic,
         eapol_payload=_eapol_payload(mic=payload_mic or mic, key_data_len=key_data_len),
     )
 

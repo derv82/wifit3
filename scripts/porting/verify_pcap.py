@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 # Windows consoles default to cp1252; recipes print arrows / em-dashes in their status lines
-# (e.g. rt2800usb / rt5572). Force UTF-8 so a non-ASCII char can never crash a run mid-walk.
+# (e.g. rt3572 / rt5572). Force UTF-8 so a non-ASCII char can never crash a run mid-walk.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -66,6 +66,7 @@ def _load(key: str, path: Path):
     file is named verify_pcap.py, so a plain ``import`` would collide in sys.modules."""
     spec = importlib.util.spec_from_file_location(f"_recipe_{key}", path)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod     # dataclasses resolve annotations through sys.modules
     spec.loader.exec_module(mod)
     return mod
 
@@ -87,8 +88,8 @@ REGISTRY: dict[str, Chip] = {
                       "Realtek RTL8922AU rtw89 802.11be (vendor 0x05); SCAFFOLD, M1 register access"),
     "rt2500usb": Chip("rt2500usb", "chips/rt2500usb/verify_pcap.py",
                       "Ralink RT2570 rt2x00 (vendor 0x06/0x07)"),
-    "rt2800usb": Chip("rt2800usb", "chips/rt2800usb/verify_pcap.py",
-                      "Ralink RT3572/RT5372/RT5572 rt2x00 (vendor 0x06/0x07)"),
+    "rt3572": Chip("rt3572", "chips/rt3572/verify_pcap.py",
+                      "Ralink RT3572 / ALFA AWUS051NH v2 rt2x00 (vendor 0x06/0x07)"),
     "rt3070": Chip("rt3070", "chips/rt3070/verify_pcap.py",
                    "Ralink RT3070 / ALFA AWUS036NH clean-room (vendor 0x06/0x07)"),
     "rt5370": Chip("rt5370", "chips/rt5370/verify_pcap.py",
@@ -101,6 +102,8 @@ REGISTRY: dict[str, Chip] = {
                        "Realtek RTL8188EUS / rtl8xxxu (vendor 0x05)"),
     "rtl8192fu": Chip("rtl8192fu", "chips/rtl8192fu/verify_pcap.py",
                       "Realtek RTL8192FU / mainline rtl8xxxu (vendor 0x05)"),
+    "rtl8192cu": Chip("rtl8192cu", "chips/rtl8192cu/verify_pcap.py",
+                      "Realtek RTL8188CU / RTL8192CU / mainline rtlwifi (vendor 0x05)"),
     "rtl8188eus_dkms": Chip("rtl8188eus_dkms", "chips/rtl8188eus_dkms/verify_pcap.py",
                             "Realtek RTL8188EUS 1T1R DKMS (vendor 0x05)"),
     "rtl8188ftv_dkms": Chip("rtl8188ftv_dkms", "chips/rtl8188ftv_dkms/verify_pcap.py",

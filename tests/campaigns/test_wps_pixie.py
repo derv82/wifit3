@@ -9,7 +9,6 @@ AUTHKEY = bytes.fromhex("11" * wc.AUTHKEY_LEN)
 PKE = bytes.fromhex("22" * wc.PUBKEY_LEN)
 PKR = bytes.fromhex("33" * wc.PUBKEY_LEN)
 E_NONCE = bytes.fromhex("44" * wc.NONCE_LEN)
-MAC = bytes.fromhex("aabbccddeeff")
 
 
 def _bundle(pin: str, e_s1: bytes, e_s2: bytes) -> PixieBundle:
@@ -21,7 +20,6 @@ def _bundle(pin: str, e_s1: bytes, e_s2: bytes) -> PixieBundle:
         e_hash2=wc.e_or_r_hash(AUTHKEY, e_s2, psk2, PKE, PKR),
         e_nonce=E_NONCE,
         authkey=AUTHKEY,
-        enrollee_mac=MAC,
     )
 
 
@@ -120,7 +118,7 @@ def _bundle_for(pin, es1, es2, e_nonce):
         pke=PKE, pkr=PKR,
         e_hash1=wc.e_or_r_hash(AUTHKEY, es1, psk1, PKE, PKR),
         e_hash2=wc.e_or_r_hash(AUTHKEY, es2, psk2, PKE, PKR),
-        e_nonce=e_nonce, authkey=AUTHKEY, enrollee_mac=MAC,
+        e_nonce=e_nonce, authkey=AUTHKEY,
     )
 
 

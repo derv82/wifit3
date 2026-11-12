@@ -39,6 +39,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
+| [RTL8192CU](#rtl8192cu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -126,6 +127,25 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ✅ | 2026-11-02 | 20-min 13-ch soak, OK (trend 1.20), 0 USB errors. |
 
 → [RTL8188FTV_DKMS.md](../src/wifit3/chips/rtl8188ftv_dkms/RTL8188FTV_DKMS.md)
+
+### RTL8192CU
+
+*TP-Link TL-WN823N v1 (`0bda:8178`) · 2.4 GHz*
+
+> Ported from the mainline Linux `rtlwifi` driver (`rtl8192cu/`, `rtl8192c/`, `usb.c`), Linux v6.12.107.
+> **No card in hand.** RX and TX are user-reported; nothing below is measured.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **ungraded** | 2026-11-11 | No card in hand: no RX, TX, ACK or soak measurement to score. |
+| RX | ✅ | 2026-11-08 | User-reported on both VID:PIDs ([#71](https://github.com/derv82/wifit3/issues/71), [#127](https://github.com/derv82/wifit3/issues/127)). |
+| Port | ⬜ | | No Linux baseline; register-level fidelity only (verify_pcap). |
+| TX | ✅ | 2026-11-11 | User-reported: deauth → `.hc22000` ([#127](https://github.com/derv82/wifit3/issues/127)). |
+| Handshake / PMKID / WEP / WPS | ⬜ | | |
+| ACKs | ⬜ | | Active monitor (MSR infra + REG_MACID) ported; untried. |
+| Stress | ⬜ | | |
+
+→ [RTL8192CU.md](../src/wifit3/chips/rtl8192cu/RTL8192CU.md)
 
 ### RTL8192FU
 <img align="right" width="140" src="../assets/cardart/card-dlink-an3u-n300.png" alt="D-Link AN3U rev. A1">
@@ -483,7 +503,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 | ACKs | ✅ | 2026-07-25 | WPS PIN/PBC → auto-ACK. |
 | Stress | ✅ | 2026-07-30 | 30-min 14-ch soak, flat (PAU05 1.13, PAU06 0.91). |
 
-→ [RT5372.md](../src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](../src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
+→ [RT5372.md](../src/wifit3/chips/rt5372/RT5372.md) 
 
 ### RT5572
 <img align="right" width="140" height="160" src="../assets/cardart/card-pau09n600.png" alt="Panda PAU09 N600">
@@ -515,7 +535,7 @@ Excellent 2.4 GHz front-end (external LNA): strong range, signal, and TX rate.
 Our only unit (bought 2015) has a blank EFUSE (no factory RF calibration), so it can't
 validate the chip.
 
-→ [RT2800USB.md](../src/wifit3/chips/rt2800usb/RT2800USB.md)
+→ [RT3572.md](../src/wifit3/chips/rt3572/RT3572.md)
 
 ## Stress soak
 
@@ -534,5 +554,5 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 
 **Wishlist (not yet bought):**
 
-- **TP-Link TL-WN823N**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
+- **TP-Link TL-WN823N v1**:  RTL8192CU [Issue#71](https://github.com/derv82/wifit3/issues/71) (new port)
 - **Asus USB-AC68**: RTL8814AU [Issue#86](https://github.com/derv82/wifit3/issues/86) ("for the art")

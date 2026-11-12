@@ -51,11 +51,10 @@ def test_full_capture_pipeline_cracks():
     hs = Handshake(bssid="94:83:c4:8c:3f:78", client_mac="02:aa:bb:cc:dd:ee",
                    beacon_frame=b"B", akm_offered=[2, 8])
     hs.messages.append(HandshakeMessage(raw=m1, msg_num=1, replay_hex="0000000000000001",
-                                        nonce=anonce, mic=bytes(16), key_data_len=0,
+                                        nonce=anonce, mic=bytes(16),
                                         eapol_payload=m1[32:], timestamp=1.0))
     hs.messages.append(HandshakeMessage(raw=m2, msg_num=2, replay_hex=parsed.replay_counter.hex(),
                                         nonce=parsed.nonce, mic=parsed.mic,
-                                        key_data_len=parsed.key_data_len,
                                         eapol_payload=parsed.payload, akm=2, timestamp=1.1))
 
     lines = eapol_hashlines(ssid, hs)

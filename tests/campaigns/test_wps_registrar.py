@@ -248,7 +248,6 @@ async def test_m3_outcome_carries_pixie_bundle():
     assert out.pixie.pkr
     assert out.pixie.e_nonce
     assert out.pixie.authkey
-    assert out.pixie.enrollee_mac == MAC_E
     assert recover_pin(out.pixie, modes=(PixieMode.NULL_SECRET,)).pin == "12345670"
 
 

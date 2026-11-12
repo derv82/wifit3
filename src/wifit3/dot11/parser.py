@@ -255,7 +255,6 @@ class WlanFrameParser:
                 return WepDataPacket(
                     **base, type="wep_data",
                     iv=bytes(frame[header_len : header_len + 3]),
-                    keyid=(keyid_byte >> 6) & 0x03,
                     # First 16 ciphertext bytes: the PTW keystream (XOR the known ARP plaintext).
                     cipher=bytes(frame[cipher_start : cipher_start + 16]))
             return Packet(**base, type="data")
@@ -309,14 +308,13 @@ class WlanFrameParser:
                     replay_counter=frame[eapol_start + 9: eapol_start + 17],
                     nonce=frame[eapol_start + 17: eapol_start + 49],
                     mic=frame[eapol_start + 81: eapol_start + 97],
-                    key_data_len=key_data_len,
                     msg_num=msg_num,
                 )
                 if pdu_end == structured_pdu_end and len(frame) >= structured_pdu_end:
                     fields["payload"] = bytes(frame[eapol_start: structured_pdu_end])
                 # PMKID KDE (M1) and the client's negotiated AKM (M2's cleartext RSN IE) both sit
                 # at the START of Key Data, so a truncated tail still yields them (seen on
-                # mt76x0u / rt2800usb RT5572).
+                # mt76x0u / rt5572).
                 if key_data_len > 0:
                     key_data = frame[eapol_start + 99: min(structured_pdu_end, readable_end)]
                     if key_data:

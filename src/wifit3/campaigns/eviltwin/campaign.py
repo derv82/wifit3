@@ -86,9 +86,9 @@ class EvilTwinCampaign(Campaign):
         if self.captured:
             return ["[black bold on green] ✓ Captured [/black bold on green] crackable M2",
                     f"[dim]saved to {Path(Config.captures_dir)}{os.sep}[/dim]"]
-        stats = getattr(self.fakeap, "stats", None)
-        if stats is None:
+        if self.fakeap is None:
             return [f"[bold cyan]EvilTwin arming…[/bold cyan] on CH {self.twin_channel}"]
+        stats = self.fakeap.stats
         return [f"[bold cyan]EvilTwin active[/bold cyan] on CH {self.twin_channel}",
                 f"[dim]auth:{stats.auth} · assoc:{stats.assoc} · M2:{stats.m2}[/dim]",
                 f"[dim]probes: {stats.probes_direct} direct · "

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
 from wifit3.models import AccessPoint
@@ -31,10 +31,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FakeAuthStats:
-    auth_attempts: int = 0
     associations: int = 0
     reactive_reauths: int = 0
-    started_at: float = field(default_factory=time.time)
 
 
 class WepFakeAuth:
@@ -174,7 +172,6 @@ class WepFakeAuth:
 
         self.state = "authenticating"
         self._assoc_ok = False
-        self.stats.auth_attempts += 1
 
         await self.iface.send_no_wait(auth_req(self.bssid_bytes, self.source_mac))
         await asyncio.sleep(0.1)  # let the AP process Auth before Assoc lands

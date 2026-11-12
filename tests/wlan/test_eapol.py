@@ -217,7 +217,6 @@ def test_parser_extracts_full_eapol_fields():
     assert parsed.nonce == anonce
     assert parsed.mic == mic
     assert parsed.replay_counter == b"\x00" * 7 + b"\x01"
-    assert parsed.key_data_len == 0
 
 
 # ---- PMKID KDE extraction -------------------------------------------------------
@@ -361,7 +360,7 @@ def _hmsg(parsed, akm=None) -> HandshakeMessage:
         raw=parsed.raw, msg_num=parsed.msg_num,
         replay_hex=(parsed.replay_counter or b"").hex(),
         nonce=parsed.nonce or b"", mic=parsed.mic or b"",
-        key_data_len=parsed.key_data_len, eapol_payload=parsed.payload, akm=akm,
+        eapol_payload=parsed.payload, akm=akm,
     )
 
 
@@ -547,7 +546,6 @@ def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None, mic=True, complete
         replay_hex=(replay_int).to_bytes(8, "big").hex(),
         nonce=nonce if nonce is not None else bytes([msg_num]) * 32,
         mic=(b"\x11" * 16 if mic else b"\x00" * 16),
-        key_data_len=0,
         eapol_payload=(bytes(120) if complete else b""),
         timestamp=ts,
     )

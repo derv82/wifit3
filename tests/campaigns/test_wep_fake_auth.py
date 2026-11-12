@@ -156,7 +156,6 @@ async def test_start_arms_without_authenticating(mocker):
     fa.start()
     await asyncio.sleep(0)
     assert fa.state == "ready"
-    assert fa.stats.auth_attempts == 0
     iface.send_no_wait.assert_not_called()
     fa.stop()
 
@@ -164,8 +163,9 @@ async def test_start_arms_without_authenticating(mocker):
 async def test_ensure_associated_fast_path_when_already_associated(mocker):
     fa = _fa_live(mocker)
     fa.state = "associated"
+    auth_round = mocker.spy(fa, "_auth_round")
     assert await fa.ensure_associated() is True
-    assert fa.stats.auth_attempts == 0          # no auth round needed
+    assert auth_round.call_count == 0          # no auth round needed
 
 
 @pytest.mark.slow
@@ -173,14 +173,15 @@ async def test_ensure_associated_retries_3x_then_fails_once(mocker):
     fa = _fa_live(mocker)
     logs: list[str] = []
     fa._log = logs.append
+    auth_round = mocker.spy(fa, "_auth_round")
     assert await fa.ensure_associated() is False
     assert fa.state == "failed"
-    assert fa.stats.auth_attempts == 3          # 3 silent attempts
+    assert auth_round.call_count == 3          # 3 silent attempts
     assert sum("failed" in m for m in logs) == 1  # logged exactly once
 
     # Within the post-failure backoff: immediate False, no new attempts/log.
     assert await fa.ensure_associated() is False
-    assert fa.stats.auth_attempts == 3
+    assert auth_round.call_count == 3
     assert sum("failed" in m for m in logs) == 1
 
 

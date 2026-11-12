@@ -20,9 +20,9 @@ from wifit3.dot11.probe import probe_req
 from wifit3.models.device_id import DeviceID
 
 from wifit3.chips import (
-    mt7601u, mt76x0u, mt76x2u, mt7921au, mt7925au, rt2500usb, rt2800usb, rt5572, rtl8187,
+    mt7601u, mt76x0u, mt76x2u, mt7921au, mt7925au, rt2500usb, rt3572, rt5572, rtl8187,
     rtl8188eus, rtl8188ftv_dkms, rtl8812au, rtl8812au_dkms, rtl8814au_dkms, rtl8821au, rtl8821au_dkms, rtl8821cu_dkms, rtl8822bu, rtl8822bu_dkms, rtl8822cu,
-    rtl8192fu, rtl8922au, rtw88_8814au,
+    rtl8192cu, rtl8192fu, rtl8922au, rtw88_8814au,
 )
 from wifit3.chips.ar9271_v2 import constants as ar9271_constants
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
@@ -39,10 +39,10 @@ from wifit3.chips.mt7925au.constants import MT_TXD3_NO_ACK as MT7925AU_TXD3_NO_A
 from wifit3.chips.mt7925au.driver import MT7925AUDriver
 from wifit3.chips.rt2500usb.constants import TXD_W0_NEW_SEQ as RT2500USB_TXD_W0_NEW_SEQ
 from wifit3.chips.rt2500usb.driver import RT2500USBDriver
-from wifit3.chips.rt2800usb.constants import RT_RT5390 as RT2800USB_RT5390
-from wifit3.chips.rt2800usb.constants import TXWI_W1_ACK as RT2800USB_TXWI_W1_ACK
-from wifit3.chips.rt2800usb.driver import RT2800USBDriver
-from wifit3.chips.rt2800usb.mac import ChipId as RT2800USBChipId
+from wifit3.chips.rt3572.constants import RT_RT5390 as RT3572_RT5390
+from wifit3.chips.rt3572.constants import TXWI_W1_ACK as RT3572_TXWI_W1_ACK
+from wifit3.chips.rt3572.driver import RT3572Driver
+from wifit3.chips.rt3572.mac import ChipId as RT3572ChipId
 from wifit3.chips.rt3070.constants import TXWI_W1_ACK as RT3070_TXWI_W1_ACK
 from wifit3.chips.rt3070.driver import RT3070Driver
 from wifit3.chips.rt3070.transport import RT3070Transport
@@ -59,6 +59,11 @@ from wifit3.chips.rt5572.mac import ChipId as RT5572ChipId
 from wifit3.chips.rtl8187.driver import RTL8187Driver
 from wifit3.chips.rtl8187.mac import ChipVariant as RTL8187ChipVariant
 from wifit3.chips.rtl8188eus.constants import TXDESC_BROADMULTICAST as RTL8188EUS_BROADMULTICAST
+from wifit3.chips.rtl8192cu import constants as RTL8192CU_CONSTANTS
+from wifit3.chips.rtl8192cu.driver import RTL8192CUDriver
+from wifit3.chips.rtl8192cu.usb import UsbEndpointDescriptor as RTL8192CUEndpoint
+from wifit3.chips.rtl8192cu.usb import _rtl_usb_init as rtl8192cu_usb_init
+from wifit3.chips.rtl8192cu.wifi import set_hal_start as rtl8192cu_set_hal_start
 from wifit3.chips.rtl8192fu import constants as RTL8192FU_CONSTANTS
 from wifit3.chips.rtl8192fu.core import rtl8xxxu_config_endpoints_no_sie, rtl8xxxu_init_queue_priority
 from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
@@ -166,9 +171,9 @@ def build_rt2500usb(dev: RecordingUsbDevice) -> Driver:
     return driver
 
 
-def build_rt2800usb(dev: RecordingUsbDevice) -> Driver:
-    driver = RT2800USBDriver.from_usb_device(dev, first_id(rt2800usb.SUPPORTED_IDS))
-    driver.chip_id = RT2800USBChipId(raw=RT2800USB_RT5390 << 16, silicon_id=RT2800USB_RT5390,
+def build_rt3572(dev: RecordingUsbDevice) -> Driver:
+    driver = RT3572Driver.from_usb_device(dev, first_id(rt3572.SUPPORTED_IDS))
+    driver.chip_id = RT3572ChipId(raw=RT3572_RT5390 << 16, silicon_id=RT3572_RT5390,
                                      revision=0, name="RT5390", is_supported=True)
     return driver
 
@@ -220,6 +225,15 @@ def build_rtl8188eus_dkms(dev: RecordingUsbDevice) -> Driver:
 
 def build_rtl8188ftv_dkms(dev: RecordingUsbDevice) -> Driver:
     return Rtl8188ftvDkmsDriver.from_usb_device(dev, first_id(rtl8188ftv_dkms.SUPPORTED_IDS))
+def build_rtl8192cu(dev: RecordingUsbDevice) -> Driver:
+    driver = RTL8192CUDriver.from_usb_device(dev, first_id(rtl8192cu.SUPPORTED_IDS))
+    endpoints = [RTL8192CUEndpoint(address, 0x02) for address in (0x81, 0x02, 0x03)]
+    assert rtl8192cu_usb_init(driver.priv, endpoints, True) == 0    # zeroed reads: test chip, HQ+LQ
+    driver.priv.status |= RTL8192CU_CONSTANTS.BIT(RTL8192CU_CONSTANTS.RTL_STATUS_INTERFACE_START)
+    driver.priv.usb.state = RTL8192CU_CONSTANTS.USB_STATE_START
+    rtl8192cu_set_hal_start(driver.priv.rtlhal)
+    driver._started = True
+    return driver
 
 
 def build_rtl8192fu(dev: RecordingUsbDevice) -> Driver:
@@ -311,8 +325,8 @@ DRIVER_CASES: dict[str, DriverCase] = {
     # rt2500usb never requests an ACK, on purpose (docs/ACKS.md).
     "rt2500usb": DriverCase(build_rt2500usb, 20, 20,
                             hw_seq_bit=DescriptorBit(0, RT2500USB_TXD_W0_NEW_SEQ)),
-    "rt2800usb": DriverCase(build_rt2800usb, 20, 20, hw_seq_bit=None,
-                            ack_request_bit=DescriptorBit(8, RT2800USB_TXWI_W1_ACK)),
+    "rt3572": DriverCase(build_rt3572, 20, 20, hw_seq_bit=None,
+                            ack_request_bit=DescriptorBit(8, RT3572_TXWI_W1_ACK)),
     "rt3070": DriverCase(build_rt3070, 20, 20, hw_seq_bit=None,
                          ack_request_bit=DescriptorBit(8, RT3070_TXWI_W1_ACK)),
     "rt5370": DriverCase(build_rt5370, 20, 20, hw_seq_bit=None,
@@ -329,6 +343,7 @@ DRIVER_CASES: dict[str, DriverCase] = {
                                   hw_seq_bit=DescriptorBit(12, 1 << 31),    # txdw3 EN_HWSEQ
                                   no_ack_bit=DescriptorBit(0, RTL8188EUS_DKMS_BMC)),
     "rtl8188ftv_dkms": DriverCase(build_rtl8188ftv_dkms, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),
+    "rtl8192cu": DriverCase(build_rtl8192cu, 32, 32, hw_seq_bit=None, no_ack_bit=REALTEK_BMC),
     "rtl8192fu": DriverCase(build_rtl8192fu, 40, 40, hw_seq_bit=None,
                              no_ack_bit=DescriptorBit(0, RTL8192FU_CONSTANTS.TXDESC_BROADMULTICAST << 24)),
     "rtl8812au": DriverCase(build_rtl8812au, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),

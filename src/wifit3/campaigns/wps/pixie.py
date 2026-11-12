@@ -32,7 +32,6 @@ class PixieBundle:
     e_hash2: bytes
     e_nonce: bytes
     authkey: bytes
-    enrollee_mac: bytes | None = None
 
 
 @dataclass(frozen=True)

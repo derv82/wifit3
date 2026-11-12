@@ -10,7 +10,7 @@ from wifit3.models.jobs import JobAction, JobState, ToolName
 from wifit3.persist.config import Config
 from wifit3.vault.tools.base import VaultTool, require_hashlines
 from wifit3.vault.tools.hashtopolis_api import (HashtopolisApi, HashtopolisUnreachable,
-                                                ServerFile, user_api_endpoint)
+                                                ServerFile, api_endpoint)
 
 
 logger = logging.getLogger(__name__)
@@ -161,4 +161,7 @@ class HashtopolisTool(VaultTool):
 
 
 def _configured_server() -> Optional[str]:
-    return user_api_endpoint(Config.hashtopolis.url) if Config.hashtopolis.url else None
+    settings = Config.hashtopolis
+    if not settings.url:
+        return None
+    return api_endpoint(settings.url, settings.access_key or "")

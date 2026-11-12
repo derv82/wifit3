@@ -167,6 +167,27 @@ Do this only when absolutely necessary; prefer a per-feature modal over a new Pr
 
 ------------
 
+### Dev script: per-channel RX check against reference cards
+
+To detect broken tunes / blind spots.
+
+The card under test + 2 reference cards (`scripts/rx/beacon_trend.py --card` style) 
+tune to the same channel at the same moment, dwell ~10 s, then move on.
+All non-DFS channels run in ~5 min.
+
+For every AP both references hear at ≥50% of its beacon interval, flag the test card per AP:
+- surpass (more than both references),
+- pass (≥50% of the references),
+- weak (<50%),
+- missing (0). 
+
+Print the references' agreement per channel too, so a channel where the references
+disagree isn't blamed on the test card.
+
+Reuse `beacon_trend.py`'s recorder and per-AP table rather than copying them.
+
+------------
+
 ## Undecided
 
 ### Captive Portal

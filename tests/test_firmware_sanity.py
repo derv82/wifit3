@@ -8,12 +8,12 @@ def test_ar9271_firmware_exists():
     assert fw_path.exists(), f"AR9271 Firmware missing at {fw_path}"
     assert fw_path.stat().st_size > 10000, "AR9271 Firmware file is too small to be valid."
 
-def test_rt2800usb_firmware_exists():
+def test_rt3572_firmware_exists():
     base_dir = Path(__file__).parent.parent
-    fw_path = base_dir / "src" / "wifit3" / "chips" / "rt2800usb" / "assets" / "rt5572.bin"
+    fw_path = base_dir / "src" / "wifit3" / "chips" / "rt3572" / "assets" / "rt5572.bin"
     
-    assert fw_path.exists(), f"RT2800USB Firmware missing at {fw_path}"
-    assert fw_path.stat().st_size > 1000, "RT2800USB Firmware file is too small to be valid."
+    assert fw_path.exists(), f"RT3572 Firmware missing at {fw_path}"
+    assert fw_path.stat().st_size > 1000, "RT3572 Firmware file is too small to be valid."
 
 def test_mt7921au_firmware_exists():
     base_dir = Path(__file__).parent.parent

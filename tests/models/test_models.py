@@ -56,7 +56,6 @@ def _eapol(msg_num: int, replay: int) -> HandshakeMessage:
         replay_hex=replay.to_bytes(8, "big").hex(),
         nonce=bytes([msg_num]) * 32,
         mic=b"\x11" * 16,
-        key_data_len=0,
         eapol_payload=bytes(120),
     )
 
@@ -80,7 +79,6 @@ def test_handshake_add_deduplicates_and_bounds_history():
             replay_hex=index.to_bytes(8, "big").hex(),
             nonce=b"",
             mic=b"",
-            key_data_len=0,
         ))
 
     assert Handshake.RETAINED_MESSAGES <= len(hs.messages) <= Handshake.MAX_MESSAGES
@@ -99,7 +97,6 @@ def test_handshake_prune_keeps_the_best_pair_over_newer_ones():
             replay_hex=replay.to_bytes(8, "big").hex(),
             nonce=nonce.to_bytes(32, "big"),
             mic=b"\x11" * 16,
-            key_data_len=0,
             eapol_payload=bytes(120),
         )
 

@@ -159,8 +159,8 @@ AP (an Enterprise EvilTwin). Vault, the cracker and capture storage all assume `
 
 **Problem.** Without a lock, concurrent injects reach the device out of call order. Before mt7921au
 got one, the TX lab saw 42-46 of 500 flooded frames arrive out of order (rtl8822bu has a lock: 0).
-No lock in: mt76x0u, mt76x2u, mt7925au, rt2800usb, rt5572, rtl8187, rtl8922au.
-rt2800usb / rt5572 can also transmit in the middle of a retune.
+No lock in: mt76x0u, mt76x2u, mt7925au, rt3572, rt5572, rtl8187, rtl8822cu, rtl8922au.
+rt3572 / rt5572 can also transmit in the middle of a retune.
 
 **Direction.** A lock per driver, written in each driver (no shared base); re-run the TX lab flood
 test on each.

@@ -193,7 +193,7 @@ async def test_encryption_upgrade_is_seen(scanner):
     app, screen = scanner
     ap = _ap()
     _assert_cache_is_honest(screen, ap)
-    ap.last_seen = time.time()          # the sink rewrites this after every IE field
+    ap.last_seen += 1                   # the sink rewrites this after every IE field
     ap.wpa3 = True
     ap.akms = ["SAE"]
     _assert_cache_is_honest(screen, ap)

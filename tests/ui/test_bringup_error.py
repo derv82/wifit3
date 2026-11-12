@@ -16,7 +16,7 @@ from textual.widgets import Label
 
 import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
-from wifit3.chips.rt2800usb.driver import RT2800USBDriver
+from wifit3.chips.rt3572.driver import RT3572Driver
 from wifit3.chips.rtl8187.driver import RTL8187Driver
 from wifit3.device.manager import DeviceManager, Status
 from wifit3.errors import BringUpError
@@ -37,11 +37,11 @@ async def test_driver_init_io_failure_becomes_bringuperror(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rt2800usb_init_io_failure_becomes_bringuperror(monkeypatch):
+async def test_rt3572_init_io_failure_becomes_bringuperror(monkeypatch):
     """Second driver, same contract: the swallow-to-BringUpError conversion is a
     fleet-wide change, so lock one of the converted drivers (rt2800usb wraps its whole
     connect body): a USB fault on the claim must raise, not return False."""
-    driver = RT2800USBDriver(Mock())
+    driver = RT3572Driver(Mock())
     monkeypatch.setattr(driver, "_claim",
                         Mock(side_effect=usb.core.USBError("simulated claim failure")))
 

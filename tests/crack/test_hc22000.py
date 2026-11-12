@@ -43,7 +43,6 @@ def _ef(
         replay_hex=replay.to_bytes(8, "big").hex(),
         nonce=nonce,
         mic=mic,
-        key_data_len=key_data_len,
         eapol_payload=_eapol_payload(mic=payload_mic, key_data_len=key_data_len),
     )
 

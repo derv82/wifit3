@@ -21,7 +21,7 @@ from wifit3.dot11 import build_deauth
 from wifit3.dot11.ap import auth_resp, assoc_resp, eapol_m1
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.ie import iter_information_elements
-from wifit3.dot11.packet import AssocRequestPacket, Packet
+from wifit3.dot11.packet import AssocRequestPacket, EapolPacket, Packet
 from wifit3.dot11.rsn import SAE_AKM_SUITES
 
 logger = logging.getLogger(__name__)
@@ -48,8 +48,6 @@ class ClientProgress:
     phase: ClientPhase
     anonce: bytes = b""
     replay: int = 1
-    first_seen: float = 0.0
-    last_advance: float = 0.0
 
 
 @dataclass
@@ -59,9 +57,6 @@ class FakeApStats:
     auth: int = 0
     assoc: int = 0
     m2: int = 0
-    strays: int = 0                                 # deauths sent for data from unassociated STAs
-    cached_key_rejects: int = 0                     # SAE assoc-reqs refused with status 53
-    sae_auth_rejects: int = 0                       # SAE auths refused with status 13
     clients: Dict[str, ClientProgress] = field(default_factory=dict)
 
 
@@ -187,11 +182,10 @@ class FakeAP:
     def _on_stray_data(self, client: bytes) -> None:
         """Deauth every data frame from a STA not associated with us, reason 7 (class-3 frame from a
         nonassociated STA), as hostapd does."""
-        self.stats.strays += 1
         self._tx(build_deauth(client, self.bssid, self.bssid, 7))
 
     def _on_probe(self, pkt, client: bytes) -> None:
-        ssid = getattr(pkt, "ssid", None)
+        ssid = pkt.ssid
         if ssid in (None, "", "<hidden>"):
             self.stats.probes_wildcard += 1
         elif ssid == self.ssid:
@@ -205,7 +199,6 @@ class FakeAP:
         self._cancel_m1(mac_to_str(client))
         if int.from_bytes(raw[24:26], "little") == _AUTH_ALG_SAE:
             # Refuse SAE as an AP without it does (hostapd: sequence 2, status 13).
-            self.stats.sae_auth_rejects += 1
             self._tx(auth_resp(self.bssid, client, algorithm=_AUTH_ALG_SAE,
                                status=_STATUS_NOT_SUPPORTED_AUTH_ALG))
             return
@@ -219,7 +212,6 @@ class FakeAP:
         reassoc = pkt.subtype_id == 0x02
         if isinstance(pkt, AssocRequestPacket) and pkt.assoc_akm in SAE_AKM_SUITES:
             # SAE after our open auth means a cached SAE key we don't hold: refuse it, as hostapd does.
-            self.stats.cached_key_rejects += 1
             self._tx(assoc_resp(self.bssid, client, channel=self.channel, status=_STATUS_INVALID_PMKID,
                                 reassoc=reassoc, twin_beacon=self.twin_beacon))
             return
@@ -251,7 +243,7 @@ class FakeAP:
             task.cancel()
 
     def _on_m2(self, pkt, client: bytes) -> None:
-        if getattr(pkt, "msg_num", 0) != 2:
+        if not isinstance(pkt, EapolPacket) or pkt.msg_num != 2:
             return
         cs = mac_to_str(client)
         self._cancel_m1(cs)
@@ -263,12 +255,10 @@ class FakeAP:
 
     def _advance(self, client: str, phase: ClientPhase) -> None:
         rec = self.stats.clients.get(client)
-        now = time.time()
         if rec is None:
-            self.stats.clients[client] = ClientProgress(phase=phase, first_seen=now, last_advance=now)
+            self.stats.clients[client] = ClientProgress(phase=phase)
         elif phase > rec.phase:
             rec.phase = phase
-            rec.last_advance = now
 
     def _tx(self, *frames: bytes) -> None:
         """Inject ``frames`` in order, each handed to the driver before the next."""

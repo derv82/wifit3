@@ -9,7 +9,7 @@ capture by ``scripts/porting/verify_pcap.py rt5370`` (the operational gate).
 TX (``inject_frame`` → ``tx.send_frame``) is wired but **never fired by
 the driver** — injection/deauth is the user's explicit action [[passive_by_default]].
 
-Standalone port (NOT a ``chips/rt2800usb`` DeviceID delta — that shared base is an
+Standalone port (NOT a ``chips/rt3572`` DeviceID delta — that shared base is an
 imitation port, highly inaccurate per the Pcap Replay, with a confirmed EFUSE addressing
 bug). It mirrors the module shape of the 2T2R sibling ``chips/rt5372/`` but shares no
 code; see ``chips/rt5370/RT5370.md`` for the ground-truth facts. RT5370 is RT5390

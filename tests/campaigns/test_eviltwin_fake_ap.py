@@ -157,7 +157,6 @@ async def test_cached_sae_key_assoc_is_refused_with_status_53():
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
     fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, sae_rsn_with_pmkid)))
     await _flush()
-    assert fap.stats.cached_key_rejects == 1
     resp = [f for f in fap.iface.sent if f[:2] == b"\x10\x00"]
     assert len(resp) == 1 and resp[0][26:28] == (53).to_bytes(2, "little")
     assert not any(f[:2] == b"\x08\x02" for f in fap.iface.sent)  # no M1
@@ -169,7 +168,6 @@ async def test_sae_auth_is_refused_with_status_13():
     sae_commit = auth_req(_BSSID, _CLIENT)[:24] + b"\x03\x00\x01\x00\x7e\x00" + b"\x13\x00" + bytes(96)
     fap.on_rx(_parse(sae_commit))
     await _flush()
-    assert fap.stats.sae_auth_rejects == 1
     assert fap.iface.sent == [auth_resp(_BSSID, _CLIENT, algorithm=3, status=13)]
     assert fap.iface.sent[0][24:30] == b"\x03\x00\x02\x00\x0d\x00"   # SAE, seq 2, status 13
     assert "02:aa:bb:cc:dd:ee" not in fap.stats.clients
@@ -192,7 +190,6 @@ async def test_every_stray_data_frame_gets_a_deauth():
     fap.on_rx(_parse(data))
     fap.on_rx(_parse(data))                                     # a second stray data frame
     await _flush()
-    assert fap.stats.strays == 2
     assert len(fap.iface.sent) == 2
     sent = fap.iface.sent[0]
     assert sent[0] == 0xC0 and sent[4:10] == _CLIENT            # deauth AP->client
@@ -207,7 +204,7 @@ async def test_data_from_an_associated_client_is_not_deauthed():
     fap.iface.sent.clear()
     fap.on_rx(_parse(data_header(to_ds=True, bssid=_BSSID, client=_CLIENT) + b"\x00\x00x"))
     await _flush()
-    assert fap.stats.strays == 0 and not any(f[0] == 0xC0 for f in fap.iface.sent)
+    assert not any(f[0] == 0xC0 for f in fap.iface.sent)
 
 
 async def test_m2_to_another_bssid_ignored():

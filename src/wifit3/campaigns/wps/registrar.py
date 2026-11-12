@@ -350,7 +350,7 @@ class WpsRegistrar:
                 e_hash1 = p.attrs.get(M.ATTR_E_HASH1)
                 e_hash2 = p.attrs.get(M.ATTR_E_HASH2)
                 if e_hash1 and e_hash2:
-                    pixie = PixieBundle(pke, pkr, e_hash1, e_hash2, nonce_e, authkey, mac_e)
+                    pixie = PixieBundle(pke, pkr, e_hash1, e_hash2, nonce_e, authkey)
                 m4 = M.build_m4(nonce_e, r_s1, r_s2, psk1, psk2, pke, pkr,
                                 authkey, keywrapkey, p.raw_wsc_attrs, self.wsc_2_0)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m4))

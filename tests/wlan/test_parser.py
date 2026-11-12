@@ -769,7 +769,6 @@ def test_wep_data_extracts_iv():
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed.type == "wep_data"
     assert parsed.iv == b"\x03\xff\x00"
-    assert parsed.keyid == 1
     assert parsed.bssid == "11:22:33:44:55:66"
 
 
