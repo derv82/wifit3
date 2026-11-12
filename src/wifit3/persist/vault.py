@@ -23,7 +23,7 @@ from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
-from wifit3.persist.meta import clear_meta_paths_cache, meta_path, update_meta
+from wifit3.persist.meta import clear_meta_paths_cache, meta_path, nickname_aps, update_meta
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
@@ -205,6 +205,10 @@ class Vault:
         captures = sorted(self.persisted(bssid), key=lambda c: c.type == CaptureType.WPA_PSK)
         return next((c.ssid for c in captures if c.ssid and not c.path.endswith(".pcap")),
                     next((c.ssid for c in captures if c.ssid), None))
+
+    def nickname_aps(self) -> dict[str, Optional[str]]:
+        """BSSIDs with saved nicknames, including APs without captures."""
+        return nickname_aps()
 
     def all_captures(self) -> List[PersistedCapture]:
         """Every saved capture across all APs, unordered (callers sort as needed)."""
