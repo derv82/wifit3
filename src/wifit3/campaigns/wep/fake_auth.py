@@ -81,7 +81,7 @@ class WepFakeAuth:
         self._announced_failure = False
         # The campaign registers our STA MAC with the array (drop-filter); we only watch RX here.
         self.iface.register_rx_callback(self._rx_cb)
-        logger.info("[WEP-FakeAuth] Armed on %s as %s (lazy auth)",
+        logger.info("[WEP-FakeAuth] Listening for %s as %s (lazy auth)",
                     self.target.bssid, mac_to_str(self.source_mac))
 
     def stop(self) -> FakeAuthStats:

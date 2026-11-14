@@ -254,7 +254,7 @@ class WpsEnrollee:
                     phase("→ WSC_NACK")
                     nack = M.build_wsc_nack(nonce_e, nonce_r or bytes(wc.NONCE_LEN))
                     await self._send_1x(M.eap_wsc_response(eap_id, M.WSC_NACK, nack))
-                    # Stay armed until the AP's EAP-Failure, so it is ACKed before we deauth.
+                    # Stay in active monitor until the AP's EAP-Failure, so it is ACKed before we deauth.
                     deadline = time.monotonic() + 1.0
                     while time.monotonic() < deadline:
                         frame = await self.t.recv(deadline - time.monotonic())
