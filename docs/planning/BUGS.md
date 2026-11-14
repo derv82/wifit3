@@ -230,3 +230,17 @@ once; `send_until_ack` retries in software), like the broadcast fix in `3201c92e
 Focus card shows no MAC, and `scripts/ack/rx_autoack.py` blames a warm boot.
 
 Fix: assign `self.mac_address` from `efuse.mac_address(self.info)` at bring-up, like the other drivers.
+
+## Vault: Race condition when writing `.meta`; raises or loses fields
+
+`update_meta` (`persist/meta.py`) reads the `.meta`, merges the fields and writes it back through one
+fixed `<name>.meta.tmp`, with no lock. Two writers at once raise `OSError` on the replace (Windows
+`PermissionError`, Linux `FileNotFoundError`), or the last writer drops the other's fields. Real path:
+a crack job's PSK propagation thread and the open Vault drawer's reload write the same related AP.
+A two-thread repro (300 writes each) lost most keys on Windows 3.13 and Linux 3.11 / 3.14. Likely
+cause of one failure of `test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified` (1 in 38
+full-suite runs, Kali, 3.14).
+
+Fix: a unique temp file per write (`tempfile.mkstemp`), plus a lock around read-merge-write. Callers
+that read the `.meta` before `update_meta` need the lock too, or `update_meta` takes a merge function.
+11 write call sites.
