@@ -201,3 +201,39 @@ unclear how scanning should use those widths. Unconfirmed as a bug: the wifit3-v
 showed about the same AP counts.
 
 **Direction.** Reproduce with the 40 MHz AP, then decide whether scanning needs wide-channel support.
+
+## Spoofed MACs appear in the clients list after campaigns
+
+We unregister the "own" MAC when the campaign ends, but subsequent TX to the faked MAC (M1, retries)
+cause the old faked MAC to appear as a client (it's no longer in "own macs").
+
+Fix: Timer on unregister_own_mac for 30s.
+
+## MT76, Ralink and RTL8187L resend unicast that was already ACKed
+
+These cards stop resending only when the ACK is for their active-monitor MAC (RTL8187L: its silicon
+MAC). Any other source keeps resending to the retry limit even though every copy is ACKed: 7-16
+copies per frame against a live AP (`docs/ACKS.md`, "HW ACK-Based Retries"). Hits every unicast sent
+without active monitor, e.g. `deauth_client` spoofing the AP and the client.
+
+Measured: mt7601u, mt76x0u, mt76x2u, mt7921au, mt7925au, rt3070, rt5370, rt5372, rt5572, rtl8187.
+Unmeasured, same vendor families: rt3572, rt2800usb.
+
+Fix: when the frame's source isn't the active-monitor MAC, inject it with no ACK requested (sent
+once; `send_until_ack` retries in software), like the broadcast fix in `3201c92e`.
+
+## RTL8821CU never reports its silicon MAC
+
+`rtl8821cu_dkms` reads the MAC from EFUSE and writes it to the chip during bring-up
+(`bringup.py:124`, `driver.py:307`), but `self.mac_address` stays at its initial `None`
+(`driver.py:75`): nothing assigns it. So `WlanInterface.mac_address` is None for every 8821CU: the
+Focus card shows no MAC, and `scripts/ack/rx_autoack.py` blames a warm boot.
+
+Fix: assign `self.mac_address` from `efuse.mac_address(self.info)` at bring-up, like the other drivers.
+
+## MT7612U reports its silicon MAC in upper case
+
+`mt76x2u`'s `read_mac_address` formats with `02X` (`eeprom.py:83`); every other driver reports lower
+case.
+
+Fix: `02x`.
