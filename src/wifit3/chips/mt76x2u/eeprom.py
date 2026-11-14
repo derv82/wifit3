@@ -73,14 +73,14 @@ def read_u16(transport: MT76x2UTransport, offset: int) -> int:
 
 
 def read_mac_address(transport: MT76x2UTransport) -> str:
-    """Return the MAC address as `AA:BB:CC:DD:EE:FF`.
+    """Return the MAC address as `aa:bb:cc:dd:ee:ff`.
 
     Layout: 6 bytes starting at EE_MAC_ADDR=0x004. Two u32 reads cover it
     (the second read gives 4 bytes but we only use the first 2).
     """
     blob = read_block(transport, EE_MAC_ADDR, 8)
     mac = blob[:6]
-    return ":".join(f"{b:02X}" for b in mac)
+    return ":".join(f"{b:02x}" for b in mac)
 
 
 def read_chip_id(transport: MT76x2UTransport) -> int:

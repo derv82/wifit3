@@ -230,10 +230,3 @@ once; `send_until_ack` retries in software), like the broadcast fix in `3201c92e
 Focus card shows no MAC, and `scripts/ack/rx_autoack.py` blames a warm boot.
 
 Fix: assign `self.mac_address` from `efuse.mac_address(self.info)` at bring-up, like the other drivers.
-
-## MT7612U reports its silicon MAC in upper case
-
-`mt76x2u`'s `read_mac_address` formats with `02X` (`eeprom.py:83`); every other driver reports lower
-case.
-
-Fix: `02x`.
