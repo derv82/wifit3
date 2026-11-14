@@ -52,12 +52,12 @@ async def test_campaign_starts_and_stops_both_subattacks(mocker):
     assert not campaign.replay.is_active
 
 
-def _tracking_iface(mocker, armed):
+def _tracking_iface(mocker, active_monitor_mac):
     """A radio+array mock whose own-MAC register/unregister calls are recorded, with a real lease."""
     iface = mocker.MagicMock()
     iface.send_no_wait = mocker.AsyncMock(return_value=True)
     iface.set_channel = mocker.AsyncMock(return_value=True)
-    iface.set_fake_mac = mocker.AsyncMock(return_value=armed)   # armed MAC (SPOOFABLE) or None
+    iface.set_fake_mac = mocker.AsyncMock(return_value=active_monitor_mac)   # SPOOFABLE: the MAC, else None
     iface.clear_fake_mac = mocker.AsyncMock()
     iface.select_iface.return_value = iface
     iface.current_channel = 6
@@ -69,23 +69,23 @@ def _tracking_iface(mocker, armed):
     return iface
 
 
-async def test_campaign_arms_and_releases_sta_mac_via_lease(mocker):
-    """SPOOFABLE card: the held lease arms + own-registers the STA MAC; the campaign adopts
-    lease.mac and shares it to fake-auth/replay; stop() releases (unregisters) it, no fallback."""
-    armed = "02:aa:bb:cc:dd:ee"
-    iface = _tracking_iface(mocker, armed)
+async def test_campaign_registers_and_releases_sta_mac_via_lease(mocker):
+    """SPOOFABLE card: the held lease enters active monitor as the STA MAC and registers it; the campaign adopts
+    lease.active_monitor_mac and shares it to fake-auth/replay; stop() releases (unregisters) it, no fallback."""
+    active_monitor_mac = "02:aa:bb:cc:dd:ee"
+    iface = _tracking_iface(mocker, active_monitor_mac)
     ap = AccessPoint(bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP")
 
     campaign = WepCampaign(iface, ap)
     campaign.run()
     await asyncio.sleep(0.05)
-    assert iface._reg == [armed]                                # own-registered the armed MAC
-    assert campaign.fake_auth.source_mac == str_to_mac(armed)   # shared to the sub-attacks
-    assert campaign.replay.source_mac == str_to_mac(armed)
-    assert campaign._own_fallback is None                       # armed path: no manual fallback
+    assert iface._reg == [active_monitor_mac]                   # registered as own
+    assert campaign.fake_auth.source_mac == str_to_mac(active_monitor_mac)   # shared to the sub-attacks
+    assert campaign.replay.source_mac == str_to_mac(active_monitor_mac)
+    assert campaign._own_fallback is None                       # active monitor path: no manual fallback
 
     await campaign.stop()
-    assert iface._unreg == [armed]                              # lease released it
+    assert iface._unreg == [active_monitor_mac]                 # lease released it
     iface.clear_fake_mac.assert_awaited()                       # active monitor exited
 
 

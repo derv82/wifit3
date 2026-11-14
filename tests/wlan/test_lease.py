@@ -3,9 +3,9 @@ from wifit3.wlan.lease import Lease, SPOOFABLE
 
 
 class FakeIface:
-    def __init__(self, channel=1, armed="02:aa:bb:cc:dd:ee"):
+    def __init__(self, channel=1, active_monitor_mac="02:aa:bb:cc:dd:ee"):
         self.current_channel = channel
-        self._armed = armed
+        self._active_monitor_mac = active_monitor_mac
         self.calls = []
 
     async def set_channel(self, ch, scan=False):
@@ -15,7 +15,7 @@ class FakeIface:
 
     async def set_fake_mac(self, mac=None, bssid=None):
         self.calls.append(("set_fake_mac", mac, bssid))
-        return self._armed
+        return self._active_monitor_mac
 
     async def clear_fake_mac(self):
         self.calls.append(("clear_fake_mac",))
@@ -39,7 +39,7 @@ class FakeArray:
         self.own.discard(mac.lower())
 
 
-async def test_lease_arms_and_restores():
+async def test_lease_enters_active_monitor_and_restores():
     iface, arr = FakeIface(channel=1), FakeArray()
     async with Lease(arr, iface, channel=6, fake_mac=SPOOFABLE,
                      bssid="aa:bb:cc:dd:ee:ff", ack_tally=True) as got:
@@ -68,26 +68,26 @@ async def test_lease_channel_only_restores_original():
     assert iface.current_channel == 3
 
 
-async def test_lease_registers_concrete_mac_when_arming_fails():
-    iface, arr = FakeIface(armed=None), FakeArray()
+async def test_lease_registers_concrete_mac_when_active_monitor_fails():
+    iface, arr = FakeIface(active_monitor_mac=None), FakeArray()
     async with Lease(arr, iface, fake_mac="02:11:22:33:44:55") as got:
         assert got is iface
         assert "02:11:22:33:44:55" in arr.own          # still transmit from it, un-ACKed
     assert arr.own == set()
 
 
-async def test_lease_spoofable_arm_failure_registers_nothing():
-    iface, arr = FakeIface(armed=None), FakeArray()
+async def test_lease_spoofable_active_monitor_failure_registers_nothing():
+    iface, arr = FakeIface(active_monitor_mac=None), FakeArray()
     async with Lease(arr, iface, fake_mac=SPOOFABLE):
         assert arr.own == set()
 
 
-async def test_lease_rearm_swaps_the_armed_mac():
-    iface, arr = FakeIface(armed=None), FakeArray()          # un-ACKed: own == requested
+async def test_enter_active_monitor_replaces_the_mac():
+    iface, arr = FakeIface(active_monitor_mac=None), FakeArray()          # un-ACKed: own == requested
     lease = Lease(arr, iface, fake_mac="02:aa:aa:aa:aa:01")
     async with lease:
         assert arr.own == {"02:aa:aa:aa:aa:01"}
-        await lease.rearm("02:bb:bb:bb:bb:02")
+        await lease.enter_active_monitor("02:bb:bb:bb:bb:02")
         assert arr.own == {"02:bb:bb:bb:bb:02"}              # old released, new registered
-        assert lease.mac == "02:bb:bb:bb:bb:02"
+        assert lease.active_monitor_mac == "02:bb:bb:bb:bb:02"
     assert arr.own == set()                                  # released on exit

@@ -68,15 +68,15 @@ class WpsPbcCampaign(Campaign):
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
         if self.iface is None:
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="no card can reach channel")
-        # The lease arms active-monitor + own-MAC registration + ACK tally on enter, and
+        # The lease enters active monitor + own-MAC registration + ACK tally on enter, and
         # clears all three (and restores the channel) on exit.
         lease = self.array.lease(channel=self.channel, fake_mac=self.our_mac,
                                  bssid=str_to_mac(self.bssid), ack_tally=True, iface=self.iface)
         wsc_2_0 = self.target.wps_version == "2.0"
         async with lease as iface:
             await asyncio.sleep(SETTLE_S)
-            if lease.mac:
-                self.our_mac = str_to_mac(lease.mac)
+            if lease.active_monitor_mac:
+                self.our_mac = str_to_mac(lease.active_monitor_mac)
             assoc = Association(iface, self.bssid, self.target.ssid or "",
                                 self.channel, our_mac=self.our_mac,
                                 assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, wsc_2_0),
@@ -108,7 +108,7 @@ class WpsPbcCampaign(Campaign):
             finally:
                 # Abandoning a (possibly mid-exchange) attempt: tell the AP we're leaving so
                 # it drops our EAP session. Sent while the lease is still open (own MAC still
-                # armed), so our own leaving-deauth is TA-dropped from the sink.
+                # registered), so our own leaving-deauth is TA-dropped from the sink.
                 if outcome is None or outcome.result is not PinResult.SUCCESS:
                     try:
                         await iface.send_no_wait(

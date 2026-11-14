@@ -118,16 +118,16 @@ class WepCampaign(Campaign):
             f"[bold green]ARP Replay starting[/bold green] on "
             f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
         )
-        # The lease arms active monitor (random STA for SPOOFABLE, the card's own for FIXED_MAC),
+        # The lease enters active monitor (random STA for SPOOFABLE, the card's own for FIXED_MAC),
         # registers that STA as own and holds it for the whole run. fake-auth, replay and chopchop
         # share this MAC.
         self._lease = self.array.lease(channel=self.target.channel, fake_mac=SPOOFABLE,
                                        bssid=self.target.bssid, iface=self.iface)
         await self._lease.acquire()
-        if self._lease.mac:
-            source_mac = str_to_mac(self._lease.mac)
+        if self._lease.active_monitor_mac:
+            source_mac = str_to_mac(self._lease.active_monitor_mac)
         else:
-            # A card that can't active-monitor: the lease armed/registered nothing, so pick a random
+            # A card that can't active-monitor: the lease registered nothing, so pick a random
             # STA and register it ourselves to keep the own-TX (fixed-IV) drop for the whole replay.
             source_mac = random_client_mac()
             self._own_fallback = self.array.register_own_mac(source_mac)
@@ -184,7 +184,7 @@ class WepCampaign(Campaign):
             self.chop.stop()
             self.chop = None
             self._log("[dim]· ChopChop stopped (Generate IVs ended)[/dim]")
-        # Stop replay (TX) before releasing the lease that disarms the card.
+        # Stop replay (TX) before releasing the lease that exits active monitor.
         self.replay.stop()
         self.fake_auth.stop()
         if self._own_fallback is not None:
