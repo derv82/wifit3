@@ -106,6 +106,8 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 | RTL8187L   | n/a (no active monitor) | n/a | yes (2G 111)        | 0 |
 | RT2500USB  | n/a (no active monitor) | n/a | no (2G 0)           | 0 |
 
+No card ACKs a MAC it has only transmitted from, outside active monitor, whether probed by a stranger or by the frame's old recipient (`rx_autoack.py` step 0: 35 cards, 22 drivers, 2G, 0/100 each, 2026-11-13).
+
 `FAKE_MAC` flags reconciled against this bench:
 - **MT7921AU** was flagged `UNIMPLEMENTED`; it auto-ACKs a spoofed MAC on both bands (not its own
   silicon MAC), so it is now `SPOOFABLE`. [fixed]

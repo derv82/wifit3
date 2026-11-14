@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from wifit3.device.manager import wlan_ifaces
 from wifit3.dot11 import build_deauth
+from wifit3.dot11.mac import mac_to_str, random_client_mac
 
 PROBE_SRC = "02:b0:b0:00:00:01"   # the prober injects as this; the DUT's ACK comes back to it
 SPOOF = "02:ac:ac:00:00:01"       # the spoofed MAC the DUT active-monitors
@@ -63,6 +64,13 @@ async def probe(prober, dst: bytes, count: int, interval: float) -> int:
         await asyncio.sleep(interval)
     await asyncio.sleep(SETTLE)
     return prober.driver.acks_seen(src) - a0
+
+
+async def send_from(dut, src: bytes, dst: bytes, interval: float) -> None:
+    frame = build_deauth(dst, src, dst, reason=7)
+    for _ in range(10):
+        await dut.driver.inject_frame(frame)
+        await asyncio.sleep(interval)
 
 
 async def main(a) -> None:
@@ -102,6 +110,36 @@ async def main(a) -> None:
         print(f"[-] prober ACK tap unavailable: {e}")
     prober.driver._our_tx_macs.add(mac_bytes(PROBE_SRC))
     print(f"[*] channel {a.channel}, {a.count} frames per probe\n")
+    margin = max(a.count // 4, 5)
+    prober_mac = mac_bytes(PROBE_SRC)
+
+    # 0a. Does the DUT ACK a MAC it only transmitted from? Any sender first, then only its old recipient.
+    sent_from = random_client_mac()
+    await send_from(dut, sent_from, mac_bytes(BOGUS), a.interval)
+    acked = await probe(prober, sent_from, a.count, a.interval)
+    print(f"[#] sent from {mac_to_str(sent_from)} to BOGUS, probed by a stranger: {acked}/{a.count} ACKed")
+    acks_sent_from = acked > margin
+    if acks_sent_from:
+        print(f"[+] {dut.description}: ACKs any sender to a MAC it sent from")
+    else:
+        sent_from = random_client_mac()
+        await send_from(dut, sent_from, prober_mac, a.interval)
+        acked = await probe(prober, sent_from, a.count, a.interval)
+        print(f"[#] sent from {mac_to_str(sent_from)} to the prober, probed by the prober: {acked}/{a.count} ACKed")
+        acks_sent_from = acked > margin
+        if acks_sent_from:
+            print(f"[+] {dut.description}: ACKs a MAC it sent from, only from that recipient")
+        else:
+            print(f"[+] {dut.description}: does not ACK a MAC it sent from")
+
+    # 0b. Capacity: transmit from 20 MACs to the prober, then probe each, oldest first.
+    if acks_sent_from:
+        sent_froms = [random_client_mac() for _ in range(20)]
+        for m in sent_froms:
+            await send_from(dut, m, prober_mac, a.interval)
+        counts = [await probe(prober, m, a.count, a.interval) for m in sent_froms]
+        print("[#] capacity, oldest first: " + " ".join(str(c) for c in counts))
+    print()
 
     # 1. spoofed MAC via active monitor. Armed WITH a peer bssid, which is what production does
     # (campaigns lease with bssid=the target AP's). The peer here is the prober, since that is who
@@ -143,7 +181,6 @@ async def main(a) -> None:
     bog = await probe(prober, mac_bytes(BOGUS), a.count, a.interval)
     print(f"[#] bogus MAC {BOGUS} (control): {bog}/{a.count} ACKed")
 
-    margin = max(a.count // 4, 5)
     if on is not None and on > a.count * 2:
         print(f"[*] counts exceed {a.count}: this prober's HW retransmits each inject (it stops "
               f"only when active-monitoring the source), and every on-air copy is ACKed")
