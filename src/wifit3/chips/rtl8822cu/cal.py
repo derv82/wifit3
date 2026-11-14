@@ -6,6 +6,7 @@ capture: reproducing them depends on porting the arithmetic, not the recorded nu
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 
@@ -17,6 +18,8 @@ from .txgapk import TxGapKState, save_all_tx_gain_table
 from .phy import MASKDWORD, get_bb_reg, get_rf_reg, set_bb_reg, set_rf_reg
 from .transport import RTL8822CUTransport
 
+logger = logging.getLogger(__name__)
+
 SN = 100                    # samples averaged per measurement [SRC halrf/halrf.h:471]
 
 # halrf_dac_cal_8822c's register backup list [SRC halrf_8822c.c:829-833]
@@ -27,11 +30,20 @@ _BP_RFREG = (0x8F,)
 _SAMPLE_OVERFLOW = 0x64     # halrf_compare_8822c rejects a sample above this magnitude
 
 
+class DackCalibrationError(RuntimeError):
+    """DACK calibration did not complete; device reinitialization is required."""
+
+
+class DackRestoreError(RuntimeError):
+    """DACK restore failed; device reinitialization is required."""
+
+
 @dataclass
 class DackState:
     """halrf_dack_info: the calibration result, kept so a second halrf_init restores it
     instead of re-running the full DACK. [SRC halrf/halrf_iqk.h:65]"""
     dack_en: bool = False
+    valid: bool = False
     msbk_d: list = field(default_factory=lambda: [[[0] * 15 for _ in range(2)] for _ in range(2)])
     dck_d: list = field(default_factory=lambda: [[[0] * 2 for _ in range(2)] for _ in range(2)])
     biask_d: list = field(default_factory=lambda: [[0] * 2 for _ in range(2)])
@@ -122,6 +134,8 @@ def measure(t: RTL8822CUTransport) -> tuple[int, int]:
         if not (_compare(i_sample) or _compare(q_sample)):
             iv.append(i_sample)
             qv.append(q_sample)
+    if len(iv) != SN:
+        raise DackCalibrationError(f"DACK measurement collected {len(iv)}/{SN} samples")
     for _ in range(100):
         i_min = i_max = iv[0]
         q_min = q_max = qv[0]
@@ -133,15 +147,17 @@ def measure(t: RTL8822CUTransport) -> tuple[int, int]:
             break
         iv[0], qv[0] = _read_sample(t)
         iv[SN - 1], qv[SN - 1] = _read_sample(t)
+    else:
+        raise DackCalibrationError("DACK measurement spread did not settle")
     return _trimmed_mean(iv), _trimmed_mean(qv)
 
 
 def _poll(t: RTL8822CUTransport, address: int, mask: int, data: int) -> None:
-    """halrf_polling_check_8822c: spin without a delay, and give up silently.
-    [SRC halrf_8822c.c:807]"""
+    """halrf_polling_check_8822c. [SRC halrf_8822c.c:807]"""
     for _ in range(100000):
         if get_bb_reg(t, address, mask) == data:
             return
+    raise DackCalibrationError(f"DACK poll timed out at {address:#x} mask {mask:#x}, expected {data:#x}")
 
 
 @dataclass(frozen=True)
@@ -210,6 +226,8 @@ def _adck_loop(t: RTL8822CUTransport, r: _PathRegs) -> tuple[int, int, int]:
             qc = 0x400 - qc
         if ic < 5 and qc < 5:
             break
+    else:
+        raise DackCalibrationError(f"ADCK did not converge at {r.adck:#x}")
     return temp, adc_ic, adc_qc
 
 
@@ -313,6 +331,8 @@ def _dack_loop(t: RTL8822CUTransport, r: _PathRegs, temp: int, adc_ic: int, adc_
             qc = 0x400 - qc
         if ic < 5 and qc < 5:
             break
+    else:
+        raise DackCalibrationError(f"DACK did not converge at {r.adck:#x}")
 
 
 def _dck_backup(t: RTL8822CUTransport, dack: DackState) -> None:
@@ -352,13 +372,117 @@ def _dack_backup(t: RTL8822CUTransport, dack: DackState) -> None:
         dack.biask_d[path][1] = get_bb_reg(t, r.q_msbk_val, 0x1FF8) & 0xFF
 
 
+def _dck_restore(t: RTL8822CUTransport, dack: DackState) -> None:
+    for path, r in enumerate((_PATH_A, _PATH_B)):
+        for branch, (dck, dck1) in enumerate(((r.i_dck, r.i_dck1), (r.q_dck, r.q_dck1))):
+            set_bb_reg(t, dck, 1 << 19, 1)
+            set_bb_reg(t, dck, 0xF0000000, dack.dck_d[path][branch][0])
+            set_bb_reg(t, dck1, 0xF, dack.dck_d[path][branch][1])
+
+
+def _biask_restore(t: RTL8822CUTransport, dack: DackState) -> None:
+    for path, r in enumerate((_PATH_A, _PATH_B)):
+        set_bb_reg(t, r.i_ctrl, 0x1FF8000, dack.biask_d[path][0])
+        set_bb_reg(t, r.q_ctrl, 0x1FF8000, dack.biask_d[path][1])
+
+
+def _dack_restore(t: RTL8822CUTransport, dack: DackState) -> None:
+    """halrf_dack_restore_8822c. [SRC halrf_8822c.c:610]"""
+    if not dack.dack_en:
+        return
+    failures = []
+    logger.trace("RTL8822CU restoring saved DACK calibration")
+    temp1 = get_bb_reg(t, 0x1860, MASKDWORD)
+    temp2 = get_bb_reg(t, 0x4160, MASKDWORD)
+    temp3 = get_bb_reg(t, 0x09B4, MASKDWORD)
+    set_bb_reg(t, 0x09B4, MASKDWORD, 0xDB66DB00)
+    for addr in (0x18B0, 0x18CC, 0x41B0, 0x41CC):
+        set_bb_reg(t, addr, 1 << 27, 0)
+    for r in (_PATH_A, _PATH_B):
+        set_bb_reg(t, r.rfe, 1 << 30, 0)
+        set_bb_reg(t, r.gain, 0xFC000000, 0x3C)
+        set_bb_reg(t, r.i_ctrl + 4, 1, 1)
+        set_bb_reg(t, r.q_ctrl + 4, 1, 1)
+    for addr, mask in ((0x18B0, 0xF00), (0x18C0, 1 << 14),
+                       (0x18CC, 0xF00), (0x18DC, 1 << 14)):
+        set_bb_reg(t, addr, mask, 0)
+    for value in (0, 1):
+        set_bb_reg(t, 0x18B0, 1, value)
+        set_bb_reg(t, 0x18CC, 1, value)
+    _dck_restore(t, dack)
+    for addr in (0x18C0, 0x18DC, 0x41C0, 0x41DC):
+        set_bb_reg(t, addr, 0x38000, 7)
+    for addr in (0x18B8, 0x18D4):
+        set_bb_reg(t, addr, 0x6000000, 1)
+    for addr, mask in ((0x41B0, 0xF00), (0x41C0, 1 << 14),
+                       (0x41CC, 0xF00), (0x41DC, 1 << 14)):
+        set_bb_reg(t, addr, mask, 0)
+    for value in (0, 1):
+        set_bb_reg(t, 0x41B0, 1, value)
+        set_bb_reg(t, 0x41CC, 1, value)
+    for addr in (0x41B8, 0x41D4):
+        set_bb_reg(t, addr, 0x6000000, 1)
+    for addr in (0x2808, 0x2834, 0x4508, 0x4534):
+        for _ in range(10000):
+            get_bb_reg(t, addr, 0x7FFF80)
+            if get_bb_reg(t, addr, 0x7FFF80) == 0xFFFF:
+                break
+        else:
+            failures.append(f"MSBK {addr:#x}")
+    for path, branches in enumerate((((0x18B8, 0x2808, 0x18B4, 0x18B0),
+                                      (0x18D4, 0x2834, 0x18D0, 0x18CC)),
+                                     ((0x41B8, 0x4508, 0x41B4, 0x41B0),
+                                      (0x41D4, 0x4534, 0x41D0, 0x41CC)))):
+        for branch, (trigger, status, data, ctrl) in enumerate(branches):
+            set_bb_reg(t, trigger, 0x6000000, 0)
+            set_bb_reg(t, trigger, 0x6000000, 2)
+            for _ in range(10000):
+                get_bb_reg(t, status, 0xFF)
+                if get_bb_reg(t, status, 0xF) == 6:
+                    break
+                set_bb_reg(t, trigger, 0x6000000, 0)
+                set_bb_reg(t, trigger, 0x6000000, 2)
+            else:
+                failures.append(f"restore ready {status:#x}")
+            for i in range(15):
+                set_bb_reg(t, data, 1 << 2, 0)
+                set_bb_reg(t, data, 0xFF8, dack.msbk_d[path][branch][i])
+                set_bb_reg(t, ctrl, 0xF0000000, i)
+                set_bb_reg(t, data, 1 << 2, 1)
+            set_bb_reg(t, data, 1 << 2, 0)
+        for trigger, _, _, _ in branches:
+            set_bb_reg(t, trigger, 0x6000000, 0)
+        for _, _, data, _ in branches:
+            set_bb_reg(t, data, 1, 0)
+    set_bb_reg(t, 0x1830, 1 << 30, 1)
+    set_bb_reg(t, 0x4130, 1 << 30, 1)
+    set_bb_reg(t, 0x1860, MASKDWORD, temp1)
+    set_bb_reg(t, 0x4160, MASKDWORD, temp2)
+    for addr in (0x18B0, 0x18CC, 0x41B0, 0x41CC):
+        set_bb_reg(t, addr, 1 << 27, 1)
+    set_bb_reg(t, 0x09B4, MASKDWORD, temp3)
+    _biask_restore(t, dack)
+    if failures:
+        dack.dack_en = False
+        dack.valid = False
+        raise DackRestoreError("DACK restore timed out: " + ", ".join(failures))
+
+
 def dac_cal(t: RTL8822CUTransport, dack: DackState) -> None:
     """halrf_dac_cal_8822c: null the ADC and DAC DC offset on both paths, then save the
     result. Skipped on a warm chip, which restores the saved tables instead.
     [SRC halrf_8822c.c:821]"""
     if dack.dack_en:
-        raise NotImplementedError("RTL8822CU: halrf_dack_restore_8822c is not ported")
-    dack.dack_en = True
+        try:
+            _dack_restore(t, dack)
+        except Exception as exc:
+            dack.dack_en = False
+            dack.valid = False
+            if isinstance(exc, DackRestoreError):
+                raise
+            raise DackRestoreError("DACK restore interrupted; device reinitialization required") from exc
+        return
+    dack.valid = False
 
     backup = [get_bb_reg(t, address) for address in _BP_REG]
     backup_rf = [[get_rf_reg(t, path, address) for path in (0, 1)] for address in _BP_RFREG]
@@ -409,6 +533,8 @@ def dac_cal(t: RTL8822CUTransport, dack: DackState) -> None:
         for path in (0, 1):
             set_rf_reg(t, path, address, 0xFFFFF, values[path])
     _dack_backup(t, dack)
+    dack.dack_en = True
+    dack.valid = True
 
 
 ODM_H2C_WIFI_CALIBRATION = 0x6D     # [SRC phydm_interface.h:44]

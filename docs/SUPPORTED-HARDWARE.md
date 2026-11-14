@@ -29,7 +29,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822CU](#rtl8822cu) | ✅ | ✅ | ✅ | ✅ | ⬜ | A |
+| [RTL8822CU](#rtl8822cu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8188FTV](#rtl8188ftv) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
@@ -283,21 +283,22 @@ live in each chip's `<CHIP>.md` (linked under its table).
 → [RTL8822BU_DKMS.md](../src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](../src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
 ### RTL8822CU
+<img align="right" width="140" src="../assets/cardart/card-dlink-ac13u.png" alt="D-Link AC13U rev. A1">
 
 *D-Link AC13U (rev A1) · 2.4 / 5 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **A** | 2026-09-02 | Dual-band kernel-parity RX + full attack suite; spoofable ACKs. |
-| RX | ✅ | 2026-09-02 | 2G: 6.1 vs 6.8/s (90%), 5G: 9.6/9.6 (match); breadth 35/26 (≥ kernel); RSSI +0.3 dB. |
-| Port | ✅ | 2026-09-02 | Matches linux-DKMS (rtl88x2cu) both bands; verify_pcap byte-identical up to TX. |
-| TX | ✅ | 2026-09-02 | Deauth + PMKID + WEP inject, 2.4 + 5 GHz. |
-| Handshake | ✅ | 2026-09-02 | Deauth → 4-way. |
-| PMKID | ✅ | 2026-09-02 | Passive + active, 2.4 + 5 GHz. |
+| RX | ✅ | 2026-11-05 | 5-min fixed-channel baseline: 2G ch4 4.96 vs 3.49 beacons/s, 37/36 APs; 5G ch36 9.67 vs 9.71 beacons/s, 6/7 APs; median RSSI +0.5 dB vs Linux (40 common APs); both channels heard their reference APs. One zero-beacon cross-band metadata record on ch4. |
+| Port | ✅ | 2026-09-02 | Vendor USB replay matches bring-up, 65/67 hops, 34/35 watchdog ticks and RX records to TX frontier; TX descriptor not capture-verified byte by byte. DIG set to start with highest sensitivity. (fixed startup degradation) |
+| TX | ✅ | 2026-11-06 | TX Lab: Ch100: 100/100 broadcast; flood 499/500, 0 out of order; 50/50 probe replies. RTL8821AU DKMS sniffer. Deauth + PMKID, 2.4 + 5 GHz. |
+| Handshake | ✅ | 2026-11-05 | Deauth → 4-way M1-M4; Evil twin capture succeed.|
+| PMKID | ✅ | 2026-11-06 | Passive + active, 2.4 + 5 GHz. |
 | WEP | ✅ | 2026-09-02 | ChopChop + ARP replay ~220 IVs/s. |
-| WPS | ✅ | 2026-09-02 | PIN works. |
+| WPS | ✅ | 2026-11-05 | PIN works; M1-M7 captured, pixie pin cracked using ralink |
 | ACKs | ✅ | 2026-09-02 | Auto-ACKs spoofed mac in AM; TX stops-on-ACK AM both on & off (retry 6). |
-| Stress | ⬜ |  | 30-min soak deferred this pass. |
+| Stress | ✅ | 2026-11-04 | 30-min 23-channel dual-band soak; active-BSSID trend 0.88 with a temporary minute 10–18 visibility dip. (possibly due to me moving the laptop a bit) |
 
 → [RTL8822CU.md](../src/wifit3/chips/rtl8822cu/RTL8822CU.md)
 
