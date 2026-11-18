@@ -50,9 +50,6 @@ class FakeTransport:
     def read32(self, addr: int, idx: int = 0) -> int:
         return self._load(addr, 4)
 
-    def read_bytes(self, addr: int, length: int, idx: int = 0) -> bytes:
-        return bytes(self.regs.get(addr + i, 0) for i in range(length))
-
 
 def test_supported_ids_mirror_rtl8187_table_driver_info():
     from wifit3.device.manager import supported_ids
@@ -758,6 +755,20 @@ def test_inject_frame_sends_zlp_on_a_multiple_of_wmaxpacketsize():
     writes, dev = _bulk_writer()
     inject_frame(dev, bytes(52), {0x02: 512}, False)
     assert [len(w) for w in writes] == [64]
+
+
+def test_inject_frame_zlp_follows_the_transfer_length_not_a_short_write(caplog):
+    """URB_ZERO_PACKET (dev.c:315) is sized on the URB's transfer length; rtl8187_tx_cb
+    (dev.c:186-224) never checks the actual length and logs nothing."""
+    from unittest.mock import MagicMock
+
+    from wifit3.chips.rtl8187.tx import inject_frame
+
+    dev = MagicMock()
+    dev.write.side_effect = lambda ep, payload, timeout: 10 if payload else 0
+    inject_frame(dev, bytes(52), {0x02: 64}, False)
+    assert [len(c.args[1]) for c in dev.write.call_args_list] == [64, 0]
+    assert caplog.records == []
 
 
 def test_inject_frame_sets_morefrag_from_the_frame_control():
