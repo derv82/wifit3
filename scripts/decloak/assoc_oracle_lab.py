@@ -107,9 +107,7 @@ class Tap:
 
 async def passive(iface, tap: Tap, channel: int, secs: float) -> bool:
     print(f"\n[A] passive {secs:g}s on CH{channel}")
-    if not await iface.set_channel(channel):
-        print(f"  [-] set_channel({channel}) failed")
-        return False
+    await iface.set_channel(channel)
     await asyncio.sleep(secs)
     print(f"  beacons, any AP   : {tap.any_beacons}")
     print(f"  beacons, target   : {tap.beacons}")

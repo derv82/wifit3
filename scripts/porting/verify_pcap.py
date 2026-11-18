@@ -98,8 +98,6 @@ REGISTRY: dict[str, Chip] = {
                    "Ralink RT5372 (RT5392) / Panda PAU05+PAU06 clean-room (vendor 0x06/0x07)"),
     "rt5572": Chip("rt5572", "chips/rt5572/verify_pcap.py",
                    "Ralink RT5572 (RF5592) / Panda PAU09 — standalone; gate drives the real bring_up()"),
-    "rtl8188eus": Chip("rtl8188eus", "chips/rtl8188eus/verify_pcap.py",
-                       "Realtek RTL8188EUS / rtl8xxxu (vendor 0x05)"),
     "rtl8192fu": Chip("rtl8192fu", "chips/rtl8192fu/verify_pcap.py",
                       "Realtek RTL8192FU / mainline rtl8xxxu (vendor 0x05)"),
     "rtl8192cu": Chip("rtl8192cu", "chips/rtl8192cu/verify_pcap.py",

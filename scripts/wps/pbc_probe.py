@@ -96,8 +96,7 @@ async def main_async(args) -> int:
     iface.register_rx_callback(lambda pkt: capture.append((time.monotonic(), pkt.raw)))
     try:
         step(f"Park on channel {channel}, find {bssid}")
-        if not await iface.set_channel(channel):
-            fail(f"set_channel({channel}) failed.")
+        await iface.set_channel(channel)
         deadline = time.time() + args.scan_secs
         target = None
         while time.time() < deadline and target is None:
