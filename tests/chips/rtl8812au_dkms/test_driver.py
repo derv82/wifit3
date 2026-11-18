@@ -6,7 +6,10 @@ and the M6 ``inject_frame`` stub. (The bring-up sequence is verified in
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 import wifit3.chips.rtl8812au_dkms.driver as drv
+from wifit3.errors import SetChannelError
 
 
 def _fake_params():
@@ -64,7 +67,7 @@ async def test_set_channel_2ghz_routes_to_2g_txpower(monkeypatch):
     _patch_tune(monkeypatch, calls)
     d = drv.Rtl8812auDkmsDriver(MagicMock())
     d._params = _fake_params()
-    assert await d.set_channel(6) is True
+    await d.set_channel(6)
     assert d._channel == 6
     assert calls["ch"] == 6 and calls["2g"] == (6, "2g") and "5g" not in calls
 
@@ -74,7 +77,7 @@ async def test_set_channel_5ghz_routes_to_5g_txpower(monkeypatch):
     _patch_tune(monkeypatch, calls)
     d = drv.Rtl8812auDkmsDriver(MagicMock())
     d._params = _fake_params()
-    assert await d.set_channel(36) is True
+    await d.set_channel(36)
     assert d._channel == 36
     assert calls["ch"] == 36 and calls["5g"] == (36, "5g") and "2g" not in calls
 
@@ -84,15 +87,21 @@ async def test_set_channel_scan_skips_txpower(monkeypatch):
     _patch_tune(monkeypatch, calls)
     d = drv.Rtl8812auDkmsDriver(MagicMock())
     d._params = _fake_params()
-    assert await d.set_channel(36, scan=True) is True
+    await d.set_channel(36, scan=True)
     # A scan hop tunes only — no per-rate txagc re-apply (TX-only, skipped to save dwell).
     assert calls == {"ch": 36}
 
 
-async def test_set_channel_without_params_is_false():
+async def test_set_channel_before_connect_raises():
     d = drv.Rtl8812auDkmsDriver(MagicMock())
-    # set_channel before connect (no EFUSE params yet) must not raise.
-    assert await d.set_channel(6) is False
+    with pytest.raises(SetChannelError):
+        await d.set_channel(6)
+
+
+async def test_set_channel_rejects_an_unsupported_channel():
+    d = drv.Rtl8812auDkmsDriver(MagicMock())
+    with pytest.raises(SetChannelError):
+        await d.set_channel(15)
 
 
 async def test_inject_frame_builds_desc_and_sends_on_bulk_out():
@@ -101,7 +110,7 @@ async def test_inject_frame_builds_desc_and_sends_on_bulk_out():
     d._channel = 1                                        # connect() leaves the card tuned
     # deauth-shaped MPDU: fc/dur(4) + addr1(6) + addr2(6) + addr3(6) + seq(2) + reason(2).
     frame = bytes.fromhex("c0000000") + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00\x07\x00"
-    assert await d.inject_frame(frame) is True
+    await d.inject_frame(frame)
     transport.bulk_out.assert_called_once()
     sent = transport.bulk_out.call_args.args[0]
     # [40-byte fake TXDESC | frame]; the frame is appended verbatim (HW appends the FCS).
@@ -115,7 +124,7 @@ async def test_inject_frame_uses_6m_ofdm_on_5ghz():
     d = drv.Rtl8812auDkmsDriver(transport)
     d._channel = 149
     frame = bytes.fromhex("c0000000") + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00\x07\x00"
-    assert await d.inject_frame(frame) is True
+    await d.inject_frame(frame)
     sent = transport.bulk_out.call_args.args[0]
     assert sent[16] & 0x7F == 0x04                        # TX_RATE: 6M OFDM
     assert (int.from_bytes(sent[4:8], "little") >> 16) & 0x1F == 7   # RATE_ID: G group
@@ -124,5 +133,5 @@ async def test_inject_frame_uses_6m_ofdm_on_5ghz():
 async def test_inject_frame_rejects_runt():
     transport = MagicMock()
     d = drv.Rtl8812auDkmsDriver(transport)
-    assert await d.inject_frame(b"\x00" * 6) is False     # < 10 B: no addr1 to read BMC
+    await d.inject_frame(b"\x00" * 6)     # < 10 B: no addr1 to read BMC
     transport.bulk_out.assert_not_called()
