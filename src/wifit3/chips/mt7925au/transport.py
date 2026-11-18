@@ -7,11 +7,14 @@ for the SSUSB endpoint-control CSR. Every RMW is a read immediately followed by 
 write, matching the wire.
 """
 import asyncio
+import errno
 import logging
 import struct
 from typing import Callable, Optional
 
 import usb.core
+
+from wifit3.errors import is_device_gone
 
 from . import mcu, rx
 from ..rx_reader import RxReaderThread
@@ -33,6 +36,7 @@ class MT7925AUTransport:
 
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
+        self.removed = False   # MT76_REMOVED
         self._rx: Optional[RxReaderThread] = None
         self._mcu_rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._callback = None
@@ -101,6 +105,8 @@ class MT7925AUTransport:
     async def send_bulk_checked(self, data: bytes, ep: int, timeout: int = 2000) -> bool:
         """Bulk write. False on USB error OR short write (PyUSB on Windows can return a
         partial byte count without raising)."""
+        if self.removed:
+            raise usb.core.USBError("device removed", errno=errno.ENODEV)
         try:
             written = await self._loop.run_in_executor(
                 None, lambda: self.dev.write(ep, data, timeout=timeout)
@@ -110,6 +116,9 @@ class MT7925AUTransport:
                 return False
             return True
         except usb.core.USBError as e:
+            if is_device_gone(e):          # MT76_REMOVED, as usb.c:36-37 / :898-899 set it
+                self.removed = True
+                raise
             logger.debug(f"Bulk write failed on EP {hex(ep)}: {e}")
             return False
 
