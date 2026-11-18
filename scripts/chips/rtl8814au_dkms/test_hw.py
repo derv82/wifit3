@@ -9,8 +9,7 @@ band switch + channel tune to ch1 @ 20 MHz), M2e (per-rate TX-power txagc table)
 M3a (InitHalDm DIG/AGC/false-alarm phydm seed), M3b-1 (hal_init turn-on tail:
 PHY_SetRFEReg8814A(TRUE) + NAV/Tx-report + MAC address), and M3b-2 (monitor opmode
 entry: Set_MSR(NOLINK) + RCR/RXFLTMAP accept-all), and checks the chip reached
-CPU_DL_READY. Standalone vendor port on branch ``dkms/8814au``; does NOT touch the
-registered mainline driver. (This proves connect() applies cleanly; live RX breadth
+CPU_DL_READY. (This proves connect() applies cleanly; live RX breadth
 is the M3b-3 / M3c milestone, validated by a beacon count rather than this script.)
 
 Usage (run from a checkout with the card plugged in):

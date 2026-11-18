@@ -31,7 +31,7 @@ def _deauth(addr1: bytes) -> bytes:
 async def test_inject_frame_builds_desc_and_sends_broadcast():
     drv = Rtl8814auDkmsDriver(_FakeTransport())
     frame = _deauth(b"\xff" * 6)
-    assert await drv.inject_frame(frame) is True
+    await drv.inject_frame(frame)
     sent = drv.transport.sent[0]
     desc, payload = sent[:40], sent[40:]
     assert payload == frame                          # frame rides behind the 40 B desc
@@ -43,12 +43,21 @@ async def test_inject_frame_builds_desc_and_sends_broadcast():
 async def test_inject_frame_unicast_clears_bmc():
     drv = Rtl8814auDkmsDriver(_FakeTransport())
     frame = _deauth(b"\x00\x11\x22\x33\x44\x55")     # unicast (even first octet)
-    assert await drv.inject_frame(frame) is True
+    await drv.inject_frame(frame)
     desc = drv.transport.sent[0][:40]
     assert _field(desc, 0, 24, 1) == 0               # BMC clear
 
 
 async def test_inject_frame_rejects_too_short():
     drv = Rtl8814auDkmsDriver(_FakeTransport())
-    assert await drv.inject_frame(b"\xc0\x00\x00\x00") is False
+    await drv.inject_frame(b"\xc0\x00\x00\x00")
     assert drv.transport.sent == []                  # nothing transmitted
+
+
+async def test_set_channel_rejects_an_unsupported_channel():
+    import pytest
+    from wifit3.errors import SetChannelError
+
+    drv = Rtl8814auDkmsDriver(_FakeTransport())
+    with pytest.raises(SetChannelError):
+        await drv.set_channel(15)

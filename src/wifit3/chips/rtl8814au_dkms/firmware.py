@@ -19,6 +19,7 @@ reproduces the cold-boot capture byte-for-byte (verify via
 """
 from __future__ import annotations
 
+import logging
 import struct
 import time
 
@@ -86,6 +87,8 @@ from .constants import (
     DDMA_RESET,
 )
 from .pwrseq import NIC_ENABLE_FLOW, PWR_CUT_TESTCHIP, PWR_INTF_USB, run_pwr_seq
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Beacon-queue TX descriptor for firmware-download packets
@@ -367,6 +370,7 @@ def parse_fw_header(fw: bytes) -> tuple[int, int]:
 def download_firmware(t, fw: bytes) -> bool:
     """[SRC] FirmwareDownload8814A. Returns True once CPU_DL_READY is set."""
     dmem_pkt, iram_pkt = parse_fw_header(fw)
+    start = time.perf_counter()
     _fwdl_enable(t, True)
     _mcu_core(t, False)                       # disable 3081 MCU core
     _ddma_reset(t)
@@ -374,6 +378,9 @@ def download_firmware(t, fw: bytes) -> bool:
     _mcu_core(t, True)                        # enable 3081 MCU core
     _fwdl_enable(t, False)
     ready = _fw_free_to_go(t)
+    # [SRC] rtl8814a_hal_init.c:784-788; FirmwareDownload8814A never increments write_fw
+    logger.info("FWDL %s. write_fw:%u, %dms", "success" if ready else "fail", 0,
+                (time.perf_counter() - start) * 1000)
     # InitializeFirmwareVars8814 runs in FirmwareDownload8814A's exit path: seed
     # the H2C command trigger so the first host->FW message latches correctly.
     t.write8(REG_HMETFR, 0x0F)
