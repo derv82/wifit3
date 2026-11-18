@@ -14,6 +14,7 @@ from typing import AsyncIterator, Callable, Dict, List, Optional, Set
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.packet import BeaconPacket, Packet
+from wifit3.errors import SetChannelError
 from wifit3.models import AccessPoint, Client
 from wifit3.wlan.dedupe import StreamMerger
 from wifit3.wlan.interface import WlanInterface
@@ -292,24 +293,23 @@ class WlanArray:
                     seen.append(ch)
         return sorted(seen)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Sets channel on supported devices, returns True if any device is on channel."""
-        tuned_any = False
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        """Tune every device that supports ``channel``; raises ``SetChannelError`` if none ends up on it.
+        A device whose tune failed has ``current_channel`` None."""
         tasks = []
         for m in self._members:
             if channel not in m.supported_channels:
                 continue
             if m.current_channel == channel:
-                tuned_any = True                    # already there: it IS on the channel
                 continue
             tasks.append((m, asyncio.create_task(m.set_channel(channel, scan=scan))))
         for m, task in tasks:
             try:
-                if await task:
-                    tuned_any = True
-            except Exception:
-                logger.exception("%s failed to tune to channel %d", m.name, channel)
-        return tuned_any
+                await task
+            except Exception as e:
+                logger.error("%s failed to tune to channel %d: %s", m.chipset, channel, e)
+        if not any(m.current_channel == channel for m in self._members):
+            raise SetChannelError(f"no device could tune to channel {channel}")
 
     def _partition(self, channels: List[int], members: Optional[List[WlanInterface]] = None) -> dict:
         """SPREAD: give each channel to one capable card, balancing counts, so N cards cover N-way

@@ -148,13 +148,13 @@ The chip package (`src/wifit3/chips/<name>/`):
   readable description) and
   `def import_driver(): from .driver import <Class>; return <Class>`. It must NOT import `driver.py` at module
   top: discovery is a pkgutil walk over `chips/*` that reads each light `__init__` and imports the driver only
-  on a VID:PID match. Copy the shape from `chips/rtl8812au/__init__.py`.
+  on a VID:PID match. Copy the shape from `chips/rtl8812au_dkms/__init__.py`.
 - **`driver.py` subclasses the `Driver` ABC** (`chips/driver.py`): class attr `SUPPORTED_CHANNELS`
   (`SUPPORTED_IDS` is not on the class), classmethod `from_usb_device(cls, dev, id_entry)`, and `connect()`,
   `set_channel()`, `inject_frame()`, `close()`, `register_rx_callback()`.
 - **Cold vs warm:** if the vendor probe re-initialises a running chip, `connect()` always runs the cold path.
-  Otherwise it may detect a chip left running and skip bring-up (`chips/rtl8821au/mac.py:is_chip_warm()`,
-  `driver.py:_warm_reattach`).
+  Otherwise it may detect a chip left running and skip bring-up (`chips/rt3070/mac.py:is_chip_warm()`,
+  `chips/mt7921au/driver.py:_warm_reattach`).
 - **Registration:** nothing to register unless a different chip shares this chip's VID:PID: then add a
   `_VIDPID_FAMILIES` row with a resolver in `device/manager.py`.
 

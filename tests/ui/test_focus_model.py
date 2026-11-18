@@ -28,7 +28,7 @@ from wifit3.crack.wep import CRACK_READY_THRESHOLD
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, IdKey, IdSource, PersistedCapture
 from wifit3.persist.ap_state import Key
 from wifit3.ui import focus_model as fm
-from tests.wlan.mocks import build_ap
+from tests.wlan.mocks import build_ap, mock_array
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
@@ -581,6 +581,12 @@ def _wep_hidden_ap() -> AccessPoint:
     return ap
 
 
+def _array_on(channel: int = 1):
+    array = mock_array(cards=1)
+    array.members[0].current_channel = channel
+    return array
+
+
 # ----- button matrix: driven through the real FocusViewV2.refresh_buttons -----
 
 
@@ -589,7 +595,7 @@ class _ButtonHost(App):
     point it at a stub AP and call refresh_buttons directly."""
     def __init__(self):
         super().__init__()
-        self.array = None
+        self.array = _array_on()
         self.target_ap = None
         self.pbc_enabled = True
         self.vault = MagicMock()
@@ -675,11 +681,11 @@ async def test_buttons_hidden_ssid_disables_assoc_attacks(buttons_screen):
     visible-but-disabled with a hidden-SSID reason: PMKID, WPS PIN, WEP fake-auth."""
     ap = _rsn_ap(akms=("PSK",), wps=True, ssid=None)
     b = _buttons(buttons_screen, ap)
-    assert b["btn-pmkid"].disabled is True and "hidden" in fm.campaign_blocked(PmkidHarvestAttack, ap)
-    assert b["btn-wps-pin"].disabled is True and "hidden" in fm.campaign_blocked(WpsCampaign, ap)
+    assert b["btn-pmkid"].disabled is True and "hidden" in fm.campaign_blocked(PmkidHarvestAttack, ap, _array_on())
+    assert b["btn-wps-pin"].disabled is True and "hidden" in fm.campaign_blocked(WpsCampaign, ap, _array_on())
     wap = _wep_hidden_ap()
     wb = _buttons(buttons_screen, wap)
-    assert wb["btn-gen-ivs"].disabled is True and "hidden" in fm.campaign_blocked(WepCampaign, wap)
+    assert wb["btn-gen-ivs"].disabled is True and "hidden" in fm.campaign_blocked(WepCampaign, wap, _array_on())
 
 
 def _pbc_window_ap(*, ssid: str | None = "EvilNet") -> AccessPoint:
@@ -791,11 +797,24 @@ def test_other_long_running_tx_mutex_and_excludes():
 
 
 def test_deauth_blocked_by_mutex_or_pmf():
-    assert fm.deauth_blocked(_rsn_ap()) is False
-    assert fm.deauth_blocked(_rsn_ap(pmf_required=True, pmf_capable=True)) is True
-    assert fm.deauth_blocked(_rsn_ap(pmf_required=True, pmf_capable=False)) is True
+    assert fm.deauth_blocked(_rsn_ap(), _array_on()) is False
+    assert fm.deauth_blocked(_rsn_ap(pmf_required=True, pmf_capable=True), _array_on()) is True
+    assert fm.deauth_blocked(_rsn_ap(pmf_required=True, pmf_capable=False), _array_on()) is True
     Campaign.active = _running("wep")
-    assert fm.deauth_blocked(_rsn_ap()) is True
+    assert fm.deauth_blocked(_rsn_ap(), _array_on()) is True
+
+
+def test_no_device_on_the_ap_channel_blocks_tx():
+    ap = _rsn_ap(akms=("PSK",))
+    off_channel = _array_on(channel=ap.channel + 5)
+    assert fm.campaign_blocked(PmkidHarvestAttack, ap, off_channel) == f"No device on channel {ap.channel}"
+    assert fm.deauth_blocked(ap, off_channel) is True
+
+
+def test_no_array_after_the_last_device_is_lost_blocks_tx():
+    ap = _rsn_ap(akms=("PSK",))
+    assert fm.campaign_blocked(PmkidHarvestAttack, ap, None) == f"No device on channel {ap.channel}"
+    assert fm.deauth_blocked(ap, None) is True
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -815,12 +834,12 @@ async def test_buttons_unconfirmed_encryption_shows_pmkid_disabled_with_reason(b
     ap = _rsn_ap(encryption="Unknown", akms=())
     st = _buttons(buttons_screen, ap)["btn-pmkid"]
     assert st.display is True and st.disabled is True
-    reason = fm.campaign_blocked(PmkidHarvestAttack, ap)
+    reason = fm.campaign_blocked(PmkidHarvestAttack, ap, _array_on())
     assert reason and "confirm" in reason.lower()
     # A confirmed-PSK AP is enabled with no reason.
     ok_ap = _rsn_ap(akms=("PSK",))
     ok = _buttons(buttons_screen, ok_ap)["btn-pmkid"]
-    assert ok.disabled is False and fm.campaign_blocked(PmkidHarvestAttack, ok_ap) is None
+    assert ok.disabled is False and fm.campaign_blocked(PmkidHarvestAttack, ok_ap, _array_on()) is None
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -861,7 +880,7 @@ def test_card_dynamic_each_state():
 async def test_buttons_eviltwin_enabled_single_card(buttons_screen):
     ap = _rsn_ap(akms=("PSK",))
     st = _buttons(buttons_screen, ap)["btn-eviltwin"]
-    assert st.display is True and st.disabled is False and fm.campaign_blocked(EvilTwinCampaign, ap) is None
+    assert st.display is True and st.disabled is False and fm.campaign_blocked(EvilTwinCampaign, ap, _array_on()) is None
 
 
 def test_headline_eviltwin_active_and_captured():
@@ -886,7 +905,7 @@ async def test_derive_buttons_all_disabled_when_silenced(buttons_screen, monkeyp
     for bid in ("btn-gen-ivs", "btn-pmkid", "btn-deauth", "btn-wps-pin",
                 "btn-eviltwin", "btn-chop"):
         assert btns[bid].disabled is True
-    assert fm.campaign_blocked(DeauthCampaign, ap) == "AP silenced"
+    assert fm.campaign_blocked(DeauthCampaign, ap, _array_on()) == "AP silenced"
 
 
 
@@ -894,11 +913,11 @@ def test_campaign_blocked_on_a_dfs_channel_once_the_ap_is_silent_for_60s():
     ap = _rsn_ap()
     ap.channel = 56
     ap.last_seen = time.time() - 30
-    assert fm.campaign_blocked(DeauthCampaign, ap) is None
+    assert fm.campaign_blocked(DeauthCampaign, ap, _array_on(56)) is None
     ap.last_seen = time.time() - 61
-    assert fm.campaign_blocked(DeauthCampaign, ap) == "DFS channel, AP silent >60s"
+    assert fm.campaign_blocked(DeauthCampaign, ap, _array_on(56)) == "DFS channel, AP silent >60s"
     ap.channel = 36
-    assert fm.campaign_blocked(DeauthCampaign, ap) is None
+    assert fm.campaign_blocked(DeauthCampaign, ap, _array_on(36)) is None
 
 def _stored_psk(value: str, saved_at: int) -> Key:
     capture = PersistedCapture(type=CaptureType.WPA_PSK, timestamp=saved_at, path=f"/tmp/{saved_at}",

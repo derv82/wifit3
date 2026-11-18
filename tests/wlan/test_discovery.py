@@ -1,8 +1,6 @@
-"""Driver registry (env A/B switch for the Realtek 11ac pairs) + the device-scan surface.
+"""Driver registry + the device-scan surface.
 
-The DKMS port and the mainline driver claim the same VID:PID. The family table resolves each pair to a
-single driver via its env var; the var picks which, defaulting to DKMS. ``devices`` / ``wlan_iface``
-are the enumeration + factory the bring-up engine drives.
+``devices`` / ``wlan_iface`` are the enumeration + factory the bring-up engine drives.
 """
 import pytest
 
@@ -13,7 +11,7 @@ from wifit3.chips.driver import DeviceID
 
 @pytest.fixture(autouse=True)
 def _fresh_registry():
-    # The VID:PID map is built once and cached; clear it so each test's env var is read fresh.
+    # The VID:PID map is built once and cached; clear it so no test sees another's map.
     manager.supported_ids.cache_clear()
     yield
     manager.supported_ids.cache_clear()
@@ -24,90 +22,33 @@ def _driver_for(vid, pid):
     return cls.__name__
 
 
-def test_rtl8821_default_is_dkms(monkeypatch):
-    monkeypatch.delenv("WIFIT3_RTL8821", raising=False)
+def test_rtl8821_is_dkms():
     assert _driver_for(0x0BDA, 0x0811) == "Rtl8821auDkmsDriver"
 
 
-def test_rtl8821_mainline_opt_in(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8821", "MainLine")   # case-insensitive
-    assert _driver_for(0x0BDA, 0x0811) == "RTL8821AUDriver"
-
-
-def test_rtl8821_unknown_value_stays_dkms(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8821", "dkms")   # any non-"mainline" -> default DKMS
-    assert _driver_for(0x0BDA, 0x0811) == "Rtl8821auDkmsDriver"
-
-
-def test_both_8821_drivers_claim_0811():
-    from wifit3.chips.rtl8821au_dkms import SUPPORTED_IDS
-    assert (0x0BDA, 0x0811) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
-
-
-def test_rtl8814_default_is_dkms(monkeypatch):
-    monkeypatch.delenv("WIFIT3_RTL8814", raising=False)
+def test_rtl8814_is_dkms():
     assert _driver_for(0x0BDA, 0x8813) == "Rtl8814auDkmsDriver"
 
 
-def test_rtl8814_mainline_opt_in(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8814", "mainline")
-    assert _driver_for(0x0BDA, 0x8813) == "RTL8814AUDriver"
-
-
-def test_rtl8814_pair_claims_the_same_ids():
+def test_rtl8814au_dkms_claims_2357_0106():
     """The DKMS port once claimed only 0bda:8813, so an Archer T9UH or a DWA-192 fell through
-    to no driver at all unless the user opted into mainline."""
-    from wifit3.chips.rtl8814au_dkms import SUPPORTED_IDS as dkms
-    from wifit3.chips.rtw88_8814au import SUPPORTED_IDS as mainline
+    to no driver at all."""
+    from wifit3.chips.rtl8814au_dkms import SUPPORTED_IDS
 
-    assert {(e.vid, e.pid) for e in dkms} == {(e.vid, e.pid) for e in mainline}
-    assert (0x2357, 0x0106) in {(e.vid, e.pid) for e in dkms}
+    assert (0x2357, 0x0106) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
 
 
-def test_rtl8812_default_is_dkms(monkeypatch):
-    monkeypatch.delenv("WIFIT3_RTL8812", raising=False)
+def test_rtl8812_is_dkms():
     assert _driver_for(0x0BDA, 0x8812) == "Rtl8812auDkmsDriver"
 
 
-def test_rtl8812_mainline_opt_in(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8812", "MainLine")   # case-insensitive
-    assert _driver_for(0x0BDA, 0x8812) == "RTL8812AUDriver"
-
-
-def test_rtl8812_unknown_value_stays_dkms(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8812", "dkms")
-    assert _driver_for(0x0BDA, 0x8812) == "Rtl8812auDkmsDriver"
-
-
-def test_both_8812_drivers_claim_8812():
-    from wifit3.chips.rtl8812au_dkms import SUPPORTED_IDS
-    assert (0x0BDA, 0x8812) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
-
-
-def test_rtl8822_default_is_dkms(monkeypatch):
-    monkeypatch.delenv("WIFIT3_RTL8822", raising=False)
+def test_rtl8822_is_dkms():
     assert _driver_for(0x2357, 0x0138) == "Rtl8822buDkmsDriver"
 
 
-def test_rtl8822_mainline_opt_in(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8822", "MainLine")   # case-insensitive
-    assert _driver_for(0x2357, 0x0138) == "RTL8822BUDriver"
-
-
-def test_rtl8822_unknown_value_stays_dkms(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8822", "dkms")
-    assert _driver_for(0x2357, 0x0138) == "Rtl8822buDkmsDriver"
-
-
-def test_both_8822_drivers_claim_0138():
-    from wifit3.chips.rtl8822bu_dkms import SUPPORTED_IDS
-    assert (0x2357, 0x0138) in {(e.vid, e.pid) for e in SUPPORTED_IDS}
-
-
-def test_rtl8822_t4u_v3_plus_uses_dkms_label(monkeypatch):
+def test_rtl8822_t4u_v3_plus_uses_dkms_label():
     from wifit3.chips.products import TPLink
     from wifit3.device import manager
-    monkeypatch.delenv("WIFIT3_RTL8822", raising=False)
     manager.supported_ids.cache_clear()
 
     cls, _key = manager.driver_for(0x2357, 0x0115)
@@ -160,9 +101,8 @@ def test_realtek_default_ids_claim_the_8822cu(pid):
     assert _driver_for(0x0BDA, pid) == "RTL8822CUDriver"
 
 
-def test_the_alpha_id_stays_with_the_8822bu(monkeypatch):
+def test_the_alpha_id_stays_with_the_8822bu():
     # 13b1:0043 is in the vendor 8822C table but commented out of ours: 88x2bu already claims it.
-    monkeypatch.delenv("WIFIT3_RTL8822", raising=False)
     assert _driver_for(0x13B1, 0x0043) == "Rtl8822buDkmsDriver"
 
 

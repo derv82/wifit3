@@ -42,10 +42,20 @@ BUTTON_CAMPAIGNS = [WepCampaign, DeauthCampaign, PmkidHarvestAttack, WpsCampaign
 CAMPAIGN_BY_KEY = {cls.key: cls for cls in BUTTON_CAMPAIGNS}
 
 
-def campaign_blocked(cls, ap) -> Optional[str]:
+def device_on_channel(array: Optional[WlanArray], channel: int) -> bool:
+    """True when some device in ``array`` is tuned to ``channel``; False with no array."""
+    if array is None:
+        return False
+    for m in array.members:
+        if m.current_channel == channel:
+            return True
+    return False
+
+
+def campaign_blocked(cls, ap, array: Optional[WlanArray]) -> Optional[str]:
     """Why cls's attack button is disabled right now, or None if it can start:
-    the AP is silenced, a DFS AP has gone quiet, another campaign owns the radio, or the
-    campaign's own ineligible_reason (hidden SSID, WPS locked, unconfirmed encryption, …)."""
+    the AP is silenced, a DFS AP has gone quiet, another campaign owns the radio, no device is on
+    its channel, or the campaign's own ineligible_reason (hidden SSID, WPS locked, unconfirmed encryption, …)."""
     if Config.is_silenced(ap.bssid):
         return "AP silenced"
     if is_dfs_channel(ap.channel) and time.time() - ap.last_seen > 60:
@@ -53,6 +63,8 @@ def campaign_blocked(cls, ap) -> Optional[str]:
     active = Campaign.active
     if active is not None and active.key != cls.key:
         return f"Blocked ({active.key} is active)"
+    if not device_on_channel(array, ap.channel):
+        return f"No device on channel {ap.channel}"
     return cls.ineligible_reason(ap)
 
 
@@ -259,8 +271,10 @@ def status_under_dash(ap: AccessPoint, array: WlanArray, now: float) -> list[str
     return lines
 
 
-def deauth_blocked(ap: AccessPoint) -> bool:
-    """True while radio TX is busy or the AP's PMF is required or invalid."""
+def deauth_blocked(ap: AccessPoint, array: Optional[WlanArray]) -> bool:
+    """True while no device is on the AP's channel, radio TX is busy, or the AP's PMF is required or invalid."""
+    if not device_on_channel(array, ap.channel):
+        return True
     return other_long_running_tx() or ap.pmf_posture in (PmfPosture.REQUIRED, PmfPosture.INVALID)
 
 

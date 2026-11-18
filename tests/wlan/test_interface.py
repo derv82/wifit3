@@ -3,8 +3,10 @@ picture lives in WlanSink (see test_sink.py). These cover the radio behaviors: d
 the hopper's device-gone guard, and the deauth frame/ACK bookkeeping."""
 import asyncio
 
+import pytest
 import usb.core
 
+from wifit3.errors import SetChannelError
 from wifit3.wlan.interface import WlanInterface
 
 
@@ -91,6 +93,45 @@ async def test_hopper_surfaces_device_gone_and_stops(mocker):
 
     assert len(seen) == 1 and isinstance(seen[0], usb.core.USBError)
     assert iface._is_hopping is False
+    await iface.stop_hopping()
+
+
+async def test_failed_tune_raises_and_clears_current_channel(mocker):
+    driver = mocker.MagicMock()
+    driver.set_channel = mocker.AsyncMock()
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+    await iface.set_channel(6)
+
+    driver.set_channel.side_effect = SetChannelError("tune failed")
+    with pytest.raises(SetChannelError):
+        await iface.set_channel(11)
+
+    assert iface.current_channel is None
+
+
+@pytest.mark.parametrize("error", [SetChannelError("tune failed"),
+                                   usb.core.USBTimeoutError("Operation timed out")])
+async def test_hopper_keeps_hopping_after_a_failed_tune(mocker, caplog, error):
+    driver = mocker.MagicMock()
+    tuned = []
+
+    async def fail_on_6(channel, scan=False):
+        if channel == 6:
+            raise error
+        tuned.append(channel)
+
+    driver.set_channel = fail_on_6
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+
+    await iface.start_hopping(channels=[1, 6, 11], interval=0.001)
+    for _ in range(100):
+        if 1 in tuned and 11 in tuned:
+            break
+        await asyncio.sleep(0.01)
+
+    assert 1 in tuned and 11 in tuned
+    assert iface._is_hopping is True
+    assert "hop to channel 6 failed" in caplog.text
     await iface.stop_hopping()
 
 

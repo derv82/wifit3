@@ -52,7 +52,9 @@ def test_pmf_required_disables_deauth():
     ap.pmf_capable = True            # a valid PMF-Required AP is MFPC=1 and MFPR=1
 
     # DeauthCampaign block reason should be non-empty (truthy) when blocked
-    blocked = fm.deauth_blocked(ap)
+    array = mock_array(cards=1)
+    array.members[0].current_channel = ap.channel
+    blocked = fm.deauth_blocked(ap, array)
     assert blocked is True, "PMF Required AP should block deauth"
 
 
