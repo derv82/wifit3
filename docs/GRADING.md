@@ -87,14 +87,10 @@ real-world APs in a US environment.
 
 ## DKMS vs mainline
 
-Some Realtek cards ship both a DKMS-source port and a mainline port (`WIFIT3_<CHIP>=mainline` opts
-into the non-default). Two distinct comparisons:
-
-- **Justify the default** — wifit3-dkms vs wifit3-mainline, both userland, no kernel driver needed.
-- **True Port %** — wifit3-<variant> vs the Linux **same** driver; needs that kernel driver installed
-  (in-tree Ralink is already present; out-of-tree Realtek DKMS drivers must be installed: source
-  versions are in `driver_captures/driver-sources/`). Where the matching driver isn't installed, note
-  `Port` as measured against mainline instead: a cross-driver number, not true fidelity.
+**True Port %** is wifit3-<variant> vs the Linux **same** driver; needs that kernel driver installed
+(in-tree Ralink is already present; out-of-tree Realtek DKMS drivers must be installed: source
+versions are in `driver_captures/driver-sources/`). Where the matching driver isn't installed, note
+`Port` as measured against mainline instead: a cross-driver number, not true fidelity.
 
 ## Subsection template
 
