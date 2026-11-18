@@ -3,7 +3,7 @@
 Cleanroom re-port of the RTL8821AU / RTL8811AU (ALFA AWUS036ACS, `0bda:0811`) from Lucid-Duck's [PR #194](https://github.com/morrownr/8821au-20210708/pull/194) to the
 `morrownr/8821au-20210708` 5.12.5.2 vendor source; the DKMS out-of-tree `rtl88xxau` driver (Realtek
 PHYDM/ODM stack), not mainline `rtw88`. The two are different codebases; flow comes from the vendor
-tree cross-checked against the cold-boot pcap, never from the mainline-derived `chips/rtl8821au/`.
+tree cross-checked against the cold-boot pcap.
 
 ## Status
 
@@ -19,10 +19,7 @@ tree cross-checked against the cold-boot pcap, never from the mainline-derived `
 
 ## Gotchas
 
-**Sibling, not a replacement.** `chips/rtl8821au/` (mainline) stays. Both register for `0bda:0811`,
-ordered by `$WIFIT3_RTL8821` read fresh per run (flips between runs without a restart). This DKMS
-port is the blank default; `=mainline` (case-insensitive) falls back to the mainline driver. The
-reason for the port: mainline inherits `rtw88`'s weaker 2.4 GHz monitor RX (AGC/DIG), and the vendor
+**Why a vendor port.** The reason for the port: mainline inherits `rtw88`'s weaker 2.4 GHz monitor RX (AGC/DIG), and the vendor
 PHYDM DIG path is the suspected fix — though for 8821au itself the A/B came out a tie/stability play;
 the headline payoff is the deferred 8812au sibling that this port keeps cheap.
 
@@ -133,7 +130,7 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 
 ### 2026-06-04 — A/B vs mainline; the DIG-health canary
 
-The A/B against mainline `chips/rtl8821au/` (fixed channel, equal dwell, replug between runs) tracks
+The A/B against the mainline port (fixed channel, equal dwell, replug between runs) tracks
 breadth (nAPs, beacons/s) plus a fixed canary AP: a strong nearby router whose beacon rate sags first
 when initial gain (DIG/IGI) is mistuned, so it reads as a DIG-health indicator. Decision rule
 inherited from the 8814au A/B: breadth and canary rate can trade off — don't fail the port on a small
