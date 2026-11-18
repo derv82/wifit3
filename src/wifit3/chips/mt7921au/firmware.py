@@ -10,6 +10,7 @@ See src/wifit3/chips/mt7921au/MT7921AU.md for wire-format details.
 import logging
 import struct
 import asyncio
+import time
 import usb.core
 import usb.util
 from pathlib import Path
@@ -65,13 +66,38 @@ class MT7921AUFirmwareLoader:
             logger.debug(f"vendor-interface claim: {e}")
         return None
 
+    def wfsys_reset(self) -> None:
+        """mt792xu_wfsys_reset (mt792x_usb.c:264-301): reset the WiFi subsystem, stopping firmware
+        another driver booted. EP_RST_OPT goes over the unified bus: its UHW read fails on WinUSB."""
+        t = self.transport
+        val = t.read_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT)       # mt792xu_epctl_rst_opt(false)
+        t.write_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT, val & ~MT_EPCTL_EP_RST_OPT_MASK)
+
+        val = t.read_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST)
+        t.write_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST, val | MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH)
+        time.sleep(0.00002)                                                # usleep_range(10, 20)
+        val = t.read_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST)
+        t.write_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST, val & ~MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH)
+        t.write_reg32_uhw(MT_UDMA_CONN_INFRA_STATUS_SEL, 0)
+
+        for _ in range(MT792x_WFSYS_INIT_RETRY_COUNT):
+            if t.read_reg32_uhw(MT_UDMA_CONN_INFRA_STATUS) & MT_UDMA_CONN_WFSYS_INIT_DONE:
+                return
+            time.sleep(0.1)
+        raise BringUpError("WFSYS reset", "please unplug/replug the device and try again")
+
+    async def init_reset(self) -> None:
+        """mt792xu_init_reset (mt792x_usb.c:305-320)."""
+        await self.transport.stop_rx()
+        self.wfsys_reset()
+        self.transport.start_rx()
+
     # ------------------------------------------------------------------
     # Top-level orchestration
     # ------------------------------------------------------------------
 
-    async def load_firmware(self) -> bool:
-        logger.debug("Starting MT7921AU firmware upload sequence...")
-
+    async def power_on(self) -> bool:
+        """mt7921u_probe after the warm check: MCU power-on and DMA init, run once per bring-up."""
         # Claim the vendor-specific (class 0xFF) interface that owns the bulk EPs.
         # Its number differs per unit (PAU0F=0, AWUS036AXML=3), so detect it.
         # NOTE: do NOT call set_configuration() on Windows / WinUSB. It resets the
@@ -137,8 +163,13 @@ class MT7921AUFirmwareLoader:
         self.transport.start_rx()
 
         self._dma_init()
+        return True
 
-        # MT_SWDEF_MODE = NORMAL before firmware download (mt7921/usb.c:118).
+    async def load_firmware(self) -> bool:
+        """__mt7921_init_hardware's firmware download; mt7921_init_hardware retries it after
+        init_reset."""
+        logger.debug("Starting MT7921AU firmware upload sequence...")
+        # MT_SWDEF_MODE = NORMAL before firmware download (mt7921/init.c:187).
         self.transport.write_reg32_unified(MT_SWDEF_MODE, MT_SWDEF_NORMAL_MODE)
 
         # mt76_set(MT_UDMA_TX_QSEL, MT_FW_DL_EN): read-modify-write (the kernel helper
@@ -230,8 +261,7 @@ class MT7921AUFirmwareLoader:
         (mt792xu_wfdma_init), then WLCFG, then (cold only) rx_evt_ep4 + epctl_rst_opt.
 
         ``resume=True`` is the kernel's mt792xu_dma_init(dev, resume) light path: it
-        stops after WLCFG (skips rx_evt_ep4 + epctl_rst_opt), used by the warm
-        reattach when the DMA needs re-initialising (see driver._warm_reattach).
+        stops after WLCFG (skips rx_evt_ep4 + epctl_rst_opt).
 
         The IN URB pool must already be posted before this runs (see
         load_firmware): GLO_CFG sets RX_DMA_EN, and with no RX URBs queued the RX
@@ -271,8 +301,8 @@ class MT7921AUFirmwareLoader:
     def dma_need_reinit(self) -> bool:
         """mt792x_dma_need_reinit: True when the WFDMA NEED_REINIT latch is clear.
         _dma_init sets it, so a warm chip whose firmware is still running reads it
-        SET and this returns False (no re-init needed). The warm reattach gates its
-        light dma_init(resume) on this, exactly like mt7921u_resume."""
+        SET and this returns False (no re-init needed). connect() sends a warm chip
+        that reads True (another driver booted it) to wfsys_reset + cold boot."""
         return not (self.transport.read_reg32_unified(MT_WFDMA_DUMMY_CR)
                     & MT_WFDMA_NEED_REINIT)
 
@@ -392,6 +422,13 @@ class MT7921AUFirmwareLoader:
         )
         if resp is None:
             logger.error("PATCH_SEM_CONTROL get: no response")
+            return False
+        sem = resp[MT7921_RXD_STATUS_OFF]
+        if sem == PATCH_IS_DL:
+            logger.debug("ROM patch already loaded.")
+            return True
+        if sem != PATCH_NOT_DL_SEM_SUCCESS:
+            logger.error("Failed to get patch semaphore")
             return False
 
         try:

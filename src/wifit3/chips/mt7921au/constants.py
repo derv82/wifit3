@@ -65,6 +65,8 @@ PATCH_NOT_DL_SEM_FAIL    = 0x00
 PATCH_IS_DL              = 0x01
 PATCH_NOT_DL_SEM_SUCCESS = 0x02
 PATCH_REL_SEM_SUCCESS    = 0x03
+# PATCH_SEM_CONTROL / PATCH_FINISH_REQ pull sizeof(rxd)-4 (mt7921/mcu.c:37-40), so the status byte is at 32.
+MT7921_RXD_STATUS_OFF = 32
 
 # DL_MODE flag set in PATCH_START_REQ / TARGET_ADDRESS_LEN_REQ payloads.
 # mt76_connac_mcu.h:21 — DL_MODE_NEED_RSP = BIT(31). Tells the boot ROM /
@@ -253,6 +255,16 @@ MT_DMA_PREFETCH_CONF = [(0, 4, 0x080), (1, 4, 0x0c0), (2, 4, 0x100), (3, 4, 0x14
 # a no-op (verified live: read 0xfffeffff -> wrote 0xff8efc0f, stuck).
 MT_SSUSB_EPCTL_CSR_EP_RST_OPT = 0x74011890
 MT_EPCTL_EP_RST_OPT_MASK      = (0x3F << 4) | (0x7 << 20)   # GENMASK(9,4) | GENMASK(22,20)
+
+# mt792xu_wfsys_reset (mt792x_usb.c:264-301, mt7921_wfsys_desc :218-224). All read and write
+# over the UHW bus on WinUSB (scripts/chips/mt7921au/probe_wfsys_buses.py).
+MT_CBTOP_RGU_WF_SUBSYS_RST               = 0x70002600
+MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH = 1 << 0
+MT_UDMA_CONN_INFRA_STATUS                = 0x74000a20
+MT_UDMA_CONN_INFRA_STATUS_SEL            = 0x74000a24
+MT_UDMA_CONN_WFSYS_INIT_DONE             = 1 << 22
+MT792x_WFSYS_INIT_RETRY_COUNT            = 2
+MT792x_MCU_INIT_RETRY_COUNT              = 10       # mt7921_init_hardware (init.c:211-219)
 
 # MT_SWDEF_MODE = MT_SWDEF(0x3c) = 0x41f200 + 0x3c. The kernel writes NORMAL_MODE (0)
 # after dma_init, before firmware download (mt7921/usb.c:118, init.c:187) — putting the
