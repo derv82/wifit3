@@ -1,5 +1,5 @@
 """RTL8822CU EFUSE TX power fields: synthetic logical maps, no hardware."""
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -27,6 +27,55 @@ from wifit3.chips.rtl8822cu.efuse import (
     pg_txpwr_msb_diff_to_s8bit,
     read_efuse,
 )
+
+
+@pytest.mark.parametrize("single_byte", [False, True])
+@pytest.mark.parametrize("bank", [0, 1, 2, 3])
+def test_efuse_reads_select_and_verify_wifi_bank(single_byte, bank):
+    transport = MagicMock()
+    selector = constants_mod.REG_LDO_EFUSE_CTRL + 1
+    transport.read8.side_effect = ([0xA0 | bank, 0xA0] if bank else [0xA0]) + [0x05]
+    transport.read32.return_value = constants_mod.BIT_EF_READY | 0x5A
+
+    if single_byte:
+        assert efuse_mod.one_byte_read(transport, b"\x12\x34", 1) == 0x34
+    else:
+        assert efuse_mod.read_physical_map(transport) == b"\x5a" * constants_mod.EFUSE_SIZE
+
+    prefix = [call.read8(selector)]
+    if bank:
+        prefix += [call.write8(selector, 0xA0), call.read8(selector)]
+    if not single_byte:
+        prefix += [call.read8(constants_mod.REG_ANAPARLDO_POW_MAC),
+                   call.write8(constants_mod.REG_ANAPARLDO_POW_MAC, 0x04),
+                   call.read32(constants_mod.REG_EFUSE_CTRL)]
+    assert transport.mock_calls[:len(prefix)] == prefix
+    if single_byte:
+        assert transport.mock_calls == prefix
+    else:
+        assert transport.write8.call_args_list == (
+            ([call(selector, 0xA0)] if bank else [])
+            + [call(constants_mod.REG_ANAPARLDO_POW_MAC, 0x04)]
+        )
+        assert transport.write32.call_count == constants_mod.EFUSE_SIZE
+        assert all(not (entry.args[1] & constants_mod.BIT_EF_READY)
+                   for entry in transport.write32.call_args_list)
+
+
+@pytest.mark.parametrize("single_byte", [False, True])
+def test_efuse_read_aborts_when_wifi_bank_selection_does_not_stick(single_byte):
+    transport = MagicMock()
+    transport.read8.side_effect = [0xA3, 0xA2]
+    selector = constants_mod.REG_LDO_EFUSE_CTRL + 1
+
+    with pytest.raises(RuntimeError, match="failed to select Wi-Fi EFUSE bank"):
+        if single_byte:
+            efuse_mod.one_byte_read(transport, b"\x12", 0)
+        else:
+            efuse_mod.read_physical_map(transport)
+
+    assert transport.mock_calls == [call.read8(selector), call.write8(selector, 0xA0),
+                                    call.read8(selector)]
 
 
 def _efuse(scalars: dict[int, int], map_valid: bool = True) -> EfuseInfo:

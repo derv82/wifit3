@@ -4,6 +4,8 @@ The 2357:0137 adapter reports chip id 0x13 and a 2T2R radio. It is not an
 MT7612U and must not use the MT76 firmware or register tables.
 """
 
+from wifit3.chips.products import DLink
+
 USB_IDS_RTL8822CU = (
     # Realtek demoboard defaults, with the vendor's own descriptions
     # [SRC os_dep/linux/usb_intf.c:296-300].
@@ -17,7 +19,7 @@ USB_IDS_RTL8822CU = (
     # Stays active: device/manager.py resolve_driver() routes this shared id by USB descriptor
     # (bulk-IN 0x85 means Mediatek), searching THIS package's SUPPORTED_IDS for the RTL answer.
     (0x2357, 0x0137, "RTL8822CU", "FAST / TP-Link", "USB 802.11ac Adapter"),
-    (0x2001, 0x3329, "RTL8822CU", "D-Link", "AC13U"),
+    (0x2001, 0x3329, "RTL8822CU", "D-Link", DLink.AC13U_REV_A1),
 )
 
 # When None, rfe_type is read from the chip's EFUSE (normal, recommended).

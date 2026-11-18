@@ -59,6 +59,7 @@ from wifit3.chips.rtw88_base.registers import (
     REG_TXDMA_STATUS,
     RTW_DMA_MAPPING_HIGH,
 )
+from wifit3.errors import is_device_gone
 
 from .constants import (
     BB_PATH_A,
@@ -80,6 +81,7 @@ _HEADER_SIZE = 64
 _CHECKSUM_SIZE = 8
 _FW_PATH = Path(__file__).resolve().parent / "assets" / "rtl8822c_fw_nic.bin"
 _TX_DESC_SIZE = 48
+_PACKET_OFFSET_SZ = 8
 _MAX_CHUNK = 0x1000
 
 
@@ -190,19 +192,21 @@ def _ltecoex_write(transport: RTL8822CUTransport, offset: int, value: int) -> No
 
 
 def _fw_tx_desc(size: int, *, qsel: int = 16, offset: int = _TX_DESC_SIZE,
-                beacon: bool = False, bmc: bool = False) -> bytes:
-    """48 byte RTL8822C TX descriptor + checksum. The checksum spans ``(PKT_OFFSET + 6) * 2``
-    u16 words [SRC fill_txdesc_check_sum_8822c halmac_common_8822c.c:184]: 24 words (the whole
-    descriptor) for offset=48, so the beacon desc's word8 is covered. Reserved page FW packet:
-    qsel=16 (BEACON), offset=48. FW offload H2C packet: qsel=0x13, offset=0. The 2nd download
-    (``beacon=True``) uses the full dump_mgntframe BEACON descriptor."""
+                pkt_offset: int = 0, beacon: bool = False, bmc: bool = False) -> bytes:
+    """48-byte RTL8822C TX descriptor plus checksum.
+
+    A reserved page payload that ends on a USB bulk boundary gets one eight-byte packet-offset
+    unit before it and PKT_OFFSET=1. OFFSET is 56 on the first download
+    (``usb_write_data_not_xmitframe``) and 48 on the second (``update_txdesc``).
+    [SRC hal/rtl8822c/usb/rtl8822cu_halmac.c:141-161, rtl8822cu_xmit.c:63-95]"""
     desc = bytearray(_TX_DESC_SIZE)
     if beacon:
         w0 = (size & 0xFFFF) | (offset << 16) | (0x84 << 24)
         if bmc:
             w0 |= 1 << 24
         struct.pack_into("<I", desc, 0x00, w0)
-        struct.pack_into("<I", desc, 0x04, 0x00081001)   # MACID=1, QSEL=BEACON(0x10), RATE_ID=8
+        struct.pack_into("<I", desc, 0x04, 0x00081001 | ((pkt_offset & 0x1F) << 24))
+        # MACID=1, QSEL=BEACON(0x10), RATE_ID=8, PKT_OFFSET[28:24]
         if bmc:
             struct.pack_into("<I", desc, 0x08, 0x3F000000)   # broadcast MACID
         struct.pack_into("<I", desc, 0x0C, 0x00000100)   # HWSEQ_EN
@@ -211,10 +215,9 @@ def _fw_tx_desc(size: int, *, qsel: int = 16, offset: int = _TX_DESC_SIZE,
         struct.pack_into("<I", desc, 0x20, 0x00008000)
     else:
         struct.pack_into("<I", desc, 0, (size & 0xFFFF) | (offset << 16))
-        struct.pack_into("<I", desc, 4, qsel << 8)
-    n_words = ((offset >> 3) + (_TX_DESC_SIZE >> 3)) << 1
+        struct.pack_into("<I", desc, 4, (qsel << 8) | ((pkt_offset & 0x1F) << 24))
     checksum = 0
-    for i in range(n_words):
+    for i in range(_TX_DESC_SIZE // 2):
         checksum ^= struct.unpack_from("<H", desc, 2 * i)[0]
     struct.pack_into("<H", desc, 28, checksum)
     return bytes(desc)
@@ -222,7 +225,7 @@ def _fw_tx_desc(size: int, *, qsel: int = 16, offset: int = _TX_DESC_SIZE,
 
 def _write_fw_packet(dev: usb.core.Device, transport: RTL8822CUTransport,
                      bulk_out: int, payload: bytes, *, beacon: bool = False,
-                     rsvd_boundary: int = 0) -> None:
+                     bulk_out_size: int = 512, rsvd_boundary: int = 0) -> None:
     """``dl_rsvd_page_88xx``: stage one FW chunk into the reserved page (pg_addr 0), wait for the
     BCN_VALID latch, then restore FIFOPAGE_CTRL_2 to rsvd_boundary. [SRC halmac_common_88xx.c:317-380]"""
     transport.write16(REG_FIFOPAGE_CTRL_2, BIT_BCN_VALID_V1)          # pg_addr 0 | BIT15
@@ -233,7 +236,19 @@ def _write_fw_packet(dev: usb.core.Device, transport: RTL8822CUTransport,
     try:
         # BMC = multicast bit of the chunk's "addr1" (byte 4, past FC[2]+duration[2]).
         bmc = bool(payload[4] & 1) if beacon else False
-        packet = _fw_tx_desc(len(payload), beacon=beacon, bmc=bmc) + payload
+        on_boundary = (len(payload) + _TX_DESC_SIZE) % bulk_out_size == 0
+        pkt_offset = 1 if on_boundary else 0
+        if on_boundary and not beacon:
+            # usb_write_data_not_xmitframe [SRC hal/rtl8822c/usb/rtl8822cu_halmac.c:141-161]
+            desc_offset = _TX_DESC_SIZE + _PACKET_OFFSET_SZ
+        else:
+            # update_txdesc: OFFSET = TXDESC_SIZE + OFFSET_SZ (0) [SRC rtl8822cu_xmit.c:63-95, rtl8822cu.h:45]
+            desc_offset = _TX_DESC_SIZE
+        packet = _fw_tx_desc(len(payload), offset=desc_offset, pkt_offset=pkt_offset,
+                             beacon=beacon, bmc=bmc)
+        if on_boundary:
+            packet += b"\0" * _PACKET_OFFSET_SZ
+        packet += payload
         sent = dev.write(bulk_out, packet, 1000)
         if sent != len(packet):
             raise IOError(f"RTL8822CU firmware bulk write short: {sent}/{len(packet)}")
@@ -260,12 +275,12 @@ def _iddma(transport: RTL8822CUTransport, src: int, dst: int, length: int, first
 
 def _upload_section(dev: usb.core.Device, transport: RTL8822CUTransport,
                     bulk_out: int, destination: int, data: bytes, *, beacon: bool = False,
-                    rsvd_boundary: int = 0) -> None:
+                    bulk_out_size: int = 512, rsvd_boundary: int = 0) -> None:
     transport.write32_set(REG_DDMA_CH0CTRL, BIT_DDMACH0_RESET_CHKSUM_STS)
     for offset in range(0, len(data), _MAX_CHUNK):
         chunk = data[offset:offset + _MAX_CHUNK]
-        wire_chunk = chunk + b"\0" if (len(chunk) + _TX_DESC_SIZE) % 512 == 0 else chunk
-        _write_fw_packet(dev, transport, bulk_out, wire_chunk, beacon=beacon, rsvd_boundary=rsvd_boundary)
+        _write_fw_packet(dev, transport, bulk_out, chunk, beacon=beacon,
+                         bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
         _iddma(transport, OCPBASE_TXBUF_88XX + _TX_DESC_SIZE, destination + offset, len(chunk), offset == 0)
     fw_ctrl = transport.read8(REG_MCUFW_CTRL)
     if transport.read32(REG_DDMA_CH0CTRL) & BIT_DDMACH0_CHKSUM_STS:
@@ -295,52 +310,60 @@ def _reset_platform(transport: RTL8822CUTransport) -> None:
 
 def download_firmware(dev: usb.core.Device, transport: RTL8822CUTransport,
                       bulk_out: int, image: FirmwareImage, *, beacon: bool = False,
-                      rsvd_boundary: int = 0) -> None:
+                      bulk_out_size: int = 512, rsvd_boundary: int = 0) -> None:
     """``download_firmware_88xx``: wait for the TX FIFO to drain, then the HALMAC iDDMA
     NIC-firmware download bracketed by an LTE-coex 0x38 backup/restore. The cycle-1 C2H
     request marker (``C2HEVT=0xFD``) is written by the caller, not here. [SRC halmac_fw_88xx.c:114-206]"""
     _txfifo_wait_empty(transport)
     lte_backup = _ltecoex_read(transport, 0x38)
-    _wlan_cpu_enable(transport, False)
-    # Backup + config the 6 DMA/queue registers, reads interleaved with writes exactly as
-    # the vendor emits them. [SRC halmac_fw_88xx.c:147-187]
-    pq1 = transport.read8(REG_TXDMA_PQ_MAP + 1)
-    transport.write8(REG_TXDMA_PQ_MAP + 1, RTW_DMA_MAPPING_HIGH << 6)
-    cr = transport.read8(REG_CR)
-    transport.write8(REG_CR, BIT_HCI_TXDMA_EN | BIT_TXDMA_EN)
-    transport.write32(REG_H2CQ_CSR, 1 << 31)
-    info1 = transport.read16(REG_FIFOPAGE_INFO_1)
-    rqpn2 = transport.read32(REG_RQPN_CTRL_2) | (1 << 31)
-    transport.write16(REG_FIFOPAGE_INFO_1, 0x200)
-    transport.write32(REG_RQPN_CTRL_2, rqpn2)
-    bcn = transport.read8(REG_BCN_CTRL)
-    transport.write8(REG_BCN_CTRL, (bcn & ~BIT_EN_BCN_FUNCTION) | BIT_DIS_TSF_UDT)
     try:
-        _reset_platform(transport)
-        transport.write16(REG_MCUFW_CTRL, (transport.read16(REG_MCUFW_CTRL) & 0x3800) | BIT_MCUFWDL_EN)
-        _upload_section(dev, transport, bulk_out, image.dmem_addr & 0x7FFFFFFF, image.dmem,
-                        beacon=beacon, rsvd_boundary=rsvd_boundary)
-        _upload_section(dev, transport, bulk_out, image.imem_addr & 0x7FFFFFFF, image.imem,
-                        beacon=beacon, rsvd_boundary=rsvd_boundary)
-        if image.emem:
-            _upload_section(dev, transport, bulk_out, image.emem_addr & 0x7FFFFFFF, image.emem,
-                            beacon=beacon, rsvd_boundary=rsvd_boundary)
-    finally:  # restore_mac_reg_88xx, in backup order [SRC halmac_fw_88xx.c:620]
-        transport.write8(REG_TXDMA_PQ_MAP + 1, pq1)
-        transport.write8(REG_CR, cr)
+        _wlan_cpu_enable(transport, False)
+        # Backup + config the 6 DMA/queue registers, reads interleaved with writes exactly as
+        # the vendor emits them. [SRC halmac_fw_88xx.c:147-187]
+        pq1 = transport.read8(REG_TXDMA_PQ_MAP + 1)
+        transport.write8(REG_TXDMA_PQ_MAP + 1, RTW_DMA_MAPPING_HIGH << 6)
+        cr = transport.read8(REG_CR)
+        transport.write8(REG_CR, BIT_HCI_TXDMA_EN | BIT_TXDMA_EN)
         transport.write32(REG_H2CQ_CSR, 1 << 31)
-        transport.write16(REG_FIFOPAGE_INFO_1, info1)
+        info1 = transport.read16(REG_FIFOPAGE_INFO_1)
+        rqpn2 = transport.read32(REG_RQPN_CTRL_2) | (1 << 31)
+        transport.write16(REG_FIFOPAGE_INFO_1, 0x200)
         transport.write32(REG_RQPN_CTRL_2, rqpn2)
-        transport.write8(REG_BCN_CTRL, bcn)
-    # dlfw_end_flow_88xx: TXDMA_STATUS first, then the checksum-status check. [SRC halmac_fw_88xx.c:647]
-    transport.write32(REG_TXDMA_STATUS, BTI_PAGE_OVF)
-    fw_ctrl = transport.read16(REG_MCUFW_CTRL)
-    if (fw_ctrl & BIT_CHECK_SUM_OK) != BIT_CHECK_SUM_OK:
-        raise IOError(f"RTL8822CU FW checksum status invalid: 0x{fw_ctrl:04x}")
-    transport.write16(REG_MCUFW_CTRL, (fw_ctrl | BIT_FW_DW_RDY) & ~BIT_MCUFWDL_EN)
-    _wlan_cpu_enable(transport, True)
-    firmware_ready(transport)
-    _ltecoex_write(transport, 0x38, lte_backup)
+        bcn = transport.read8(REG_BCN_CTRL)
+        transport.write8(REG_BCN_CTRL, (bcn & ~BIT_EN_BCN_FUNCTION) | BIT_DIS_TSF_UDT)
+        try:
+            try:
+                _reset_platform(transport)
+                transport.write16(REG_MCUFW_CTRL, (transport.read16(REG_MCUFW_CTRL) & 0x3800) | BIT_MCUFWDL_EN)
+                _upload_section(dev, transport, bulk_out, image.dmem_addr & 0x7FFFFFFF, image.dmem,
+                                beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
+                _upload_section(dev, transport, bulk_out, image.imem_addr & 0x7FFFFFFF, image.imem,
+                                beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
+                if image.emem:
+                    _upload_section(dev, transport, bulk_out, image.emem_addr & 0x7FFFFFFF, image.emem,
+                                    beacon=beacon, bulk_out_size=bulk_out_size, rsvd_boundary=rsvd_boundary)
+            finally:  # restore_mac_reg_88xx, in backup order [SRC halmac_fw_88xx.c:620]
+                transport.write8(REG_TXDMA_PQ_MAP + 1, pq1)
+                transport.write8(REG_CR, cr)
+                transport.write32(REG_H2CQ_CSR, 1 << 31)
+                transport.write16(REG_FIFOPAGE_INFO_1, info1)
+                transport.write32(REG_RQPN_CTRL_2, rqpn2)
+                transport.write8(REG_BCN_CTRL, bcn)
+            # dlfw_end_flow_88xx: TXDMA_STATUS first, then checksum-status check. [SRC halmac_fw_88xx.c:647]
+            transport.write32(REG_TXDMA_STATUS, BTI_PAGE_OVF)
+            fw_ctrl = transport.read16(REG_MCUFW_CTRL)
+            if (fw_ctrl & BIT_CHECK_SUM_OK) != BIT_CHECK_SUM_OK:
+                raise IOError(f"RTL8822CU FW checksum status invalid: 0x{fw_ctrl:04x}")
+            transport.write16(REG_MCUFW_CTRL, (fw_ctrl | BIT_FW_DW_RDY) & ~BIT_MCUFWDL_EN)
+            _wlan_cpu_enable(transport, True)
+            firmware_ready(transport)
+        except IOError as exc:  # DLFW_FAIL [SRC halmac_fw_88xx.c:215-227]
+            if not is_device_gone(exc):
+                transport.write8_clr(REG_MCUFW_CTRL, BIT_MCUFWDL_EN)
+                transport.write8_set(REG_SYS_FUNC_EN + 1, BIT_FEN_CPUEN)
+            raise
+    finally:
+        _ltecoex_write(transport, 0x38, lte_backup)
 
 
 def firmware_ready(transport: RTL8822CUTransport) -> int:
@@ -424,35 +447,44 @@ class H2cState:
 
 
 def fill_h2c_cmd(transport: RTL8822CUTransport, h2c_state: H2cState, element_id: int,
-                 payload: bytes) -> None:
+                 payload: bytes) -> bool:
     """rtl8822c_fillh2ccmd -> rtw_halmac_send_h2c: element id in byte 0 and the payload after
     it, sent as bytes 4-7 into the extension box then bytes 0-3 into the message box, which is
-    what tells the firmware the command is complete. [SRC rtl8822c_cmd.c:32, hal_halmac.c:4157]"""
+    what tells the firmware the command is complete. False, with no box written, while the
+    firmware still owns the box. [SRC rtl8822c_cmd.c:32, hal_halmac.c:4157]"""
     if len(payload) > RTW_HALMAC_H2C_MAX_SIZE - 1:
         raise ValueError(f"RTL8822CU H2C 0x{element_id:02x}: payload too long ({len(payload)})")
     h2c = bytearray(RTW_HALMAC_H2C_MAX_SIZE)
     h2c[0] = element_id
     h2c[1:1 + len(payload)] = payload
     box = h2c_state.box_num
-    for _ in range(100):                # _is_fw_read_cmd_down: the FW has drained this box
-        if not transport.read8(REG_HMETFR) & (1 << box):
+    # _is_fw_read_cmd_down: retry_cnts = 100 is post-decremented, so 101 reads
+    read_down = False
+    for _ in range(101):
+        if transport.read8(REG_HMETFR) & (1 << box) == 0:
+            read_down = True
             break
         time.sleep(0.001)
+    if not read_down:
+        logger.warning("RTL8822CU _is_fw_read_cmd_down, reg_1cc(%x), msg_box(%d)",
+                       transport.read8(REG_HMETFR), box)
+        return False
     transport.write32(REG_HMEBOX_E0 + box * EX_MESSAGE_BOX_SIZE,
                       int.from_bytes(h2c[4:8], "little"))
     transport.write32(REG_HMEBOX0 + box * MESSAGE_BOX_SIZE,
                       int.from_bytes(h2c[0:4], "little"))
     h2c_state.box_num = (box + 1) % MAX_H2C_BOX_NUMS
+    return True
 
 
 def _send_general_info_by_reg(transport: RTL8822CUTransport, h2c_state: H2cState, rfe_type: int,
-                              chip_ver: int, rf_type_drv: int, tx_ant: int, rx_ant: int) -> None:
+                              chip_ver: int, rf_type_drv: int, tx_ant: int, rx_ant: int) -> bool:
     """A companion register H2C (rfe / rf / cut / antenna) alongside the FW-offload packets.
     [SRC hal_halmac.c]"""
     element_id = _GENINFO_REG_CMD_ID | (_GENINFO_REG_CLASS << 5)
-    fill_h2c_cmd(transport, h2c_state, element_id,
-                 bytes([rfe_type & 0xFF, rf_type_drv & 0xFF, chip_ver & 0xFF,
-                        (rx_ant & 0xF) | ((tx_ant & 0xF) << 4)]))
+    return fill_h2c_cmd(transport, h2c_state, element_id,
+                        bytes([rfe_type & 0xFF, rf_type_drv & 0xFF, chip_ver & 0xFF,
+                               (rx_ant & 0xF) | ((tx_ant & 0xF) << 4)]))
 
 
 _RF_TYPE_HALMAC2DRV = {          # halmac RF enum -> driver enum rf_type [SRC hal_halmac.c:3035-3073]
@@ -482,7 +514,10 @@ def send_general_info(dev: usb.core.Device, transport: RTL8822CUTransport, bulk_
     fw_tx_boundary = alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary  # GENERAL_INFO_SET_FW_TX_BOUNDARY
     gen = _h2c_pkt(_SUB_CMD_GENERAL_INFO, content_size=4, seq=0)
     _set_le32_bits(gen, 0x08, 16, 8, fw_tx_boundary)
-    dev.write(bulk_out, _fw_tx_desc(_H2C_PKT_SIZE, qsel=0x13, offset=0) + bytes(gen), 1000)
+    packet = _fw_tx_desc(_H2C_PKT_SIZE, qsel=0x13, offset=0) + bytes(gen)
+    sent = dev.write(bulk_out, packet, 1000)
+    if sent != len(packet):
+        raise IOError(f"RTL8822CU general-info H2C bulk write short: {sent}/{len(packet)}")
 
     phy = _h2c_pkt(_SUB_CMD_PHYDM_INFO, content_size=8, seq=1)
     _set_le32_bits(phy, 0x08, 0, 8, rfe_type)
@@ -491,7 +526,10 @@ def send_general_info(dev: usb.core.Device, transport: RTL8822CUTransport, bulk_
     _set_le32_bits(phy, 0x08, 24, 4, rx_ant)
     _set_le32_bits(phy, 0x08, 28, 4, tx_ant)
     _set_le32_bits(phy, 0x0C, 8, 8, package)
-    dev.write(bulk_out, _fw_tx_desc(_H2C_PKT_SIZE, qsel=0x13, offset=0) + bytes(phy), 1000)
+    packet = _fw_tx_desc(_H2C_PKT_SIZE, qsel=0x13, offset=0) + bytes(phy)
+    sent = dev.write(bulk_out, packet, 1000)
+    if sent != len(packet):
+        raise IOError(f"RTL8822CU general-info H2C bulk write short: {sent}/{len(packet)}")
 
     _dump_h2cq(transport)
     rf_type_drv = _RF_TYPE_HALMAC2DRV.get(rf_type)   # _rf_type_halmac2drv [SRC hal_halmac.c:3104]
@@ -499,7 +537,8 @@ def send_general_info(dev: usb.core.Device, transport: RTL8822CUTransport, bulk_
         logger.error("RTL8822CU halmac rf_type 0x%02x maps to no driver rf_type; sending the "
                      "vendor's invalid marker 0x%02x", rf_type, RF_TYPE_MAX)
         rf_type_drv = RF_TYPE_MAX
-    _send_general_info_by_reg(transport, h2c_state, rfe_type, chip_ver, rf_type_drv, tx_ant, rx_ant)
+    if not _send_general_info_by_reg(transport, h2c_state, rfe_type, chip_ver, rf_type_drv, tx_ant, rx_ant):
+        raise IOError("RTL8822CU: Fail to send general info by register")
 
 
 @dataclass(frozen=True)

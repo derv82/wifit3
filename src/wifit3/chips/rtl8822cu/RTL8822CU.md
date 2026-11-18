@@ -1,20 +1,22 @@
 # RTL8822CU
 
-## Captured Wireless Card
+## Ported and Verified Hardware
 
-- D-Link AC13U, `2001:3329`, RTL8822C, 2.4 GHz and 5 GHz.
+- The port, vendor-pcap replay, and current hardware observations are against the D-Link AC13U rev. A1, `2001:3329`, RTL8822C, 2.4 GHz and 5 GHz.
 - Enumerates at USB2 in both usable captures, so the USB3 arm of the 0x0280 size and timeout write is not capture verified.
-- Enumerates 3 bulk OUT endpoints.
+- Process-local DACK reuse across a physical unplug and replug has not been validated on hardware; entries remain for the process lifetime unless invalidated or evicted, are bounded to 32 by insertion order, and are never persisted.
+- Enumerates the vendor 3-bulk-OUT layout: RX bulk IN `0x84`; bulk OUT `0x05`, `0x06`, `0x08`; interrupt IN `0x87`. Every bulk endpoint is USB2 512 bytes. This is the only endpoint layout currently supported by the port.
 - Not a B cut part: capture-1 reproduces byte identical with no 0x1018 (`REG_ANAPAR_MAC_0`) write.
 - The C2H MAC hidden report gives max_tx_cnt 2 for this device; the EFUSE PG side gives 0, so the report is what raises it [firmware.py:read_mac_hidden_rpt, efuse.py:hal_rfpath_init].
 - EFUSE 0xC9 is 0x4F, outside the accepted trx_path_bmp set [rtl8822c_ops.c:528-534], so `eeprom_trx_path_bmp` resolves to 0.
-- EFUSE 0xC8 high nibble is 0, so the part runs TXPWR_PG_WITH_PWR_IDX and not TSSI.
+- EFUSE 0xC8 high nibble is 0, so the part runs TXPWR_PG_WITH_PWR_IDX and not TSSI. Its TX power is therefore calculated from the PG bases/diffs and programmed by `_set_tx_power`; TSSI work would not alter this card's TX behavior.
 - capture-1 sweeps 2.4 GHz ch1 to ch12; capture-2 adds ch13 and ch14, which is why its 5 GHz CCK reference differs from capture-1's.
 
 ## Linux Driver Source
 
 - Out of tree DKMS vendor driver: `dkms.conf` gives PACKAGE_NAME realtek-rtl88x2cu and PACKAGE_VERSION 5.15.8-52~20230728. Not mainline.
-- Upstream: https://github.com/libc0607/rtl88x2cu-20230728, branch `main` at commit 132c1e32b93c (2026-04-13, the branch head). Every `file:line` cite below resolves against that tree.
+- Port authority: https://github.com/libc0607/rtl88x2cu-20230728, branch `main` at commit 132c1e32b93c (2026-04-13, the branch head). Every `file:line` cite below resolves against that tree.
+- Comparison-only reference: Linux v7.2 `rtw88_8822cu` / `rtw88_8822c` (https://github.com/torvalds/linux/tree/v7.2/drivers/net/wireless/realtek/rtw88). Cold and warm module-reload usbmon captures for the D-Link card both re-upload firmware; it is evidence against skipping firmware on a warm reattach, not a source authority for this vendor port.
 - DRIVERVERSION [include/rtw_version.h:1] is "v5.15.8.5-3-g88098843f.20240412_COEX20221215-3130". That is Realtek's own build version carried in the source; g88098843f is not a commit in the repo above.
 - README.md:2 self describes as "RTL8812CU/RTL8822CU Linux Driver v5.15.8.5-3 20240412 FPV Mod".
 - The 8822c files are authoritative for this chip; the sibling 8822b files are a different chip.
@@ -62,6 +64,12 @@
 ### Non-obvious in the port
 
 - `driver._bringup` builds `self.txpwr` once as `txpwr_idx_state(...)` immediately after `read_mac_hidden_rpt`; nothing per tune recomputes it.
+- The reserved-page firmware path derives its bulk boundary from the selected OUT endpoint descriptor. A beacon payload whose descriptor plus payload exactly fills a USB packet receives the vendor's eight-byte packet-offset area before its payload, with TX descriptor `OFFSET=56` and `PKT_OFFSET=1`; iDDMA still copies the original payload length from `OCPBASE_TXBUF + 48` [hal/rtl8822c/usb/rtl8822cu_halmac.c:100-126].
+- `set_channel` commits the current channel and band while holding the same control lock as the RF tune, so the watchdog cannot run cross-band PHYDM work with the prior channel state.
+- `dig_init` starts both RX paths at the no-link lower bound `0x1c`; unlike the vendor's table-derived starting value this deliberately adds register writes before the first watchdog tick. Subsequent DIG adjustments use the vendor no-link thresholds. Hardware observation reported that this removed the startup RX dropout; the added writes do not match the vendor capture.
+- `driver.close` stops the RX reader, then executes the HALMAC power-off flow before releasing the USB interface. The vendor `rtw_halmac_deinit_hal` calls `halmac_deinit_interface_cfg` followed by `rtw_hal_power_off`; USB's `deinit_usb_cfg_88xx` is a no-op, so `mac_power_off` is the required hardware teardown [hal/hal_halmac.c:rtw_halmac_deinit_hal, halmac_usb_88xx.c:deinit_usb_cfg_88xx]. A device-gone USB error does not prevent local resource cleanup. Failed bring-up uses this same cleanup path, so it cannot retain a claimed interface or partial MAC power state. Teardown drops the driver's DACK state, but a successfully calibrated entry may remain in the process-local cache. A later `connect` restores it when the EFUSE and chip identity match; otherwise it performs full calibration. Calibration or restore failures invalidate the entry and trigger one full reinitialization after successful power-off and USB release; failure to establish a clean reset requires a replug. Convergence and timeout checks are stricter than the vendor's bounded loops.
+- Wi-Fi-only boards configure GPIO8 as the vendor WL LED after monitor entry and select `HALMAC_WLLED_MODE_TX`; the LED blinks in hardware only for transmitted frames, with no Python timer or RX-triggered writes [hal_halmac.c:5135-5192, halmac_gpio_8822c.c:349-354, halmac_gpio_88xx.c:29-64].
+- RX records flagged CRC or ICV invalid are discarded before ACK accounting and parsing, matching `recvbuf2recvframe` outside the vendor's manufacturing mode. The reader splits aggregates into records before the bounded event-loop backlog; under overload individual records can still be dropped. The shared RX layer deliberately strips the appended FCS because Wifit3 consumers operate on FCS-free MPDUs; this is an application-level normalization rather than vendor radiotap delivery semantics.
 - TX power splits across `txpower.py` (PG walk), `txpwr_tables.py` (the compiled by rate array) and `txpwr_index.py` (index math); `phy._set_tx_power` is the only writer.
 - `_set_tx_power` writes 0x18A0 / 0x41A0 (CCK, mask 0x007F0000), 0x18E8 / 0x41E8 (OFDM, mask 0x0001FC00) and twelve 0x3A00 diff dwords, bracketed by `_bbrstb_txagc_off`.
 - `phy._fill_txagc_buff` runs the CCK section on 2.4 GHz only, so the 5 GHz CCK reference on the wire is the carried forward last 2.4 GHz CCK 11M index [rtl8822c_phy.c:662].
@@ -80,7 +88,7 @@
 - `build_tx_desc_inject` emits DATARATE = DESC_RATE1M on both bands and RTS_DATA_RTY_LMT = 6; `band_is_2g` is threaded in and unused [tx.py, rtl8822cu_xmit.c:122-139].
 - `build_tx_desc_mgmt` is band aware and emits DESC_RATE6M on 5 GHz, so the mgmt and inject descriptors disagree on the 5 GHz rate.
 - `tx.pick_bulk_out_ep`'s MGMT to HIGH mapping holds only because the supported devices enumerate 3 bulk OUT; a 4 bulkout part needs `pq_map[MG] = EXTRA`.
-- `_fill_txdesc_checksum48`'s fixed 24 halfword length holds only because the inject `pkt_offset` is 0.
+- Inject transfers at the USB bulk boundary include an eight-byte zero packet-offset area with `PKT_OFFSET=1` [rtl8822cu_xmit.c:update_txdesc, rtw_dump_xframe]; the 48-byte checksum is equivalent to the vendor's 56-byte span only because that padding is zero. This boundary case has not been verified over the air.
 - The five bundled `assets/*.bin` PHY tables are the vendor u32 arrays byte identical, iterated live through `selected_writes` in the C's order (BB, AGC, cal_init, RF-A, RF-B).
 - 337 CFG_PARAM records per page is a derived fill threshold (4096 byte buffer, 48 byte txdesc, 12 byte record), not a capture constant [`phy._fw_offload_flush`].
 - `phy.config_bb_rf` blocks on the CFG_PARAM C2H ACK, so any replay source without bulk IN completions stalls there.
@@ -90,7 +98,8 @@
 
 ## Known Problems
 
-- A TSSI mode part (EFUSE 0xC8 nibble 4..7) brings up and RXes with no TX power programmed: the TSSI branch is not ported, `txpwr_idx_state` returns `None` and `_set_tx_power` writes nothing, so the txagc table keeps power on defaults.
+- A TSSI mode part (EFUSE 0xC8 nibble 4..7) brings up and RXes with no TX power programmed: the TSSI branch is not ported, `txpwr_idx_state` returns `None` and `_set_tx_power` writes nothing, so the txagc table keeps power on defaults. The remaining general EFUSE fields consumed by monitor bring-up—MAC, RFE, board/RF path, crystal cap, regulatory/PWR_IDX mode, PG bases/diffs, and trim fields—are honored. Completing TSSI requires the vendor's TSSI EFUSE group offsets, DE setup, codeword calculation/programming, and enable path (`halrf_do_tssi_8822c` / `halrf_tssi_8822c.c`), validated on an actual TSSI-mode device.
+- RTL8822CU devices can include Bluetooth; a BT-combo board (EFUSE 0xC1[7:5] == 1) does not receive the Wi-Fi-only coexistence-table configuration. Wifit3 leaves its BT tables untouched because the vendor coexistence policy is outside monitor-mode scope; the required USB suspend H2C workaround still runs for every board.
 - The vendor computes a TSSI table on every tune via `halrf_get_tssi_codeword_for_txindex()` [hal_com_phycfg.c:6321-6326, rtl8822c_phy.c:675], so that divergence recurs per tune.
 - Whether any 8822CU ships in TSSI mode is unknown; nobody has looked.
 - `efuse.rfe_type` raises `RuntimeError` when EFUSE 0xCA reads 0xFF on a valid map, so an unburned EFUSE fails bring up there against policy EFUSE-1. Setting `constants.RFE_TYPE` is the escape hatch.
@@ -116,9 +125,10 @@
 - TX power: `txpwr_index.hal_com_get_txpwr_idx`, state from `txpwr_index.txpwr_idx_state`, PG walk in `txpower.hal_load_txpwr_info`.
 - Cold boot calibrations: `cal.py` (`odm_dm_init` / `halrf_init`: DAC cal/DACK, RX DCK, X2K, thermal), then the phydm sub inits in `dm.py` (DIG, CCK-PD, env monitor, adaptivity, RA).
 - Per board RF trim: `kfree.py` (thermal, power, PA bias, TSSI trims); TSSI DC offset calibration `tssi.py`; TX gap K `txgapk.py`.
-- Watchdog tick: `watchdog.py`, the phydm 2 s JGR3 dynamic check (env monitor result/set, false alarm stats, DIG, CCK-PD, thermal).
+- Watchdog tick: `watchdog.py`, the phydm 2 s JGR3 dynamic check (monitor traffic accounting, USB RX aggregation, HT-STF AGC, env monitor result/set, false alarm stats, DIG, CCK-PD, thermal). The busy-traffic HT-STF branch has unit coverage but has not been verified on hardware.
 - RX decode: `rx.iter_bulk_frames` (`rtw88_base.parse_rx_pkt_desc` plus the 8822C JGR3 `_phy_rssi`: CCK type 0 and OFDM types 1..5, signed pwdb, floor -120 with no upper clamp, and per-path CCK gain correction from the `cck_gi` bounds `phy.config_bb_rf` returns).
 - TX inject: `tx.build_tx_desc_inject` (vendor `dump_mgntframe` inject branch, `pattrib->inject == 0xa5`).
+- TX LED: `led.enable_tx_blink` selects GPIO8 WL LED then the HALMAC TX-only hardware mode after `driver._monitor_entry`; `disable_tx_blink` restores software-off mode before MAC power-off.
 
 ## Scripts
 
@@ -129,6 +139,9 @@
 All three need a local copy of the vendor driver source or a capture, neither of which ships with the repo.
 
 ## Debug log
+
+- HALMAC firmware channel-switch offload remains untested for passive monitor hopping. The vendor defines `HALMAC_CS_ACTION_NONE` and `HALMAC_CS_ACTIVE_SCAN` [hal/halmac/halmac_fw_info.h:82]; its `_halmac_scanoffload` caller selects active scanning and probe requests under `CONFIG_PNO_SUPPORT`, disabled in the default Makefile [hal/hal_halmac.c:5322; Makefile:186]. `ACTION_NONE` has not been verified to remain silent, preserve RX, or report channel changes on this firmware. `RTW_CHANNEL_SWITCH_OFFLOAD` is a separate per-channel path [hal/rtl8822c/rtl8822c_phy.c:1008].
+- `RTW_CHANNEL_SWITCH_OFFLOAD` is an optional vendor per-channel firmware switch, disabled in the default build and runtime configuration [hal/rtl8822c/rtl8822c_phy.c:965; hal/hal_com.c:17583]. On the D-Link AC13U (2001:3329, NIC firmware 9.17), an experimental Wifit3 port timed out waiting for C2H completion on the first switch in three trials; command submission succeeded, but execution and event delivery were not established. Manual hopping averaged 11.59, 12.24 and 10.46 ms in those short trials (the last with trace enabled); no completed offload timing is available. The experiment was removed; whether offload works with other adapters or configurations remains untested.
 
 - 2026-09-16: ACK bench vs the 8822BU (rx_autoack / tx_retries, both bands). Auto-ACKs a spoofed
   MAC (active monitor) and its own silicon MAC (~100/100); TX stops on the target's ACK keyed on

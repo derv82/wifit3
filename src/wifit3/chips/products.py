@@ -131,6 +131,7 @@ class Devolo(ProductName):
 
 class DLink(ProductName):
     AC1200          = "D-Link AC1200"
+    AC13U_REV_A1    = "AC13U rev. A1"
     AN3U_REV_A1     = "AN3U rev. A1"
     DWA_131         = "D-Link DWA-131"
     DWA_121B1       = "D-Link DWA-121B1"  # https://linux-hardware.org/?id=usb:2001-331b

@@ -29,11 +29,14 @@ def _fill_txdesc_checksum48(desc: bytearray) -> None:
     struct.pack_into("<H", desc, 7 * 4, chksum & 0xFFFF)
 
 
-def build_tx_desc_inject(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
+def build_tx_desc_inject(mpdu: bytes, *, band_is_2g: bool = True,
+                         pkt_offset: int = 0) -> bytes:
     """Inject-branch (pattrib->inject == 0xa5) TX descriptor for a raw 802.11 frame
     [SRC hal/rtl8822c/usb/rtl8822cu_xmit.c:117-145]. The chip does not re-stamp the sequence."""
     if len(mpdu) < 10:
         raise ValueError(f"MPDU too short ({len(mpdu)} bytes)")
+    if pkt_offset not in (0, 1):
+        raise ValueError("pkt_offset must be 0 or 1")
     bmc = bool(mpdu[4] & 1)
     # DATARATE = MRateToHwRate(pattrib->rate) [SRC rtl8822cu_xmit.c:139]. For a raw monitor
     # inject rtw_monitor_xmit_entry defaults fixed_rate = MGN_1M and only a radiotap
@@ -51,7 +54,7 @@ def build_tx_desc_inject(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     # w0: TXPKTSIZE, OFFSET=48, BMC, LS; OWN/DISQSELSEQ stay clear [SRC rtl8822cu_xmit.c:66-81].
     w0 = len(mpdu) | (TX_PKT_DESC_SZ << 16) | (int(bmc) << 24) | (1 << 26)
     # w1: MACID / QSEL / RATE_ID from the inject pattrib [SRC rtl8822cu_xmit.c:97-100].
-    w1 = INJECT_MACID | (TX_DESC_QSEL_MGMT << 8) | (INJECT_RATE_ID << 16)
+    w1 = INJECT_MACID | (TX_DESC_QSEL_MGMT << 8) | (INJECT_RATE_ID << 16) | (pkt_offset << 24)
     # w3: USE_RATE + DISRTSFB + DISDATAFB [SRC rtl8822cu_xmit.c:135-138].
     w3 = (1 << 8) | (1 << 9) | (1 << 10)
     # w4: DATARATE [+0x10 b0..6] + RTY_LMT_EN [b17] + RTS_DATA_RTY_LMT [b18..23]
@@ -63,6 +66,15 @@ def build_tx_desc_inject(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     desc = bytearray(struct.pack("<12I", w0, w1, 0, w3, w4, 0, 0, 0, 0, w9, 0, 0))
     _fill_txdesc_checksum48(desc)
     return bytes(desc)
+
+
+def build_tx_packet_inject(mpdu: bytes, *, bulk_out_size: int, band_is_2g: bool = True) -> bytes:
+    """Build a monitor-inject USB transfer using the selected endpoint's max packet size."""
+    if bulk_out_size <= 0:
+        raise ValueError("bulk_out_size must be positive")
+    pkt_offset = int((TX_PKT_DESC_SZ + len(mpdu)) % bulk_out_size == 0)
+    desc = build_tx_desc_inject(mpdu, band_is_2g=band_is_2g, pkt_offset=pkt_offset)
+    return desc + bytes(pkt_offset * 8) + mpdu
 
 
 def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True,
