@@ -1,7 +1,6 @@
 """RTL8814AU vendor (morrownr DKMS) cleanroom port. See RTL8814AU_DKMS.md.
 
-VID:PIDs are the vendor table (``os_dep/linux/usb_intf.c:237`` under ``CONFIG_RTL8814A``),
-which is the same 14 the mainline sibling ``chips/rtw88_8814au`` claims.
+VID:PIDs are the vendor table (``os_dep/linux/usb_intf.c:237`` under ``CONFIG_RTL8814A``).
 """
 from wifit3.models.device_id import DeviceID
 from wifit3.chips.products import ALFA, ASUS, DLink, Edimax, Elecom, Hawking, Netgear, TPLink, TRENDnet

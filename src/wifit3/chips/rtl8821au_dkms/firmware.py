@@ -13,6 +13,7 @@ The on-wire order (cold-boot capture, frames ~2543-4351):
 """
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 
@@ -26,6 +27,8 @@ from .pwrseq import (
 )
 
 FW_BIN = Path(__file__).parent / "assets" / "rtl8821au_fw.bin"
+
+logger = logging.getLogger(__name__)
 
 
 def load_firmware_blob() -> bytes:
@@ -92,38 +95,46 @@ def _fw_download_enable(t, enable: bool) -> None:
         t.write8(C.REG_MCUFWDL, t.read8(C.REG_MCUFWDL) & 0xFE)
 
 
-def _block_write(t, buf: bytes) -> None:
+def _block_write(t, buf: bytes) -> bool:
     # USB phases: 196-byte, then 8-byte remainder, then 1-byte remainder.
     p1, p2 = 196, 8
     n1, rem1 = divmod(len(buf), p1)
     off = 0
-    for _ in range(n1):
-        t.writeN(C.FW_START_ADDRESS + off, buf[off:off + p1])
+    for i in range(n1):
+        if not t.writeN(C.FW_START_ADDRESS + off, buf[off:off + p1]):
+            logger.error("_BlockWrite_8812 phase 1 i:%d", i)  # [SRC] rtl8812a_hal_init.c:192
+            return False
         off += p1
     if rem1:
         n2, rem2 = divmod(rem1, p2)
         for _ in range(n2):
-            t.writeN(C.FW_START_ADDRESS + off, buf[off:off + p2])
+            if not t.writeN(C.FW_START_ADDRESS + off, buf[off:off + p2]):
+                return False
             off += p2
-        for _ in range(rem2):
-            t.write8(C.FW_START_ADDRESS + off, buf[off])
+        for i in range(rem2):
+            if not t.write8(C.FW_START_ADDRESS + off, buf[off]):
+                logger.error("_BlockWrite_8812 phase 3 i:%d", i)  # :222
+                return False
             off += 1
+    return True
 
 
-def _page_write(t, page: int, buf: bytes) -> None:
+def _page_write(t, page: int, buf: bytes) -> bool:
     v = (t.read8(C.REG_MCUFWDL + 2) & 0xF8) | (page & 0x07)
     t.write8(C.REG_MCUFWDL + 2, v)
-    _block_write(t, buf)
+    return _block_write(t, buf)
 
 
-def _write_fw(t, body: bytes) -> None:
+def _write_fw(t, body: bytes) -> bool:
     page_nums, remain = divmod(len(body), C.MAX_DLFW_PAGE_SIZE)
     for page in range(page_nums):
         off = page * C.MAX_DLFW_PAGE_SIZE
-        _page_write(t, page, body[off:off + C.MAX_DLFW_PAGE_SIZE])
+        if not _page_write(t, page, body[off:off + C.MAX_DLFW_PAGE_SIZE]):
+            return False
     if remain:
         off = page_nums * C.MAX_DLFW_PAGE_SIZE
-        _page_write(t, page_nums, body[off:off + remain])
+        return _page_write(t, page_nums, body[off:off + remain])
+    return True
 
 
 def _polling_fwdl_chksum(t, min_cnt: int, timeout_ms: int, delay=time.sleep) -> bool:
@@ -131,11 +142,17 @@ def _polling_fwdl_chksum(t, min_cnt: int, timeout_ms: int, delay=time.sleep) -> 
     cnt = 0
     while True:
         cnt += 1
-        if t.read32(C.REG_MCUFWDL) & C.FWDL_ChkSum_rpt:
-            return True
+        value32 = t.read32(C.REG_MCUFWDL)
+        if value32 & C.FWDL_ChkSum_rpt:
+            break
         delay(0)
         if (time.perf_counter() - start) * 1000 >= timeout_ms and cnt >= min_cnt:
-            return False
+            break
+    ok = bool(value32 & C.FWDL_ChkSum_rpt)
+    logger.info("polling_fwdl_chksum: Checksum report %s! (%u, %dms), REG_MCUFWDL:0x%08x",
+                "OK" if ok else "Fail", cnt, (time.perf_counter() - start) * 1000,
+                value32)  # [SRC] rtl8812a_hal_init.c:437-438
+    return ok
 
 
 def _fw_free_to_go(t, min_cnt: int, timeout_ms: int, delay=time.sleep) -> bool:
@@ -147,11 +164,17 @@ def _fw_free_to_go(t, min_cnt: int, timeout_ms: int, delay=time.sleep) -> bool:
     cnt = 0
     while True:
         cnt += 1
-        if t.read32(C.REG_MCUFWDL) & C.WINTINI_RDY:
-            return True
+        value32 = t.read32(C.REG_MCUFWDL)
+        if value32 & C.WINTINI_RDY:
+            break
         delay(0)
         if (time.perf_counter() - start) * 1000 >= timeout_ms and cnt >= min_cnt:
-            return False
+            break
+    ok = bool(value32 & C.WINTINI_RDY)
+    logger.info("_FWFreeToGo8812: Polling FW ready %s! (%u, %dms), REG_MCUFWDL:0x%08x",
+                "OK" if ok else "Fail", cnt, (time.perf_counter() - start) * 1000,
+                value32)  # [SRC] rtl8812a_hal_init.c:475-476
+    return ok
 
 
 def download_firmware(t, fw_blob: bytes, delay=time.sleep) -> bool:
@@ -163,14 +186,20 @@ def download_firmware(t, fw_blob: bytes, delay=time.sleep) -> bool:
         _8051_reset(t)
     _fw_download_enable(t, True)
     ok = False
-    for _ in range(3):
+    write_fw = 0
+    start = time.perf_counter()
+    # write_fw++ < 3 || ... [SRC] rtl8812a_hal_init.c:633-645
+    while (write_fw := write_fw + 1) <= 3 or (time.perf_counter() - start) * 1000 < 500:
         t.write8(C.REG_MCUFWDL, t.read8(C.REG_MCUFWDL) | C.FWDL_ChkSum_rpt)
-        _write_fw(t, body)
+        if not _write_fw(t, body):
+            continue
         if _polling_fwdl_chksum(t, 5, 50, delay):
             ok = True
             break
     _fw_download_enable(t, False)
     ready = _fw_free_to_go(t, 10, 200, delay) if ok else False
+    logger.info("FWDL %s. write_fw:%u, %dms", "success" if ready else "fail", write_fw,
+                (time.perf_counter() - start) * 1000)  # [SRC] rtl8812a_hal_init.c:655-659
     # InitializeFirmwareVars8812 runs at FirmwareDownload8812 exit; its only chip
     # write is the H2C-mailbox trigger. [SRC] rtl8812a_hal_init.c:680
     t.write8(C.REG_HMETFR, 0x0F)

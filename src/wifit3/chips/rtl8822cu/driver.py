@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import struct
 import threading
@@ -12,7 +13,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.chips.rx_reader import RxReaderThread
 
@@ -475,32 +476,26 @@ class RTL8822CUDriver(Driver):
         except asyncio.CancelledError:
             pass
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Runtime channel tune: the vendor ``config_phydm_switch_channel_8822c`` +
         ``switch_bandwidth`` sequence (``phy.switch_channel``), the same call the pcap harness
         verifies per hop. ``scan`` no longer selects a different path: every hop on the wire is a
         plain ``switch_channel``."""
         if channel not in self.SUPPORTED_CHANNELS:
-            logger.warning("RTL8822CU unsupported 20 MHz channel %d", channel)
-            return False
+            raise SetChannelError(f"RTL8822CU: channel {channel} not supported")
         async with self._lifecycle_lock:
             if self._closed:
-                return False
+                raise SetChannelError("RTL8822CU is closed")
+            def _tune() -> None:
+                with self._control_lock:
+                    switch_channel(self.transport, channel, self.txpwr)
+                    self._current_channel = channel
+                    self.current_band_is_2g = channel <= 14
+                    if not self._rx_regs_after_tune_logged:
+                        self._log_rx_registers("after_tune")
+                        self._rx_regs_after_tune_logged = True
             loop = asyncio.get_running_loop()
-            try:
-                def _tune() -> None:
-                    with self._control_lock:
-                        switch_channel(self.transport, channel, self.txpwr)
-                        self._current_channel = channel
-                        self.current_band_is_2g = channel <= 14
-                        if not self._rx_regs_after_tune_logged:
-                            self._log_rx_registers("after_tune")
-                            self._rx_regs_after_tune_logged = True
-                await self._wait_for_completion(loop.run_in_executor(None, _tune))
-                return True
-            except (IOError, ValueError, usb.core.USBError) as exc:
-                logger.warning("RTL8822CU channel %d failed: %s", channel, exc)
-                return False
+            await self._wait_for_completion(loop.run_in_executor(None, _tune))
 
     async def close(self) -> None:
         async with self._lifecycle_lock:
@@ -598,25 +593,32 @@ class RTL8822CUDriver(Driver):
             loop = asyncio.get_running_loop()
             await self._wait_for_completion(loop.run_in_executor(None, _write))
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         async with self._lifecycle_lock:
             if self._closed or not self._bulk_out_eps:
-                return False
+                return
+            if self.transport.surprise_removed:  # RTW_CANNOT_TX [SRC usb_ops_linux.c:583-591]
+                raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
+            packet_size = self.layout.bulk_out_max_packet_size if self.layout else 512
             try:
-                ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
-                packet_size = self.layout.bulk_out_max_packet_size if self.layout else 512
                 packet = build_tx_packet_inject(frame_bytes, bulk_out_size=packet_size,
                                                 band_is_2g=self.current_band_is_2g)
-                loop = asyncio.get_running_loop()
+            except ValueError as exc:
+                logger.debug("RTL8822CU TX dropped: %s", exc)   # rtw_monitor_xmit_entry drops silently [SRC rtw_xmit.c:4897-4906]
+                return
+            ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
+            loop = asyncio.get_running_loop()
+            try:
                 sent = await self._wait_for_completion(
                     loop.run_in_executor(None, lambda: write_bulk(self.dev, ep, packet)))
-                if sent == len(packet):
-                    self._tx_bytes += len(frame_bytes)
-                    return True
-                return False
-            except (ValueError, IOError, usb.core.USBError) as exc:
-                logger.warning("RTL8822CU TX failed: %s", exc)
-                return False
+            except usb.core.USBError as exc:
+                logger.info("usb_write_port, status=%d", -(exc.errno or errno.EIO))  # [SRC usb_ops_linux.c:675] drop
+                if is_device_gone(exc):
+                    self.transport.surprise_removed = True
+                    raise
+                return
+            if sent == len(packet):
+                self._tx_bytes += len(frame_bytes)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Supply the incrementing SW sequence number the injected TxDesc copies: the 8822c

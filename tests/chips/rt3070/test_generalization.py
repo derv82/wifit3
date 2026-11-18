@@ -81,7 +81,7 @@ def test_resolve_blank_eeprom_default_rf2820_not_ported():
 
 def _run_config_channel(nic0: int) -> RecordingDev:
     dev = RecordingDev()
-    t = RT3070Transport(dev, timeout_ms=50)
+    t = RT3070Transport(dev)
     ev = parse_eeprom(_eeprom(nic0=nic0))
     chip = C.ChipInfo(rt=C.RT3070, rev=C.REV_RT3070F)
     drv = DrvData(calibration_bw20=8, calibration_bw40=139, bbp25=128, bbp26=0)
@@ -113,7 +113,7 @@ def test_config_channel_unported_rf_gives_it_a_shot():
 
 def _run_config_ant(ant_div: int, rx_chain: int = 1) -> RecordingDev:
     dev = RecordingDev()
-    t = RT3070Transport(dev, timeout_ms=50)
+    t = RT3070Transport(dev)
     nic0 = 0x0500 | (rx_chain & 0xF) | ((rx_chain & 0xF) << 4)   # RF3020 + tx/rx chains
     nic1 = (ant_div << 11) & C.EEPROM_NIC_CONF1_ANT_DIVERSITY
     ev = parse_eeprom(_eeprom(nic0=nic0, nic1=nic1))

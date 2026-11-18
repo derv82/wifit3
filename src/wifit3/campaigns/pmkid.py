@@ -185,11 +185,11 @@ class PmkidHarvestAttack(Campaign):
             for attempt in range(1, self.attempts + 1):
                 if self.stopped:
                     return
-                arm = self.array.lease(fake_mac=self.source_mac, bssid=self.bssid_bytes,
+                active_monitor_lease = self.array.lease(fake_mac=self.source_mac, bssid=self.bssid_bytes,
                                        iface=iface)
-                async with arm:
-                    if arm.mac:
-                        self.source_mac = str_to_mac(arm.mac)
+                async with active_monitor_lease:
+                    if active_monitor_lease.active_monitor_mac:
+                        self.source_mac = str_to_mac(active_monitor_lease.active_monitor_mac)
                     logger.info(
                         f"[PMKID] Attempt {attempt}/{self.attempts}: Auth + Assoc Req to "
                         f"{self.target.bssid} as {mac_to_str(self.source_mac)}"

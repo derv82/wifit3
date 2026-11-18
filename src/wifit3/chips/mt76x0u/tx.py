@@ -48,6 +48,10 @@ from __future__ import annotations
 import logging
 import struct
 
+import usb.core
+
+from wifit3.errors import is_device_gone
+
 from .constants import (
     EP_OUT_AC_VO,
     MT_QSEL_EDCA,
@@ -196,6 +200,8 @@ def inject_80211_frame(
     try:
         transport.bulk_out(EP_OUT_AC_VO, pkt, timeout_ms=timeout_ms)
     except Exception as e:
+        if isinstance(e, usb.core.USBError) and is_device_gone(e):
+            raise
         raise TXError(f"bulk-OUT to EP 0x{EP_OUT_AC_VO:02x} failed: {e}") from e
     return len(pkt)
 

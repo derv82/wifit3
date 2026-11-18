@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 import time
 
+import usb.core
+
 from .constants import (
     ATOMIC_TSSI_SETTING,
     CMD_BURST_WRITE,
@@ -45,7 +47,7 @@ from .constants import (
     _field_get,
     _field_prep,
 )
-from .transport import DeviceGone, MT7601UTransport
+from .transport import MT7601UTransport
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +123,7 @@ class MT7601UMcu:
                 seq = self.msg_seq
 
         msg = wrap_mcu_msg(payload, seq, cmd)
-        try:
-            self.tp.bulk_out(msg, MCU_MSG_TIMEOUT_MS)
-        except DeviceGone as e:
-            raise DeviceGone(str(e)) from e
+        self.tp.bulk_out(msg, MCU_MSG_TIMEOUT_MS)
 
         if wait_resp:
             self.wait_resp(seq)
@@ -132,7 +131,11 @@ class MT7601UMcu:
     def wait_resp(self, seq: int) -> None:
         """mt7601u_mcu_wait_resp: read until CMD_DONE with our seq comes back."""
         for _attempt in range(MCU_RESP_RETRIES):
-            data = self.tp.bulk_in_resp(MCU_RESP_URB_SIZE, MCU_RESP_TIMEOUT_MS)
+            try:
+                data = self.tp.bulk_in_resp(MCU_RESP_URB_SIZE, MCU_RESP_TIMEOUT_MS)
+            except usb.core.USBTimeoutError:
+                logger.warning("Warning: mt7601u_mcu_wait_resp retrying")   # mcu.c:74-79
+                continue
             if len(data) < 4:
                 logger.warning("Warning: MCU response short (%d bytes)", len(data))
                 continue

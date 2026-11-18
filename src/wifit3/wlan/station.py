@@ -91,10 +91,10 @@ class WlanTransport:
             self.tx_observer(frame)
         return await self.iface.send_until_ack(frame, max_retries=max_retries)
 
-    async def send_no_wait(self, frame: bytes) -> bool:
+    async def send_no_wait(self, frame: bytes) -> None:
         if self.tx_observer is not None:
             self.tx_observer(frame)
-        return await self.iface.send_no_wait(frame)
+        await self.iface.send_no_wait(frame)
 
     async def recv(self, timeout: float) -> Optional[bytes]:
         try:

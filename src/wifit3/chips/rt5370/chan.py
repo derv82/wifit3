@@ -324,11 +324,13 @@ def set_channel(t: RT5370Transport, chip: ChipInfo, ev: EepromValues,
     ``drv`` is unused (RT5390 threads no init-derived calibration); kept for the family
     set_channel signature."""
     mac.stop_queue_rx(t)
-    lna_gain = config_lna_gain(ev, channel)
-    update_survey(t)
-    config_channel(t, chip, ev, channel, lna_gain)
-    config_txpower(t, chip, ev)
-    reset_tuner(t, chip, lna_gain)        # rt2x00lib_config (CHANGE_CHANNEL) tail
-    config_ant(t, chip, ev)               # rt2x00lib_config_antenna
-    reset_tuner(t, chip, lna_gain)        # config_antenna's reset_tuner(antenna=true)
-    mac.start_queue_rx(t)                 # config_antenna's refcounted start_queue
+    try:
+        lna_gain = config_lna_gain(ev, channel)
+        update_survey(t)
+        config_channel(t, chip, ev, channel, lna_gain)
+        config_txpower(t, chip, ev)
+        reset_tuner(t, chip, lna_gain)        # rt2x00lib_config (CHANGE_CHANNEL) tail
+        config_ant(t, chip, ev)               # rt2x00lib_config_antenna
+        reset_tuner(t, chip, lna_gain)        # config_antenna's reset_tuner(antenna=true)
+    finally:
+        mac.start_queue_rx(t)                 # config_antenna's refcounted start_queue

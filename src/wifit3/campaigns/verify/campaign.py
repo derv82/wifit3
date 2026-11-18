@@ -70,9 +70,9 @@ class VerifyCampaign(Campaign):
         lease = self.array.lease(channel=self.target.channel, fake_mac=random_client_mac(), bssid=bssid_mac,
                                  ack_tally=True, iface=self.iface)
         async with lease as iface:
-            our_mac = str_to_mac(lease.mac)
+            our_mac = str_to_mac(lease.active_monitor_mac)
             try:
-                self.outcome, self.error = await self._exchange(iface, our_mac, lease.mac)
+                self.outcome, self.error = await self._exchange(iface, our_mac, lease.active_monitor_mac)
             except Exception as exc:
                 logger.exception("verify %s crashed", CREDENTIAL_NAMES[self.credential_type])
                 self.outcome, self.error = VerifyOutcome.ERROR, str(exc) or type(exc).__name__

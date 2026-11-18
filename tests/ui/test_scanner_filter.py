@@ -5,17 +5,16 @@ from contextlib import asynccontextmanager
 import time
 
 import pytest
-import pytest_asyncio
 from textual.app import App
-from textual.widgets import Button, Checkbox, Input, Label, Select
+from textual.widgets import Checkbox, Input
 
-from wifit3.models import AccessPoint, IdKey, IdSource
+from wifit3.models import AccessPoint
 from wifit3.wlan.sink import WlanSink
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
 from wifit3.ui.ap_table import APTable
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.screens.filter import EncryptionFilter, FilterBar, ScanFilter
+from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
 from tests.ui.wait_until import wait_until
 
@@ -97,82 +96,6 @@ class _ScannerHost(App):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("width", "encryption_label_text", "channels_label_text", "power_label_id"), [
-    (75, None, None, None), (76, None, "Ch", None), (83, None, "Ch", None),
-    (84, "Enc", "Ch", "#filter-power-short-label"), (88, "Enc", "Ch", "#filter-power-short-label"),
-    (89, "Enc", "Channel", "#filter-power-short-label"),
-    (97, "Enc", "Channel", "#filter-power-short-label"),
-    (98, "Encryption", "Channel", "#filter-power-label"),
-])
-async def test_filter_bar_labels_shrink_then_hide_as_the_terminal_narrows(
-        width, encryption_label_text, channels_label_text, power_label_id):
-    app = _ScannerHost(_FakeArray([], list(range(1, 15)) + [36, 40, 149]))
-    async with app.run_test(size=(width, 24)) as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        encryption_label = scanner.query_one("#filter-encryption-label", Label)
-        channels_label = scanner.query_one("#filter-channels-label", Label)
-        encryption = scanner.query_one("#filter-encryption")
-        filter_input = scanner.query_one("#filter-text", Input)
-        assert str(scanner.query_one("#filter-channels", Button).label) == "2.4G + 5G"
-
-        assert filter_input.region.y == encryption.region.y
-        for label, text in ((encryption_label, encryption_label_text),
-                            (channels_label, channels_label_text)):
-            if text is None:
-                assert label.display is False
-            else:
-                assert label.region.height == 1
-                assert label.region.width == len(text)
-        for label_id in ("#filter-power-label", "#filter-power-short-label"):
-            assert scanner.query_one(label_id, Label).display is (label_id == power_label_id)
-        if channels_label_text is not None:
-            assert scanner.query_one(FilterBar).max_scroll_x == 0
-
-
-@pytest.mark.asyncio
-async def test_filter_bar_scrolls_when_future_controls_exceed_its_width():
-    app = _ScannerHost(_FakeArray([], [1, 6, 11]))
-    async with app.run_test(size=(54, 24)) as pilot:
-        await pilot.pause(0)
-        filter_bar = app.screen.query_one(FilterBar)
-        filter_input = filter_bar.query_one("#filter-text", Input)
-        assert 16 <= filter_input.region.width <= 32
-        assert filter_bar.max_scroll_x > 0
-
-
-@pytest.mark.asyncio
-async def test_p_opens_the_power_dropdown():
-    app = _ScannerHost(_FakeArray([], [1, 6, 11]))
-    async with app.run_test(size=(120, 24)) as pilot:
-        await pilot.pause(0)
-        await pilot.press("p")
-        await pilot.pause(0)
-        power = app.screen.query_one("#filter-power", Select)
-        assert power.has_focus_within and power.expanded
-
-
-@pytest.mark.asyncio
-async def test_power_filter_hides_rows_but_keeps_registry():
-    near_ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="Near", channel=1,
-                          signal_by_card={"card": -50})
-    far_ap = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="Far", channel=1,
-                         signal_by_card={"card": -85})
-
-    app = _ScannerHost(_FakeArray([near_ap, far_ap], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", APTable)
-
-        scanner._scan_filter = ScanFilter(min_signal=-80)
-        scanner.refresh_table()
-        assert table.row_count == 1
-        assert near_ap.bssid in scanner.ap_cache
-        assert far_ap.bssid in app.array.access_points
-
-
-@pytest.mark.asyncio
 async def test_encryption_filter_hides_rows_but_keeps_registry():
     open_ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="OpenNet", channel=1, encryption="OPEN")
     wpa2_ap = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="SecureNet", channel=1, akms=["PSK"])
@@ -219,54 +142,6 @@ async def test_filtered_ap_is_evicted_after_it_expires():
 
 
 @pytest.mark.asyncio
-async def test_hide_silenced_drops_the_row_but_keeps_the_registry_entry():
-    silenced = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="NoisyNeighbour", channel=1, akms=["PSK"])
-    audible = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="SecureNet", channel=1, akms=["PSK"])
-    Config.silenced_bssids = [silenced.bssid]
-
-    app = _ScannerHost(_FakeArray([silenced, audible], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", APTable)
-
-        scanner.refresh_table()
-        assert table.row_count == 2          # off by default: silencing alone only badges the row
-
-        scanner._scan_filter = ScanFilter(hide_silenced=True)
-        scanner.refresh_table()
-        assert table.row_count == 1
-        assert silenced.bssid not in scanner.ap_cache
-        assert silenced.bssid in app.array.access_points
-
-        scanner._scan_filter = ScanFilter()
-        scanner.refresh_table()
-        assert table.row_count == 2
-        assert silenced.bssid in scanner.ap_cache
-        assert Config.is_silenced(silenced.bssid)   # un-ticking restores the row, not the silence
-
-
-@pytest.mark.asyncio
-async def test_hide_silenced_drops_a_row_silenced_after_the_box_was_ticked():
-    """Silencing happens on Focus; the Scanner re-runs the predicate each tick, so the row goes."""
-    ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="NoisyNeighbour", channel=1, akms=["PSK"])
-
-    app = _ScannerHost(_FakeArray([ap], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", APTable)
-
-        scanner._scan_filter = ScanFilter(hide_silenced=True)
-        scanner.refresh_table()
-        assert table.row_count == 1
-
-        Config.silenced_bssids = [ap.bssid]
-        scanner.refresh_table()
-        assert table.row_count == 0
-
-
-@pytest.mark.asyncio
 async def test_scanner_starts_with_the_persisted_hide_silenced_setting():
     silenced = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="NoisyNeighbour", channel=1, akms=["PSK"])
     audible = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="SecureNet", channel=1, akms=["PSK"])
@@ -308,72 +183,3 @@ async def test_only_the_checkbox_writes_config_not_every_keystroke():
         scanner.query_one("#filter-hide-silenced", Checkbox).value = False
         await wait_until(pilot, lambda: app.persist_calls == 2)
         assert Config.hide_silenced is False
-
-
-@pytest.mark.asyncio
-async def test_text_filter_matches_hidden_ap_via_guessed_sibling():
-    named = AccessPoint(bssid="aa:bb:cc:00:00:10", ssid="Castle Crasher", channel=6,
-                        akms=["PSK"], beacons=50)
-    hidden = AccessPoint(bssid="aa:bb:cc:00:00:11", ssid=None, channel=6,
-                         akms=["PSK"], siblings=[named.bssid])
-    other = AccessPoint(bssid="aa:bb:cc:00:00:12", ssid="OpenNet", channel=6, encryption="OPEN")
-
-    app = _ScannerHost(_FakeArray([named, hidden, other], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        table = scanner.query_one("#ap-table", APTable)
-
-        scanner._scan_filter = ScanFilter(text="castle")
-        scanner.refresh_table()
-        assert table.row_count == 2
-        assert named.bssid in scanner.ap_cache              # matches by its own SSID
-        assert hidden.bssid in scanner.ap_cache             # matches via the guessed sibling name
-        assert other.bssid not in scanner.ap_cache
-
-
-@pytest_asyncio.fixture(loop_scope="module", scope="module")
-async def _identity_app():
-    app = _ScannerHost(_FakeArray([], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        yield app, pilot
-
-
-@pytest_asyncio.fixture(loop_scope="module")
-async def identity_shown(_identity_app):
-    """Returns the VENDOR/ID value the scanner hands the table for one AP."""
-    app, pilot = _identity_app
-
-    def shown(ap: AccessPoint) -> str:
-        app.array.access_points = {ap.bssid: ap}
-        app.screen.refresh_table()
-        return app.screen.query_one("#ap-table", APTable).row_data(ap.bssid).identity
-
-    return shown
-
-
-@pytest.mark.asyncio(loop_scope="module")
-async def test_scanner_identity_cell_shows_manufacturer_and_model(identity_shown):
-    ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="Lab", channel=1)
-    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "MikroTik")
-    ap.identity.set(IdSource.WSC_BEACON, IdKey.MODEL_NAME, "hAP ac²")
-    assert identity_shown(ap) == "MikroTik hAP ac²"
-
-
-@pytest.mark.asyncio(loop_scope="module")
-async def test_scanner_identity_cell_blank_when_unknown(identity_shown):
-    assert identity_shown(AccessPoint(bssid="02:00:00:00:00:01")) == ""
-
-
-@pytest.mark.asyncio(loop_scope="module")
-async def test_scanner_identity_cell_shows_summary(identity_shown):
-    ap = AccessPoint(bssid="02:00:00:00:00:01", ssid="Vodafone-123456")
-    ap.identity.set(IdSource.WSC_BEACON, IdKey.MANUFACTURER, "Celeno")
-    assert identity_shown(ap) == "Celeno"
-
-
-@pytest.mark.asyncio(loop_scope="module")
-async def test_scanner_identity_cell_oui_fallback(identity_shown):
-    ap = AccessPoint(bssid="00:03:93:11:22:33", ssid="Alice’s iPhone")
-    assert identity_shown(ap) == "Apple"

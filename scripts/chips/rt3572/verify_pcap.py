@@ -189,8 +189,7 @@ async def _run_action(w: Walk, a: Action) -> None:
         await w.driver._bringup(lambda pct, msg: None)
     elif a.step is Step.SET_CHANNEL:
         for ch in (MAC80211_DEFAULT_CHANNEL, a.channel):
-            if not await w.driver.set_channel(ch):
-                raise RuntimeError(f"driver.set_channel({ch}) returned False")
+            await w.driver.set_channel(ch)
         w.release_tunes += 1
     elif a.step is Step.CLOSE:
         await w.driver.close()

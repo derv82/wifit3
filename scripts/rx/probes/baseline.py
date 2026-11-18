@@ -51,17 +51,7 @@ class BaselineProbe(Probe):
 
         try:
             for ch in channels:
-                ok = await iface.set_channel(ch)
-                if not ok:
-                    print(
-                        f"  CH{ch:>3}: set_channel failed, skipping",
-                        file=sys.stderr,
-                    )
-                    results.append(dict(
-                        channel=ch, frames=0, bssids=0, new_bssids=0,
-                        mean_rssi=None, tuned=False,
-                    ))
-                    continue
+                await iface.set_channel(ch)
 
                 await asyncio.sleep(0.25)  # AGC / pipe drain
                 window_start = time.time()
@@ -87,7 +77,6 @@ class BaselineProbe(Probe):
                     bssids=len(active),
                     new_bssids=len(active_bssids - pre_known),
                     mean_rssi=mean_rssi,
-                    tuned=True,
                 ))
                 rssi_str = "-" if mean_rssi is None else f"{mean_rssi:.0f}"
                 print(
@@ -110,17 +99,13 @@ class BaselineProbe(Probe):
     def verdict_lines(self, result, args) -> list[str]:
         if result is None:
             return ["- Baseline probe skipped."]
-        silent = [r for r in result if r["tuned"] and r["frames"] == 0]
-        untunable = [r for r in result if not r["tuned"]]
+        silent = [r for r in result if r["frames"] == 0]
         lines: list[str] = []
         if silent:
             chans = ", ".join(str(r["channel"]) for r in silent)
             lines.append(f"- WARN  Silent channels (zero frames during dwell): {chans}")
         else:
             lines.append("- OK    Every tuned channel saw at least one frame.")
-        if untunable:
-            chans = ", ".join(str(r["channel"]) for r in untunable)
-            lines.append(f"- WARN  Tune failures: {chans}")
         return lines
 
     def report_lines(self, result, args) -> list[str]:
@@ -134,10 +119,9 @@ class BaselineProbe(Probe):
         ]
         for r in result:
             rssi = "-" if r["mean_rssi"] is None else f"{r['mean_rssi']:.0f}"
-            tag = "" if r["tuned"] else " (tune failed)"
             lines.append(
                 f"| {r['channel']} | {classify_band(r['channel'])} "
-                f"| {r['frames']} | {r['bssids']} | {r['new_bssids']} | {rssi} |{tag}"
+                f"| {r['frames']} | {r['bssids']} | {r['new_bssids']} | {rssi} |"
             )
         lines.append("")
         return lines
@@ -147,9 +131,9 @@ class BaselineProbe(Probe):
             return
         w.writerow(["# baseline"])
         w.writerow(["channel", "frames", "bssids", "new_bssids",
-                    "mean_rssi", "tuned"])
+                    "mean_rssi"])
         for r in result:
             rssi = "" if r["mean_rssi"] is None else f"{r['mean_rssi']:.1f}"
             w.writerow([r["channel"], r["frames"], r["bssids"],
-                        r["new_bssids"], rssi, r["tuned"]])
+                        r["new_bssids"], rssi])
         w.writerow([])

@@ -89,6 +89,10 @@ class BringUpPermissionsError(BringUpError):
     one-time install."""
 
 
+class SetChannelError(Exception):
+    """A tune the driver's C source fails; the message is the C's error text."""
+
+
 class WifiteError(Exception):
     """Base for wifit3's user-facing errors: a ``.title`` / ``.message`` pair the TUI renders
     instead of a bare traceback. (Bring-up faults use the separate ``BringUpError`` hierarchy,

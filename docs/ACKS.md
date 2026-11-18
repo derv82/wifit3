@@ -106,6 +106,8 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 | RTL8187L   | n/a (no active monitor) | n/a | yes (2G 111)        | 0 |
 | RT2500USB  | n/a (no active monitor) | n/a | no (2G 0)           | 0 |
 
+No card ACKs a MAC it has only transmitted from, outside active monitor, whether probed by a stranger or by the frame's old recipient (`rx_autoack.py` step 0: 35 cards, 22 drivers, 2G, 0/100 each, 2026-11-13).
+
 `FAKE_MAC` flags reconciled against this bench:
 - **MT7921AU** was flagged `UNIMPLEMENTED`; it auto-ACKs a spoofed MAC on both bands (not its own
   silicon MAC), so it is now `SPOOFABLE`. [fixed]
@@ -132,10 +134,6 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   0. Root cause: the RT2570 has no `AUTO_RSP_CFG` (autoresponder enable) and no `UNICAST_TO_ME_MASK`.
   Its ACK emission is coupled to the RX address filter (TXRX_CSR2 `DROP_NOT_TO_ME`), which monitor mode
   must clear to receive foreign frames, so the responder never fires.
-
-Scope: the mainline (non-DKMS) Realtek variants (rtl8188eus, rtl8812au, rtl8821au, rtl8822bu) and
-rtw88_8814au stay `UNIMPLEMENTED` by choice: active monitor was never ported for them, so they are out
-of scope for this sweep, not regressions. The bench targets the DKMS drivers we ship.
 
 `enter_active_monitor`'s `bssid` is read only by rtl8922au, mt7921au and mt7925au. On all three,
 injected unicast is auto-ACKed identically with and without it (2026-10-07, ACKs counted on a second

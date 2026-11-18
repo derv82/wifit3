@@ -106,6 +106,9 @@ class Walk:
         # operational sweep; reproduce them in place via the real gpio.set_gpio so the bytes and
         # the shared WMI seq counter stay aligned (a waiver would desync every later op).
         self.driver.wmi.async_injector = self._drain_async
+        # No REG_IN reader here: a WMI wait would hand TXSTATUS over late; drain_tx_status replays
+        # each one before the frame the kernel processed it by.
+        self.driver.wmi.event_tasklet = None
         self.dev.tx_mgmt_epid = self.driver.mgmt_epid   # arms the TX cookie-byte exception
         self._operational_sweep()
 
@@ -140,9 +143,9 @@ class Walk:
     # ---- async-producer + wire-peek helpers -------------------------------
     def drain_tx_status(self, frame: int) -> None:
         """Feed the driver every WMI_TXSTATUS completion the kernel processed before ``frame`` —
-        freeing TX slots so the next inject's find_first_zero_bit cookie matches the wire."""
+        freeing TX slots so the next inject's find_first_zero_bit slot matches the wire."""
         while self.txs_i < len(self.txs_events) and self.txs_events[self.txs_i][0] < frame:
-            self.driver.tx_status_event(self.txs_events[self.txs_i][1])
+            self.driver.wmi_event_tasklet(tx.WMI_TXSTATUS_EVENTID, self.txs_events[self.txs_i][1])
             self.txs_i += 1
 
     def _ch14_except(self, on: bool) -> None:

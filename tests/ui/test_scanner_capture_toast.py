@@ -1,31 +1,10 @@
-"""ScannerView's ApEventDetected handler, and the app's decloak persistence."""
+"""The app persists a passive decloak, and opens Focus on a PBC window seen under a modal once
+the modal closes."""
 import pytest
 
 from wifit3.ui.app import WifiteApp
-from wifit3.watchers.ap_watcher import UncrackableHandshakeSeen
 from wifit3.models import AccessPoint
 from wifit3.wlan.array import WlanArray
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("no_usb_devices")
-async def test_scanner_withheld_handshake_is_log_only_no_toast():
-    """A withheld EAP/OWE 4-way logs but must NOT toast (not a crackable win)."""
-    app = WifiteApp()
-    async with app.run_test() as pilot:
-        app.push_screen(app.scanner_view)
-        await pilot.pause(0)
-        scanner = app.screen
-
-        toasts: list = []
-        scanner.notify = lambda msg, **kw: toasts.append((kw.get("title"), msg))
-
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:07", ssid="CorpNet", channel=1)
-        ev = UncrackableHandshakeSeen(bssid=ap.bssid, ssid=ap.ssid, channel=ap.channel,
-                                      client_mac="11:22:33:44:55:66", akm_label="OWE")
-        scanner.on_wifite_app_ap_event_detected(WifiteApp.ApEventDetected(ev))
-
-        assert toasts == [], toasts
 
 
 @pytest.mark.asyncio

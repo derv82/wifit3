@@ -81,9 +81,9 @@ Rebuilt from live ground-truth (`scripts/wps/wps_lab.py`) after the field showed
 flaky-TX artifacts, not real AP behavior:
 
 - **Auto-ACK (active monitor) is harmful.** A drift-controlled A/B ran 5/7 vs 3/7 cracks.
-  Arming HW auto-ACK kills the AP's retransmit safety net, so a dropped M5/M7 becomes
+  Entering active monitor kills the AP's retransmit safety net, so a dropped M5/M7 becomes
   permanent and scores as a wrong PIN. The retransmit "cost" is a non-issue: the AP's
-  DH/M3 at a consistent ~1.24s dominates per-attempt time. The campaign does not arm
+  DH/M3 at a consistent ~1.24s dominates per-attempt time. The campaign does not enter
   active monitor.
 - **One-shot-per-association is real WSC.** A second exchange on a kept-alive association
   is refused before the PIN check ("Device Password Auth Failure"), so the campaign re-associates

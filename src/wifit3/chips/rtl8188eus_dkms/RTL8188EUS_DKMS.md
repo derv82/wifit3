@@ -1,10 +1,9 @@
 # RTL8188EUS — DKMS (vendor) port
 
-Sibling of `chips/rtl8188eus/` (mainline), ported from the Realtek vendor/DKMS driver. RTL8188EUS
+Ported from the Realtek vendor/DKMS driver. RTL8188EUS
 silicon: 1T1R, 2.4 GHz only, phydm/ODM RX stack, firmware-based. The goal of the re-port is hotter,
-**stable** 2.4 GHz monitor RX than mainline drives the 8188e at. VID:PIDs (e.g. `2357:010c`,
-`0bda:8179`) in lockstep with mainline; this port is the family default and `WIFIT3_RTL8188=mainline`
-falls back (`device/manager.py` `_DKMS_BY_DIR`).
+**stable** 2.4 GHz monitor RX than mainline drives the 8188e at. VID:PIDs e.g. `2357:010c`,
+`0bda:8179`.
 
 ## Linux Driver Source
 

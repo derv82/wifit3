@@ -47,6 +47,18 @@ class ReplayTransport(rp.ReplayTransport):
         super().__init__(ops)
         self.bulk_out_endpoints = bulk_out_endpoints
 
+    def write8(self, a, v) -> int:
+        super().write8(a, v)
+        return 1
+
+    def write16(self, a, v) -> int:
+        super().write16(a, v)
+        return 2
+
+    def write32(self, a, v) -> int:
+        super().write32(a, v)
+        return 4
+
     def bulk_write(self, endpoint: int, data: bytes) -> None:
         op = self.ops[self.i] if self.i < len(self.ops) else None
         if op is not None and op["kind"] == "B" and self.bulk_out_endpoints[op["frame"]] != endpoint:

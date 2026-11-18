@@ -4,11 +4,15 @@ Every register op is a vendor control transfer on endpoint 0 (rtw89_usb_vendorre
 a CMAC-window register can come back R32_DEAD until its clock is on, so read_cmac re-enables
 the clock and re-reads. This is the layer every later op sits on.
 """
+import errno
+import logging
 import struct
 import threading
 from typing import Optional
 
 import usb.core
+
+from wifit3.errors import is_device_gone
 
 from .constants import (
     RTW89_USB_VENQT, RTW89_USB_VENQT_READ, RTW89_USB_VENQT_WRITE,
@@ -17,6 +21,8 @@ from .constants import (
     R_AX_CK_EN, B_AX_CMAC_ALLCKEN,
 )
 
+
+logger = logging.getLogger(__name__)
 
 def _access_cmac(addr: int) -> bool:
     """True for the CMAC register window. [SRC] mac.h:587 ACCESS_CMAC."""
@@ -59,12 +65,19 @@ class RTL8922AUTransport:
 
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
+        self.unplugged = False      # RTW89_FLAG_UNPLUGGED. [SRC] usb.c:28-29
+        self.bulk_out_max_packet_size: dict[int, int] = {}   # wMaxPacketSize per bulk-OUT endpoint
+        self.continual_io_error = 0
         self.rfk_wait = RfkWait()   # firmware RFK-report completion, signalled from the RX reader
         self.h2c_counter = 0        # fw_info h2c/c2h register-mailbox counters. [SRC] fw.c:2012-2015
         self.c2h_counter = 0
         self.h2c_seq = 0            # fw_info.h2c_seq: fwcmd sequence number. [SRC] fw.c:1639,2012
         self.cmac_pwr = set()       # RTW89_FLAG_CMACn_PWR: which CMACs are powered. [SRC] mac_be.c:810
         self.wl_scbd = 0x00004003   # btc wl->scbd (BTC_WSCB_INIT), toggled by _write_scbd. coex.c:698
+        self.wl_scbd_change = False  # btc wl->scbd_change; _run_coex writes wl_scbd when set
+        self.bt_rfk_run = False     # btc bt->rfk_info.map.run / .req, from the BT scoreboard. coex.c:7436
+        self.bt_rfk_req = False
+        self.is_bt_iqk_timeout = False  # set by the first RFK-notify timeout, never cleared. coex.c:8467
         self.coex_policy = None      # last SET_CX_POLICY payload; _run_coex re-sends only on change
         self.cv = 0                 # chip cut version (hal.cv), set from read_chip_ver at connect
         self.bb_gain = None         # decoded BB-gain FW element (be gain arrays), cached lazily
@@ -97,28 +110,42 @@ class RTL8922AUTransport:
         self.pa_bias_trim = [0, 0]     # per-path PA bias nibbles from phycap. [SRC] rtw8922a.c:957
         self.pad_bias_trim = [0, 0]    # per-path PAD bias nibbles. [SRC] rtw8922a.c:1000
 
-    def _vendorreq(self, addr: int, data: bytes, length: int, reqtype: int) -> bytes:
-        """rtw89_usb_vendorreq: one endpoint-0 vendor control transfer, retried up to 10
-        times. [SRC] usb.c:20-73. wValue = addr & 0xFFFF, wIndex = (addr >> 16) & 0xFF."""
+    def _vendorreq(self, addr: int, data: bytes, length: int, reqtype: int, warn: bool = True) -> bytes:
+        """__rtw89_usb_vendorreq: up to 10 tries, each failure warned about; ENODEV, or 5 failures in
+        a row, mark the device unplugged and raise. [SRC] usb.c:20-73.
+        wValue = addr & 0xFFFF, wIndex = (addr >> 16) & 0xFF."""
+        if self.unplugged:
+            raise usb.core.USBError("device unplugged", errno=errno.ENODEV)
         value = addr & 0xFFFF
         index = (addr >> 16) & 0xFF
-        for _ in range(RTW89_USB_VENDORREQ_ATTEMPTS):
+        is_read = reqtype == RTW89_USB_VENQT_READ
+        result = bytearray(length)
+        for attempt in range(RTW89_USB_VENDORREQ_ATTEMPTS):
             try:
-                if reqtype == RTW89_USB_VENQT_READ:
-                    res = self.dev.ctrl_transfer(reqtype, RTW89_USB_VENQT, value, index,
-                                                 length, RTW89_USB_VENDORREQ_TIMEOUT_MS)
-                    if len(res) == length:
-                        return bytes(res)
-                else:
-                    n = self.dev.ctrl_transfer(reqtype, RTW89_USB_VENQT, value, index,
-                                               data, RTW89_USB_VENDORREQ_TIMEOUT_MS)
-                    if n == length:
-                        return b""
-            except usb.core.USBError:
-                pass
-        # TODO: verify, untested here. The kernel flags RTW89_FLAG_UNPLUGGED after 4
-        # continual I/O errors ([SRC] usb.c:59-72); wire it once the unplug path is ported.
-        return b""
+                res = self.dev.ctrl_transfer(reqtype, RTW89_USB_VENQT, value, index,
+                                             length if is_read else data,
+                                             RTW89_USB_VENDORREQ_TIMEOUT_MS)
+            except usb.core.USBError as e:
+                ret = -(e.errno or errno.EIO)
+                if is_device_gone(e):
+                    self.unplugged = True
+                elif warn:
+                    logger.warning("usb %s%u 0x%x fail ret=%d value=0x%x attempt=%d",
+                                   "read" if is_read else "write", length * 8, addr, ret,
+                                   0 if is_read else int.from_bytes(data, "little"), attempt)
+            else:
+                ret = len(res) if is_read else res
+                if ret == length:
+                    self.continual_io_error = 0
+                    return bytes(res) if is_read else b""
+                if is_read:
+                    result[:ret] = bytes(res)
+            self.continual_io_error += 1
+            if self.continual_io_error > 4:
+                self.unplugged = True
+            if self.unplugged:
+                raise usb.core.USBError("device unplugged", errno=errno.ENODEV)
+        return bytes(result) if is_read else b""
 
     def read8(self, addr: int) -> int:
         """rtw89_usb_ops_read8. [SRC] usb.c:113-123."""
@@ -155,7 +182,7 @@ class RTL8922AUTransport:
 
     def write32_quiet(self, addr: int, val: int) -> None:
         """write32 with the kernel's warn suppressed; identical wire op. [SRC] usb.c:171-177."""
-        self.write32(addr, val)
+        self._vendorreq(addr, struct.pack("<I", val & 0xFFFFFFFF), 4, RTW89_USB_VENQT_WRITE, warn=False)
 
     def write32_set(self, addr: int, bits: int) -> None:
         """rtw89_write32_set: read-modify-write, bits OR'd in. [SRC] core.h:7201."""
@@ -208,7 +235,17 @@ class RTL8922AUTransport:
     def bulk_out(self, endpoint: int, data: bytes) -> None:
         """One bulk-OUT transfer (firmware chunk / H2C). rtw89_usb_write_port submits a URB to
         the DMA channel's OUT pipe. [SRC] usb.c:264-289."""
-        self.dev.write(endpoint, data, RTW89_USB_VENDORREQ_TIMEOUT_MS)
+        if self.unplugged:
+            raise usb.core.USBError("device unplugged", errno=errno.ENODEV)
+        try:
+            self.dev.write(endpoint, data, RTW89_USB_VENDORREQ_TIMEOUT_MS)
+            if len(data) % self.bulk_out_max_packet_size[endpoint] == 0:
+                self.dev.write(endpoint, b"", RTW89_USB_VENDORREQ_TIMEOUT_MS)   # URB_ZERO_PACKET. usb.c:286
+        except usb.core.USBError as e:
+            if is_device_gone(e):
+                self.unplugged = True
+                raise
+            logger.error("write port 0x%02x failed: %s", endpoint, e)   # usb.c:344-354, dropped
 
     def _read_cmac(self, addr: int) -> int:
         """rtw89_usb_read_cmac: read a CMAC-window register, re-enabling its clock and
@@ -218,7 +255,7 @@ class RTL8922AUTransport:
         count = 0
         while True:
             d = self._vendorreq(addr32, b"", 4, RTW89_USB_VENQT_READ)
-            val32 = struct.unpack("<I", d)[0] if len(d) >= 4 else RTW89_R32_DEAD
+            val32 = struct.unpack("<I", d)[0]
             if val32 != RTW89_R32_DEAD:
                 break
             if count >= MAC_REG_POOL_COUNT:

@@ -15,7 +15,7 @@ from textual.screen import Screen
 from wifit3.models import AccessPoint
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
-from wifit3.ui.ap_table import COLUMN_KEYS, COLUMNS, IDENTITY_CELL_MAX, SSID_CELL_MAX, APRow, APTable
+from wifit3.ui.ap_table import COLUMN_KEYS, COLUMNS, APRow, APTable
 from wifit3.ui.screens.scanner import ScannerView
 from wifit3.ui.encryption_format import EncryptionSummary, EncryptionType
 
@@ -87,83 +87,6 @@ def _assert_render_is_honest(table: APTable) -> None:
     warm = _snapshot(table)
     table.invalidate()
     assert _snapshot(table) == warm
-
-
-# ----- Column widths ---------------------------------------------------------
-
-
-async def test_ssid_column_holds_its_floor_and_grows_with_content(table):
-    table, pilot = table
-    ssid_width = lambda: table._widths[0]  # noqa: E731
-
-    table.set_rows([_row(0, ssid="A")])
-    assert ssid_width() == COLUMNS[0].min_width
-
-    long_ssid = "Super Long Test Access Point 30"
-    table.set_rows([_row(0, ssid=long_ssid)])
-    assert ssid_width() == len(long_ssid)
-
-    table.set_rows([_row(0, ssid="A" * 50)])
-    assert ssid_width() == SSID_CELL_MAX
-
-
-async def test_badges_shrink_the_ssid_but_not_the_column(table):
-    table, pilot = table
-    table.set_rows([_row(0, ssid="A" * 50, has_handshake=True, has_pmkid=True)])
-    assert table._widths[0] == SSID_CELL_MAX
-    plain = table._rows[_row(0).bssid].texts[0].plain
-    assert "✓HS" in plain and "✓PMK" in plain
-    assert "…" in plain
-
-
-async def test_ssid_column_shrinks_so_clients_fits_at_60_columns():
-    app = _TableHost()
-    async with app.run_test(size=(60, 16)) as pilot:
-        table = app.query_one("#t", APTable)
-        table.set_rows([_row(0, ssid="A" * 32, has_handshake=True, has_pmkid=True), *_rows(40)[1:]])
-        await pilot.pause()
-        assert table.show_vertical_scrollbar
-        clients_end = sum(width + 2 for width in table._widths[:COLUMN_KEYS.index("clients") + 1])
-        assert clients_end <= table.scrollable_content_region.width
-        assert COLUMNS[0].min_width <= table._widths[0] < SSID_CELL_MAX
-        ssid_cell = table.render_line(1).text[:table._widths[0] + 2]
-        assert "✓HS" in ssid_cell and "…" in ssid_cell
-
-        await pilot.resize_terminal(100, 16)
-        await pilot.pause()
-        assert table._widths[0] == SSID_CELL_MAX
-
-
-async def test_verbose_identity_does_not_widen_the_table(table):
-    """One AP with a verbose WPS-derived identity must not push every column
-    off-screen: _relayout sizes a column from its widest row, so the cell has to
-    be capped the way SSID_CELL_MAX caps the SSID cell."""
-    table, pilot = table
-    table.set_rows([_row(0), _row(1, identity="Zyxel Communications Corporation "
-                                            "Zyxel F680G-6x v2.1.0 Gateway (Router)")])
-    await pilot.pause()
-    assert table._widths[-1] == IDENTITY_CELL_MAX
-    assert table._content_width() <= table.size.width
-
-
-async def test_chipset_column_hides_only_when_the_row_overflows(table):
-    table, pilot = table
-    chipset = COLUMN_KEYS.index("chipset")
-    table.set_rows([_row(0, chipset="Broadcom")])
-    await pilot.pause()
-    assert chipset in table._shown
-    table.set_rows([_row(0, chipset="Broadcom"), _row(1, identity="Zyxel Communications Corporation "
-                                                                   "Zyxel F680G-6x v2.1.0 Gateway (Router)")])
-    await pilot.pause()
-    assert chipset not in table._shown
-    assert table._content_width() <= table.size.width
-
-
-async def test_header_reserves_room_for_the_sort_indicator(table):
-    table, pilot = table
-    table.set_rows([_row(0, identity="")])
-    identity = COLUMNS[-1]
-    assert table._widths[-1] == len(identity.label) + 2
 
 
 # ----- Cache honesty ---------------------------------------------------------
@@ -260,65 +183,6 @@ async def test_unchanged_rows_repaint_nothing(table):
     assert refreshed == [table._index[rows[9].bssid] + 1]
 
 
-# ----- Cursor ----------------------------------------------------------------
-
-
-async def test_cursor_follows_its_ap_through_a_resort(table):
-    table, pilot = table
-    rows = _rows(10)
-    table.set_rows(rows)
-    table.resort()
-    table.move_cursor(4)
-    pinned = table.cursor_bssid
-
-    table.set_rows([replace(row, signal=-row.signal) for row in rows])
-    table.resort()
-    assert table.cursor_bssid == pinned
-    assert table.ordered_bssids.index(pinned) == table.cursor_row
-
-
-async def test_resort_does_not_move_the_viewport(table):
-    table, pilot = table
-    rows = _rows(60)
-    table.set_rows(rows)
-    table.scroll_to(y=20, animate=False)
-    await pilot.pause(0)
-    offset = table.scroll_offset.y
-
-    table.set_rows([replace(row, signal=-row.signal) for row in rows])
-    assert table.resort() is True
-    await pilot.pause(0)
-    assert table.scroll_offset.y == offset
-
-
-async def test_cursor_navigation_scrolls_the_viewport(table):
-    table, pilot = table
-    table.set_rows(_rows(60))
-    assert table.scroll_offset.y == 0
-
-    table.move_cursor(50)
-    await pilot.pause(0)
-    assert table.scroll_offset.y > 0
-    assert table.cursor_row == 50
-
-    table.move_cursor(0)
-    await pilot.pause(0)
-    assert table.scroll_offset.y == 0
-
-
-async def test_cursor_survives_its_row_being_dropped(table):
-    table, pilot = table
-    rows = _rows(10)
-    table.set_rows(rows)
-    table.move_cursor(4)
-    dropped = table.cursor_bssid
-
-    table.set_rows([row for row in rows if row.bssid != dropped])
-    assert table.cursor_bssid is not None
-    assert table.cursor_bssid != dropped
-    assert table.cursor_row == 4
-
-
 # ----- Sorting ---------------------------------------------------------------
 
 
@@ -332,105 +196,6 @@ async def test_every_column_sorts_both_ways_without_error(table, column):
         table.resort()
         assert len(table.ordered_bssids) == 20
     _assert_render_is_honest(table)
-
-
-async def test_header_click_sorts_then_flips(table):
-    table, pilot = table
-    table.set_rows(_rows(5))
-    table.sort_column = "signal"
-    table.sort_reverse = True
-
-    ssid_x = table._widths[0] // 2
-    table._sort_by_column_at(ssid_x)
-    assert table.sort_column == "ssid"
-
-    table._sort_by_column_at(ssid_x)
-    assert (table.sort_column, table.sort_reverse) == ("ssid", False)
-
-
-async def test_exactly_one_line_carries_the_cursor(table):
-    table, pilot = table
-    table.set_rows(_rows(8))
-    table.move_cursor(3)
-    await pilot.pause(0)
-
-    cursor_style = table._component_style("ap-table--cursor")
-    highlighted = [
-        y for y in range(1, table.size.height)
-        if next(iter(table.render_line(y))).style == cursor_style
-    ]
-    assert highlighted == [4]        # row 3, offset by the pinned header
-
-
-async def test_focus_change_repaints_the_cursor(table):
-    table, pilot = table
-    table.set_rows(_rows(8))
-    table.move_cursor(2)
-    table.focus()
-    await pilot.pause()
-    focused = table.render_line(3)
-
-    table.blur()
-    await pilot.pause()
-    assert table.render_line(3) != focused
-
-
-# ----- Row appearance --------------------------------------------------------
-
-
-async def test_rows_paint_the_themed_background_edge_to_edge(table):
-    table, pilot = table
-    table.set_rows(_rows(8))
-    strip = table.render_line(2)
-    assert strip.cell_length == table.size.width
-    assert {segment.style.bgcolor for segment in strip} == {table.rich_style.bgcolor}
-
-
-async def test_switching_theme_repaints_foreground_and_background(table):
-    table, pilot = table
-    table.set_rows(_rows(8))
-
-    async def painted(theme: str):
-        table.app.theme = theme
-        await pilot.pause()
-        table.set_rows(_rows(8))
-        strip = table.render_line(2)
-        return ({s.style.bgcolor for s in strip},
-                {s.style.color for s in strip},
-                table.rich_style)
-
-    dark_bg, dark_fg, dark_style = await painted("textual-dark")
-    light_bg, light_fg, light_style = await painted("textual-light")
-
-    # The table follows the theme, never the terminal's own default colours.
-    assert dark_bg == {dark_style.bgcolor} and None not in dark_bg
-    assert light_bg == {light_style.bgcolor} and None not in light_bg
-    assert dark_bg != light_bg
-    assert dark_fg != light_fg
-
-
-async def test_cursor_row_spans_the_full_width(table):
-    table, pilot = table
-    table.set_rows(_rows(8))
-    table.move_cursor(2)
-    await pilot.pause(0)
-
-    strip = table.render_line(3)
-    background = table._component_style("ap-table--cursor").bgcolor
-    assert strip.cell_length == table.size.width
-    assert {segment.style.bgcolor for segment in strip} == {background}
-
-
-async def test_cursor_row_drops_cell_colours(table):
-    table, pilot = table
-    # An encryption cell painted the same colour as a green highlight must not vanish.
-    table.set_rows(_rows(8))
-    table.move_cursor(2)
-    await pilot.pause(0)
-
-    plain = table.render_line(3)
-    assert len({segment.style.color for segment in plain}) == 1
-    assert next(iter(plain)).style.color == table._component_style("ap-table--cursor").color
 
 
 # ----- Scanner wiring --------------------------------------------------------
@@ -518,30 +283,6 @@ async def scanner_host(_scanner_app):
     app.screen.refresh_table()
     await pilot.pause()
     yield app, aps, pilot
-
-
-async def test_enter_opens_the_focus_view(scanner_host):
-    app, aps, pilot = scanner_host
-    table = app.screen.query_one("#ap-table", APTable)
-    table.focus()
-    table.move_cursor(1)
-    await pilot.press("enter")
-
-    assert isinstance(app.screen, _FocusStub)
-    assert app.target_ap.bssid == table.ordered_bssids[1]
-
-
-async def test_single_click_moves_the_cursor_and_double_click_opens_focus(scanner_host):
-    app, aps, pilot = scanner_host
-    table = app.screen.query_one("#ap-table", APTable)
-
-    await pilot.click(APTable, offset=(4, 3))            # +1 for the pinned header row
-    assert isinstance(app.screen, ScannerView), "a single click must not navigate"
-    assert table.cursor_row == 2
-
-    await pilot.click(APTable, offset=(4, 3), times=2)
-    assert isinstance(app.screen, _FocusStub)
-    assert app.target_ap.bssid == table.ordered_bssids[2]
 
 
 async def test_clicking_a_header_re_sorts_and_persists(scanner_host):

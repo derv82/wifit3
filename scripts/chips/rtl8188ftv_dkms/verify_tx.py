@@ -95,9 +95,8 @@ async def _drive(urbs: list[tuple[int, int, bytes]]) -> tuple[Counter, Counter, 
         start = tx.TXDESC_SIZE + tx.PACKET_OFFSET_SZ * tx.desc_pkt_offset(rec[:tx.TXDESC_SIZE])
         frame = rec[start:]
         device.writes.clear()
-        ok = await driver._inject_frame(frame)
-        problem = (f"frame {fno}: _inject_frame refused it" if not ok
-                   else _diff(fno, ep, rec, device.writes))
+        await driver._inject_frame(frame)
+        problem = _diff(fno, ep, rec, device.writes)
         if problem is None:
             matched[_label(frame)] += 1
         else:

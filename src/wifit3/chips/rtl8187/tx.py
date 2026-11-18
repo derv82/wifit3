@@ -23,7 +23,6 @@ robust broadcast rate), NO_ENC set, no RTS, retry=RETRY_COUNT.
 """
 from __future__ import annotations
 
-import logging
 import struct
 from dataclasses import dataclass
 from typing import Optional
@@ -38,8 +37,6 @@ from .constants import (
     TX_DESC_FLAG_NO_ENC,
     USB_EP_BULK_OUT,
 )
-
-logger = logging.getLogger(__name__)
 
 TX_HDR_SIZE = 12
 RTL8187B_TX_HDR_SIZE = 32
@@ -248,14 +245,10 @@ def inject_frame(
         hdr = build_rtl8187b_tx_hdr(len(frame), rate_hw_value=rate_hw_value,
                                     retry_count=retry_count, morefrag=morefrag)
     payload = hdr + frame
-    sent = dev.write(ep, payload, timeout_ms)
-    if sent != len(payload):
-        logger.warning(
-            "bulk-OUT short write: sent=%d expected=%d", sent, len(payload)
-        )
+    sent = dev.write(ep, payload, timeout_ms)   # rtl8187_tx_cb (dev.c:186-224) never checks the length
     # URB_ZERO_PACKET (dev.c:315): a transfer that is an exact multiple of wMaxPacketSize
     # has no terminating short packet, so the chip never fires it. PyUSB adds no ZLP.
-    if sent and sent % max_packet_sizes[ep] == 0:
+    if len(payload) % max_packet_sizes[ep] == 0:
         dev.write(ep, b"", timeout_ms)
     return sent
 

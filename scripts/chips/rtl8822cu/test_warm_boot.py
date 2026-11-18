@@ -37,8 +37,7 @@ async def run(channel: int, seconds: float) -> int:
     async def observe(label: str) -> int:
         nonlocal received
         received = 0
-        if not await driver.set_channel(channel):
-            raise RuntimeError(f"Could not tune channel {channel}")
+        await driver.set_channel(channel)
         await asyncio.sleep(seconds)
         print(f"{label}: {received} parsed frames in {seconds:g}s on channel {channel}")
         return received

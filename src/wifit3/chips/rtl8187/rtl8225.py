@@ -51,6 +51,8 @@ from .constants import (
     REG_TX_ANTENNA,
     REG_TX_GAIN_CCK,
     REG_TX_GAIN_OFDM,
+    RTL8187_REQ_SET_REG,
+    RTL8187_REQT_WRITE,
 )
 from .transport import RTL8187Transport
 
@@ -212,14 +214,7 @@ def rtl8225_write_8051(t: RTL8187Transport, addr: int, data: int) -> None:
     # Kernel goes through usb_control_msg directly — payload is the
     # little-endian 16-bit data.
     payload = [data & 0xFF, (data >> 8) & 0xFF]
-    t.dev.ctrl_transfer(
-        0x40,           # vendor OUT
-        0x05,           # RTL8187_REQ_SET_REG
-        addr,           # wValue = RF reg addr
-        0x8225,         # wIndex = magic 8225 marker
-        payload,
-        500,
-    )
+    t.usb_control_msg(RTL8187_REQT_WRITE, RTL8187_REQ_SET_REG, addr, 0x8225, payload)
 
     t.write16(REG_RFPINSOUTPUT, reg80 | (1 << 2))
     _udelay(10)

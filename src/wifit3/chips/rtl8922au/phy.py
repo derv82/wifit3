@@ -4,6 +4,8 @@ rtw89_phy_init_bb_reg applies the firmware's BB register table for PHY_0 and (DB
 table is condition-coded: a headline block picks the (rfe_type, cv) branch, then if/elif/else
 markers select which register writes apply under it. [SRC] phy.c:1940-1966.
 """
+import contextlib
+import logging
 import struct
 import time
 
@@ -101,6 +103,9 @@ from .constants import (
     R_BE_LTPC_T0_PATH0, R_BE_LTPC_T0_PATH1,
 )
 from . import firmware, mac
+from .iopoll import read_poll_timeout_atomic
+
+logger = logging.getLogger(__name__)
 
 
 def _phy0_phy1_offset(addr: int) -> int:
@@ -264,29 +269,39 @@ def chip_bb_postinit(t) -> None:
 
 
 def _write_full_rf_v2_a(t, rf_path: int, addr: int, data: int) -> None:
-    """rtw89_phy_write_full_rf_v2_a: poll the HWSI idle bit, then write the addr/data-encoded word.
-    [SRC] phy.c write_full_rf_v2_a."""
-    for _ in range(3800):
-        if not (t.read32(HWSI_IDLE_ADDR[rf_path] + CR_BASE_BE) & B_HWSI_BUSY):
-            break
+    """rtw89_phy_write_full_rf_v2_a: poll the HWSI idle bit, then write the addr/data-encoded word;
+    a bus still busy skips the write. [SRC] phy.c:1263-1286."""
+    idle_reg = HWSI_IDLE_ADDR[rf_path] + CR_BASE_BE
+    done, _ = read_poll_timeout_atomic(lambda: t.read32(idle_reg) & B_HWSI_BUSY, lambda busy: not busy,
+                                       1, 3800)                     # phy.c:1273
+    if not done:
+        logger.warning("[rtw89_phy_write_full_rf_v2_a] HWSI is busy")
+        return
     val = (addr & B_HWSI_DATA_ADDR) | ((data << 8) & B_HWSI_DATA_VAL)
     t.write32(HWSI_OFST_ADDR[rf_path] + CR_BASE_BE, val)
 
 
 def _read_full_rf_v2_a(t, rf_path: int, addr: int) -> int:
-    """rtw89_phy_read_full_rf_v2_a: HWSI RF register read (set addr, poll, read data). [SRC] phy.c."""
+    """rtw89_phy_read_full_rf_v2_a: HWSI RF register read (set addr, poll, read data); a poll that
+    times out returns INV_RF_DATA. [SRC] phy.c:1056-1091."""
     add_reg = HWSI_ADD_ADDR[rf_path] + CR_BASE_BE
     val_reg = HWSI_IDLE_ADDR[rf_path] + CR_BASE_BE
     t.write32_mask(add_reg, B_HWSI_ADD_CTL_MASK, 0x1)
-    for _ in range(3800):
-        if not (t.read32(val_reg) & B_HWSI_BUSY):
-            break
+    done, _ = read_poll_timeout_atomic(lambda: t.read32(val_reg) & B_HWSI_BUSY, lambda busy: not busy,
+                                       1, 3800)                     # phy.c:1067
+    if not done:
+        logger.warning("poll HWSI is busy")
+        return INV_RF_DATA
     t.write32_mask(add_reg, B_HWSI_ADD_MASK, addr)
     t.write32_mask(add_reg, B_HWSI_ADD_RD, 0x1)
-    for _ in range(3800):
-        if t.read32(val_reg) & B_HWSI_VAL_RDONE:
-            break
-    val = t.read32(val_reg) & RFREG_MASK
+    time.sleep(0.000002)                      # udelay(2). phy.c:1076
+    done, _ = read_poll_timeout_atomic(lambda: t.read32(val_reg) & B_HWSI_VAL_RDONE, bool,
+                                       1, 3800)                     # phy.c:1079
+    if done:
+        val = t.read32(val_reg) & RFREG_MASK
+    else:
+        logger.warning("read HWSI is busy")
+        val = INV_RF_DATA
     t.write32_mask(add_reg, B_HWSI_ADD_POLL_MASK, 0)
     return val
 
@@ -513,10 +528,15 @@ def _cfo_init(t) -> None:
     """rtw89_phy_cfo_init: set the crystal cap (XO/XI write + read-back over xtal_si) then the
     DCFO comp enable/weight. [SRC] phy.c:5007-5102."""
     cap = t.xtal_cap & B_AX_XTAL_SC_MASK
-    mac.write_xtal_si(t, XTAL_SI_XTAL_SC_XO, cap, XTAL_SC_MASK)
-    mac.write_xtal_si(t, XTAL_SI_XTAL_SC_XI, cap, XTAL_SC_MASK)
-    mac.read_xtal_si(t, XTAL_SI_XTAL_SC_XO)
-    mac.read_xtal_si(t, XTAL_SI_XTAL_SC_XI)
+    # rtw89_phy_cfo_set_crystal_cap ignores each xtal_si error. phy.c:5022-5027
+    with contextlib.suppress(TimeoutError):
+        mac.write_xtal_si(t, XTAL_SI_XTAL_SC_XO, cap, XTAL_SC_MASK)
+    with contextlib.suppress(TimeoutError):
+        mac.write_xtal_si(t, XTAL_SI_XTAL_SC_XI, cap, XTAL_SC_MASK)
+    with contextlib.suppress(TimeoutError):
+        mac.read_xtal_si(t, XTAL_SI_XTAL_SC_XO)
+    with contextlib.suppress(TimeoutError):
+        mac.read_xtal_si(t, XTAL_SI_XTAL_SC_XI)
     _set_phy_regs(t, R_DCFO_OPT_BE, B_DCFO_OPT_EN_BE, 1)
     _set_phy_regs(t, R_DCFO_WEIGHT_BE, B_DCFO_WEIGHT_MSK_BE, 8)
 
@@ -714,9 +734,12 @@ def _chlk_ktbl_sel(t, rf_path: int, idx: int) -> None:
 
 def _rfk_pll_init(t) -> None:
     """rtw8922a_rfk_pll_init: three xtal_si read-modify-writes. [SRC] rtw8922a_rfk.c:325."""
-    mac.write_xtal_si(t, XTAL_SI_PLL_1, mac.read_xtal_si(t, XTAL_SI_PLL_1) | 0xF8, 0xFF)
-    mac.write_xtal_si(t, XTAL_SI_APBT, mac.read_xtal_si(t, XTAL_SI_APBT) & ~0x60 & 0xFF, 0xFF)
-    mac.write_xtal_si(t, XTAL_SI_XTAL_PLL, mac.read_xtal_si(t, XTAL_SI_XTAL_PLL) | 0x38, 0xFF)
+    try:
+        mac.write_xtal_si(t, XTAL_SI_PLL_1, mac.read_xtal_si(t, XTAL_SI_PLL_1) | 0xF8, 0xFF)
+        mac.write_xtal_si(t, XTAL_SI_APBT, mac.read_xtal_si(t, XTAL_SI_APBT) & ~0x60 & 0xFF, 0xFF)
+        mac.write_xtal_si(t, XTAL_SI_XTAL_PLL, mac.read_xtal_si(t, XTAL_SI_XTAL_PLL) | 0x38, 0xFF)
+    except TimeoutError:
+        return      # the first xtal_si error returns; the caller is void. rtw8922a_rfk.c:330-349
 
 
 def rfk_hw_init(t) -> None:

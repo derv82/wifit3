@@ -14,10 +14,14 @@ contract the gate enforces.
 """
 from __future__ import annotations
 
+import errno
+import logging
 import struct
 from dataclasses import dataclass
 
-from wifit3.errors import BringUpError
+import usb.core
+
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 
 from . import ani, calib, chan as chanmod, constants as C, eeprom, gpio, htc, hw as hwmod
 from . import key, mac_queue, phy, phy_board, phy_power, reg as R, rx
@@ -26,6 +30,8 @@ from .wmi import (
     WMI, HTC_M_MONITOR, WMI_ATH_INIT_CMDID, WMI_DISABLE_INTR_CMDID, WMI_DRAIN_TXQ_ALL_CMDID,
     WMI_ENABLE_INTR_CMDID, WMI_FLUSH_RECV_CMDID, WMI_SET_MODE_CMDID, WMI_START_RECV_CMDID,
     WMI_STOP_RECV_CMDID)
+
+logger = logging.getLogger(__name__)
 
 _MODE_11NG = struct.pack(">H", 1)             # WMI_SET_MODE body: HTC_MODE_11NG
 
@@ -50,10 +56,9 @@ class BringupResult:
     endpoints: dict
 
 
-def hw_reset_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
-    """The body of ath9k_hw_reset shared by the cold bring-up and every channel-change reset:
-    process_ini through the calibration and the reset tail [SRC] hw.c:1944-2066. The caller runs
-    reset_begin first (its preamble differs between the cold and warm paths)."""
+def hw_reset_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> int:
+    """ath9k_hw_reset from ath9k_hw_process_ini to the end, after ``hw.reset_begin``.
+    Returns 0, or -EIO when ath9k_hw_init_cal fails."""
     phy.process_ini(hw, chan)
     phy.set_rfmode(hw, chan)
     hw.init_mfp()
@@ -63,7 +68,7 @@ def hw_reset_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
     hw.reset_opmode(hw.macStaId1, hw.saveDefAntenna)
     phy.rf_set_freq(hw, chan)
     if not hw.txq:
-        mac_queue.init_tx_queues(hw)                # driver-side alloc (no wire ops)
+        mac_queue.init_tx_queues(hw)
     mac_queue.init_queues(hw)
     hw.init_interrupt_masks()
     hw.ani_cache_ini_regs()
@@ -71,8 +76,10 @@ def hw_reset_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
     hw.init_global_settings(chan)
     hw.reset_dma_and_intr()
     phy.init_bb(hw, chan)
-    calib.init_cal(hw, chan)
+    if not calib.init_cal(hw, chan):
+        return -errno.EIO
     hw.reset_tail()
+    return 0
 
 
 def cold_bringup(t: AR9271Transport) -> BringupResult:
@@ -99,8 +106,10 @@ def cold_bringup(t: AR9271Transport) -> BringupResult:
 
     # ath9k_hw_reset (cold): preamble saves + chip_reset(WARM) + init_pll + MAC-gate + TSF restore
     # (the low word is wall-clock-dependent — the gate value-excepts AR_TSF_L32) + JTAG disable.
-    hw.reset_begin(chan)
-    hw_reset_body(wmi, hw, chan)
+    r = _full_channel_change_stopped(wmi, hw, chan)
+    if r:
+        logger.error("Unable to reset hardware; reset status %d (freq %u MHz)", r, chan.center_freq)
+        raise BringUpError("start", f"Unable to reset hardware; reset status {r} (freq {chan.center_freq} MHz)")
 
     # ath9k_htc_start tail [SRC] htc_drv_main.c:941: re-apply tx power (priv->txpowlimit=0 at the
     # first start clamps every per-rate target to 0), then SET_MODE(11ng) / ATH_INIT / START_RECV.
@@ -128,17 +137,12 @@ def cold_bringup(t: AR9271Transport) -> BringupResult:
     # ath9k_htc_set_channel for the initial tune [SRC] htc_drv_main.c:225 (warm: curchan set ->
     # getnf first, htc_reset_init already cleared -> no RF-reset pulse). Same channel, so
     # process_ini re-runs identically.
-    wmi.cmd(WMI_DISABLE_INTR_CMDID, b"")
-    wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b"")
-    wmi.cmd(WMI_STOP_RECV_CMDID, b"")
     hw.curchan = chan
-    hw.getnf(chan)
-    hw.reset_begin(chan)
-    hw_reset_body(wmi, hw, chan)
-    wmi.cmd(WMI_START_RECV_CMDID, b"")
-    rx.host_rx_init(hw)                             # now monitoring -> 0xc03f
-    wmi.cmd(WMI_SET_MODE_CMDID, _MODE_11NG)
-    wmi.cmd(WMI_ENABLE_INTR_CMDID, b"")
+    try:
+        full_channel_change(wmi, hw, chan)          # host_rx_init: now monitoring -> 0xc03f
+    except SetChannelError as e:
+        logger.error("Unable to set channel")
+        raise BringUpError("set channel", str(e)) from e
 
     # config CONF_CHANGE_POWER: power_level 20 -> txpowlimit 40 raises the limit back from 0,
     # then mac80211 re-applies the (unchanged) monitor filter -> 0xc03f (now with PROM).
@@ -202,46 +206,61 @@ def warm_reattach(t: AR9271Transport) -> BringupResult:
 
 
 def _stop_for_channel_change(wmi: WMI) -> None:
-    wmi.cmd(WMI_DISABLE_INTR_CMDID, b"")
-    wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b"")
-    wmi.cmd(WMI_STOP_RECV_CMDID, b"")
+    """ath9k_htc_set_channel's stop commands; the C ignores their results."""
+    wmi.cmd_or_none(WMI_DISABLE_INTR_CMDID, b"")
+    wmi.cmd_or_none(WMI_DRAIN_TXQ_ALL_CMDID, b"")
+    wmi.cmd_or_none(WMI_STOP_RECV_CMDID, b"")
 
 
-def _restart_after_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
-    wmi.cmd(WMI_START_RECV_CMDID, b"")
-    rx.host_rx_init(hw)
-    wmi.cmd(WMI_SET_MODE_CMDID, _MODE_11NG)
-    wmi.cmd(WMI_ENABLE_INTR_CMDID, b"")
-    hw.curchan = chan
+def _check_reset_status(chan: chanmod.Channel, r: int) -> None:
+    """ath9k_htc_set_channel's check of the ath9k_hw_reset status."""
+    if r:
+        logger.error("Unable to reset channel (%d Mhz) reset status %d", chan.center_freq, r)
+        raise SetChannelError(f"Unable to reset channel ({chan.center_freq} Mhz) reset status {r}")
 
 
-def _full_channel_change_stopped(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
-    hw.reset_begin(chan)
-    hw_reset_body(wmi, hw, chan)
+def _restart_after_channel_change(wmi: WMI, hw: hwmod.AthHw) -> None:
+    """ath9k_htc_set_channel's restart after ath9k_hw_reset; a failed command fails the tune."""
+    try:
+        wmi.cmd(WMI_START_RECV_CMDID, b"")
+        rx.host_rx_init(hw)
+        wmi.cmd(WMI_SET_MODE_CMDID, _MODE_11NG)
+        wmi.cmd(WMI_ENABLE_INTR_CMDID, b"")
+    except usb.core.USBError as e:
+        if is_device_gone(e):
+            raise
+        raise SetChannelError(f"Unable to set channel: {e}") from e
+
+
+def _full_channel_change_stopped(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> int:
+    """ath9k_hw_reset's full reset; returns its status."""
+    r = hw.reset_begin(chan)
+    if r:
+        return r
+    return hw_reset_body(wmi, hw, chan)
 
 
 def full_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
-    """One ath9k_htc_set_channel hop via a full ath9k_hw_reset [SRC] htc_drv_main.c:225: stop the
-    target, reset to ``chan``, restart RX. This is the always-correct retune path (the cold tune
-    uses the same body); the fast path below is the kernel's within-band optimisation."""
+    """ath9k_htc_set_channel with a full ath9k_hw_reset."""
     _stop_for_channel_change(wmi)
-    hw.getnf(chan)
-    _full_channel_change_stopped(wmi, hw, chan)
-    _restart_after_channel_change(wmi, hw, chan)
+    hw.getnf(chan)                                  # ath9k_hw_reset: getnf(ah->curchan)
+    _check_reset_status(chan, _full_channel_change_stopped(wmi, hw, chan))
+    _restart_after_channel_change(wmi, hw)
 
 
 def _channel_change_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> bool:
-    """ath9k_hw_channel_change [SRC] hw.c:1543 — the fast retune the AR9271 runs without a full
-    reset: confirm the QCUs are idle, pause the baseband (rfbus), reprogram the per-channel PHY +
-    synth + TX power, then release. The FCC_BAND_SWITCH / band_switch reloads are guarded by caps
-    the 9271 never sets on a within-band hop, so they are skipped."""
-    if any(hw.numtxpending(q) for q in range(R.AR_NUM_QCU)):
-        return False
+    """ath9k_hw_channel_change."""
+    for qnum in range(R.AR_NUM_QCU):
+        if hw.numtxpending(qnum):
+            logger.debug("Transmit frames pending on queue %d", qnum)
+            return False
     if not phy.rfbus_req(hw):
+        logger.error("Could not kill baseband RX")
         return False
+    # No band_switch / mode_diff branch: the AR9271 lacks ATH9K_HW_CAP_FCC_BAND_SWITCH.
     phy.set_channel_regs(hw, chan)
     phy.rf_set_freq(hw, chan)
-    hw.set_clockrate()                              # no wire ops
+    hw.set_clockrate()
     phy_power.apply_txpower(hw, chan)
     phy.set_delta_slope(hw, chan)
     phy.spur_mitigate(hw, chan)
@@ -251,16 +270,13 @@ def _channel_change_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> bo
 
 
 def fast_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
-    """One ath9k_htc_set_channel hop on the fast path [SRC] htc_drv_main.c:240 (fastcc, caldata
-    NULL): stop the target, then ath9k_hw_reset's fastcc branch -> ath9k_hw_do_fastcc [SRC]
-    hw.c:1788 (check_alive + channel_change + loadnf + start_nfcal + the AR9271 ANI-reg reload),
-    then restart RX."""
+    """ath9k_htc_set_channel with fastcc: ath9k_hw_do_fastcc, else the full ath9k_hw_reset."""
     _stop_for_channel_change(wmi)
-    hw.getnf(chan)                                  # ath9k_hw_reset getnf(curchan)
+    hw.getnf(chan)                                  # ath9k_hw_reset: getnf(ah->curchan)
     if hw.check_alive() and _channel_change_body(wmi, hw, chan):
         calib.loadnf(hw, chan)
         calib.start_nfcal(hw, update=True)
-        phy.load_ani_reg(hw, chan)                  # AR9271-only
+        phy.load_ani_reg(hw, chan)
     else:
-        _full_channel_change_stopped(wmi, hw, chan)
-    _restart_after_channel_change(wmi, hw, chan)
+        _check_reset_status(chan, _full_channel_change_stopped(wmi, hw, chan))
+    _restart_after_channel_change(wmi, hw)

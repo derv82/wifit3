@@ -33,21 +33,18 @@ class FakeTransport:
     """Byte-addressable register space backed by a dict.
 
     Implements the minimum interface that mac/firmware/reg_init helpers
-    use — read32 / write32 / read_multi.
+    use — read32 / write32 / write_multi.
     """
-
-    class _FakeDev:
-        """Minimal usb.core.Device stand-in for the vendor ctrl_transfer that
-        usb_init_registers issues (USB_MODE_RESET, no data phase)."""
-        def ctrl_transfer(self, *args, **kwargs):
-            return b""
 
     def __init__(self) -> None:
         self.regs: dict[int, int] = {}
-        self.dev = self._FakeDev()
         # MAC_CSR0 (0x1000) must read non-zero so usb_init_registers' wait_csr_ready
         # passes — it is nested inside init_registers (matching rt2800_init_registers).
         self.write32(0x1000, 0x55920222)
+
+    def set_device_mode(self, offset: int, value: int, timeout_ms: int = 0) -> int:
+        """usb_init_registers' USB_MODE_RESET (no data phase)."""
+        return 0
 
     def write_bytes(self, addr: int, data: Sequence[int]) -> None:
         for i, b in enumerate(data):
@@ -65,9 +62,6 @@ class FakeTransport:
     def write32(self, addr: int, val: int) -> None:
         for i in range(4):
             self.regs[addr + i] = (val >> (i * 8)) & 0xFF
-
-    def read_multi(self, addr: int, length: int) -> bytes:
-        return bytes(self.regs.get(addr + i, 0) for i in range(length))
 
     def write_multi(self, addr: int, data) -> None:
         for i, b in enumerate(bytes(data)):
@@ -88,8 +82,7 @@ def test_supported_ids_cover_all_variants():
 
 
 def test_supported_channels_covers_2g_plus_5g_non_dfs():
-    """M-A2 extends to 5 GHz non-DFS channels. RT5392 will fail-soft on
-    these (driver.set_channel returns False); RT3572 + RT5572 use them."""
+    """2.4 GHz plus the 5 GHz non-DFS channels."""
     from wifit3.chips.rt3572.chan import CHANNELS_5G_NON_DFS
     expected = list(range(1, 15)) + list(CHANNELS_5G_NON_DFS)
     assert RT3572Driver.SUPPORTED_CHANNELS == expected

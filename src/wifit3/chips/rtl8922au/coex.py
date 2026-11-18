@@ -4,6 +4,7 @@ rtw89_btc_ntfy_init configures the WL/BT antenna sharing before the interface ru
 (rfe_type 1) btc_set_rfe resolves to a 2-antenna shared setup with the BT-general path on RF path
 B, and btc_init_cfg programs the per-path trx-mask LUT and the PTA priority / break tables.
 """
+import logging
 import struct
 
 from .constants import (
@@ -20,9 +21,13 @@ from .constants import (
     BTF_SET_REPORT_EN, BTF_SET_SLOT_TABLE, BTF_SET_MREG_TABLE, BTF_SET_CX_POLICY, BTF_SET_DRV_INFO,
     R_BE_BT_PLT, B_BE_TX_PLT_GNT_WL, B_BE_RX_PLT_GNT_WL, B_BE_PLT_EN,
     B_MAC_AX_SB_FW_MASK, B_AX_TOGGLE, B_MAC_AX_BTGS1_NOTIFY, MAC_AX_NOTIFY_TP_MAJOR,
-    B_MAC_AX_SB_DRV_MASK, BTC_WSCB_INIT, BTC_WSCB_WLRFK,
+    B_MAC_AX_SB_DRV_MASK, BTC_WSCB_INIT, BTC_WSCB_ACTIVE, BTC_WSCB_ON, BTC_WSCB_WLRFK,
+    BTC_BSCB_RFK_RUN, BTC_BSCB_RFK_REQ, BTC_SCB_INV_VALUE,
 )
 from . import firmware, phy
+from .iopoll import read_poll_timeout
+
+logger = logging.getLogger(__name__)
 
 # The coex fw structs are version-selected (rtw89_btc_ver_defs[2] for this fw); the cold-init H2C
 # payloads for THIS card (rfe_type 1, 2-ant shared, BTG on path B, no BT) are fixed. Values and
@@ -270,16 +275,54 @@ def ntfy_switch_band(t, ep: int) -> None:
 
 
 def _write_scbd(t, bits: int, state: bool) -> None:
-    """_write_scbd: set/clear `bits` in the tracked wl scoreboard, then push it via cfg_sb. [SRC]
-    coex.c:_write_scbd."""
-    t.wl_scbd = (t.wl_scbd | bits) if state else (t.wl_scbd & ~bits & 0xFFFFFFFF)
-    _cfg_sb(t, t.wl_scbd)
+    """_write_scbd: set/clear `bits` in the tracked wl scoreboard; the next _run_coex writes it.
+    [SRC] coex.c:6061-6081."""
+    scbd_val = (t.wl_scbd | bits) if state else (t.wl_scbd & ~bits & 0xFFFFFFFF)
+    force_exec = bits & (BTC_WSCB_ACTIVE | BTC_WSCB_ON)
+    if scbd_val != t.wl_scbd or force_exec:
+        t.wl_scbd = scbd_val
+        t.wl_scbd_change = True
+
+
+def _run_coex_ntfy_wl_rfk(t) -> None:
+    """_run_coex(BTC_RSN_NTFY_WL_RFK): only _action_common's scoreboard write emits ops here.
+    [SRC] coex.c:5624-5629."""
+    if t.wl_scbd_change:
+        _cfg_sb(t, t.wl_scbd)
+        t.wl_scbd_change = False
+
+
+def _chk_wl_rfk_request(t) -> bool:
+    """_chk_wl_rfk_request: refresh BT's RFK run/req bits from the scoreboard (an invalid read keeps
+    the old ones) and allow unless BT is calibrating. bt->rfk_info.map.timeout comes from a BT-info
+    C2H the port doesn't parse, so it stays 0. [SRC] coex.c:7384-7437, 7470-7487."""
+    val = t.read32(R_BE_SCOREBOARD)           # _update_bt_scbd -> _read_scbd
+    if val != BTC_SCB_INV_VALUE:
+        t.bt_rfk_run = bool(val & BTC_BSCB_RFK_RUN)
+        t.bt_rfk_req = bool(val & BTC_BSCB_RFK_REQ)
+    return not (t.bt_rfk_run or t.bt_rfk_req)
 
 
 def ntfy_wl_rfk(t, ep: int, start: bool) -> None:
-    """rtw89_btc_ntfy_wl_rfk(BTC_WRFKT_CHLK): on START, _chk_wl_rfk_request reads the BT scoreboard
-    (BT idle -> allow) then sets the WLRFK scoreboard bit; on STOP it clears it. _run_coex here
-    emits no further ops. [SRC] coex.c:8366-8432."""
-    if start:
-        t.read32(R_BE_SCOREBOARD)             # _chk_wl_rfk_request -> _update_bt_scbd -> _read_scbd
-    _write_scbd(t, BTC_WSCB_WLRFK, start)
+    """rtw89_btc_ntfy_wl_rfk(BTC_WRFKT_CHLK): START retries for up to 100 ms while BT calibrates; an
+    ALLOW sets the WLRFK scoreboard bit, a reject writes nothing. A timeout warns and later STARTs try
+    once. STOP clears the bit. [SRC] coex.c:8366-8468."""
+    if not start:
+        _write_scbd(t, BTC_WSCB_WLRFK, False)
+        _run_coex_ntfy_wl_rfk(t)                     # STOP is always ALLOW
+        return
+
+    def ntfy_start() -> bool:
+        allow = _chk_wl_rfk_request(t)
+        _write_scbd(t, BTC_WSCB_WLRFK, allow)
+        if allow:
+            _run_coex_ntfy_wl_rfk(t)
+        return allow
+
+    if t.is_bt_iqk_timeout:
+        ntfy_start()
+    else:
+        done, _ = read_poll_timeout(ntfy_start, bool, 40, 100000)   # coex.c:8463
+        if not done:
+            logger.warning("RFK notify timeout")
+            t.is_bt_iqk_timeout = True

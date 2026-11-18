@@ -215,10 +215,7 @@ async def run_live(args) -> int:
     iface.register_rx_callback(collector)
     print(f"\n[*] {iface.name}: watching CH{args.channel} for {args.duration:g}s",
           file=sys.stderr)
-    if not await iface.set_channel(args.channel):
-        print(f"[-] set_channel({args.channel}) failed.", file=sys.stderr)
-        await wlan_close(ifaces)
-        return 1
+    await iface.set_channel(args.channel)
 
     start = time.monotonic()
     n_secs = max(1, round(args.duration))

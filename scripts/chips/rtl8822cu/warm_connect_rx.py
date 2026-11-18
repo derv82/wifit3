@@ -28,6 +28,7 @@ from wifit3.chips.driver import Driver  # noqa: E402
 from wifit3.chips.rtl8822cu.driver import RTL8822CUDriver  # noqa: E402
 from wifit3.device.manager import wlan_close, wlan_ifaces  # noqa: E402
 from wifit3.dot11.packet import Packet  # noqa: E402
+from wifit3.errors import SetChannelError  # noqa: E402
 from wifit3.wlan.interface import WlanInterface  # noqa: E402
 
 END_STATES = ("2g", "5g", "scan")
@@ -72,8 +73,10 @@ async def read_igi(driver: RTL8822CUDriver) -> tuple[int, int]:
 async def dwell(counter: BeaconCounter, cards: list[WlanInterface], labels: list[str], driver: RTL8822CUDriver,
                 name: str, channel: int, bssid: str, seconds: int) -> Dwell:
     for iface, label in zip(cards, labels):
-        if not await iface.set_channel(channel):
-            print(f"[-] {label}: set_channel({channel}) failed", file=sys.stderr)
+        try:
+            await iface.set_channel(channel)
+        except SetChannelError as e:
+            print(f"[-] {label}: set_channel({channel}) failed: {e}", file=sys.stderr)
     record = Dwell(name, bssid.lower(), seconds, time.monotonic(), {label: [0] * seconds for label in labels})
     counter.dwell = record
     for second in range(seconds):

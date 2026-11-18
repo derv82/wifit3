@@ -8,6 +8,7 @@ claimed here); they are marked untested.
 """
 from __future__ import annotations
 
+import errno
 import logging
 
 from . import reg as R
@@ -135,7 +136,8 @@ class AthHw:
         for _ in range(timeout // R.AH_TIME_QUANTUM):
             if (self.read(reg) & mask) == val:
                 return True
-        self.read(reg)                            # the timeout-path ath_dbg read [SRC] hw.c:90
+        logger.debug("timeout (%d us) on reg 0x%x: 0x%08x & 0x%08x != 0x%08x",
+                     timeout, reg, self.read(reg), mask, val)   # hw.c:90-92
         return False
 
     # ---- revision read [SRC] hw.c:255-320 ---------------------------------
@@ -289,41 +291,39 @@ class AthHw:
         self.write(R.AR_TSF_U32, (tsf >> 32) & 0xffffffff)
 
     # ---- chip reset (within ath9k_hw_reset) [SRC] hw.c:1519-1541 ----------
-    def chip_reset(self, chan) -> None:
-        """ath9k_hw_chip_reset: pick WARM unless TX/RX is pending (or the chip is full-asleep),
-        reset, then re-init the PLL. chip_fullsleep is False by this second reset, so the
-        AR_Q_TXE / AR_CR probes run."""
+    def chip_reset(self, chan) -> bool:
+        """ath9k_hw_chip_reset, AR9271 branch."""
         reset_type = R.ATH9K_RESET_WARM
         if self.chip_fullsleep or self.read(R.AR_Q_TXE) or (self.read(R.AR_CR) & R.AR_CR_RXE):
             reset_type = R.ATH9K_RESET_COLD
-        self.set_reset_reg(reset_type)
-        # ath9k_hw_setpower(AWAKE) here is a no-op — power_mode is already AWAKE.
+        if not self.set_reset_reg(reset_type):
+            return False
+        # ath9k_hw_setpower(AWAKE) omitted: power_mode is already AWAKE, so the C returns early.
         self.chip_fullsleep = False
         self.init_pll(chan)
+        return True
 
-    def reset_begin(self, chan) -> None:
-        """The opening of ath9k_hw_reset [SRC] hw.c:1859-1943, through chip_reset: save the
-        antenna/sta-id/TSF/LED state, mark the PHY inactive, the AR9271 RF reset, chip_reset,
-        then the AR9271 MAC-gate write. (TSF restore, JTAG-disable and process_ini follow.)"""
+    def reset_begin(self, chan) -> int:
+        """ath9k_hw_reset from the register saves through the JTAG disable.
+        Returns 0, or -EINVAL when ath9k_hw_chip_reset fails."""
         self.saveDefAntenna = self.read(R.AR_DEF_ANTENNA) or 1
         self.macStaId1 = self.read(R.AR_STA_ID1) & R.AR_STA_ID1_BASE_RATE_11B
         self.tsf = self.gettsf64()
         self.saveLedState = self.read(R.AR_CFG_LED) & R.AR_CFG_LED_SAVE_MASK
         self.mark_phy_inactive()
-        # AR9271 + htc_reset_init: pulse the radio RF reset around the chip reset, but only on
-        # the first (cold) reset; the channel-change resets skip it [SRC] hw.c:1923-1943.
         first = self.is_9271() and self.htc_reset_init
         if first:
             self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_RADIO_RF_RST)
-        self.chip_reset(chan)
+        if not self.chip_reset(chan):
+            logger.error("Chip reset failed")
+            return -errno.EINVAL
         if first:
             self.htc_reset_init = False
             self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_GATE_MAC_CTL)
-        # Restore TSF (low word value-excepted) [SRC] hw.c:1946-1947.
         self.settsf64(self.tsf)
-        # Disable JTAG so GPIO 0-3 are usable [SRC] hw.c:1949-1950.
         if self.is_9280_20_or_later():
             self.rmw(R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0)
+        return 0
 
     def getnf(self, chan) -> bool:
         """ath9k_hw_getnf [SRC] calib.c:397 — at the top of a channel-change reset, peek the AGC

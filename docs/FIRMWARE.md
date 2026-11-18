@@ -19,11 +19,6 @@ the verification detail, frame ranges, and hashes; this file is the licensing su
 
 | Blob | Chip(s) | Upstream source | Redistribution license | Byte-verified? |
 |---|---|---|---|---|
-| `rtw8821a_fw.bin` | RTL8821AU (mainline) | `linux-firmware` `rtw88/rtw8821a_fw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ pcap body == wire == linux-firmware |
-| `rtw8822b_fw.bin` | RTL8822BU (mainline) | `linux-firmware` `rtw88/rtw8822b_fw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ vs `rtw8822b_fw.bin[FW_HDR_SIZE:]` |
-| `rtw8812a_fw.bin` | RTL8812AU (mainline) | `linux-firmware` `rtw88/rtw8812a_fw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 + pcap body diff |
-| `rtw8814a_fw-linux_firmware.bin` | RTL8814AU (rtw88 mainline) | `linux-firmware` `rtw88/rtw8814a_fw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ pcap-reassembled == `rtw8814a_fw.bin[64:]` |
-| `rtl8188eufw.bin` | RTL8188EUS (mainline) | `linux-firmware` `rtlwifi/rtl8188eufw.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 match (pcap-extracted) |
 | `rtl8188fufw.bin` | RTL8188FTV (vendor DKMS) | `linux-firmware` `rtlwifi/rtl8188fufw.bin` (== kelebek333 `rtl8188fu` C array) | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 == linux-firmware copy |
 | `rtl8192fufw.bin` | RTL8192FU (mainline) | `linux-firmware` `rtlwifi/rtl8192fufw.bin` v7.3 (efcf2f10, 2024-10-17) | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 `3001f8b5…` == linux-firmware HEAD == the Kali capture's loaded blob; FW download byte-exact in `verify_pcap` (31136 B) |
 | `rtl8192cufw_TMSC.bin`, `rtl8192cufw_A.bin`, `rtl8192cufw_B.bin` | RTL8188CUS / RTL8192CU (mainline rtlwifi) | `linux-firmware` `rtlwifi/rtl8192cufw_{TMSC,A,B}.bin` | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ TMSC: FW download byte-exact in `verify_pcap` (16094 B payload, v88.2, SHA-256 `c083f2db…`); A `32846065…`, B `479e5e67…` |
@@ -56,10 +51,9 @@ Notes:
   first 4 KB (PCI half), RT5370/RT5372/RT5572 use the second 4 KB (USB half). In `WHENCE`,
   `rt3070.bin` is a symlink to `rt2870.bin`, and `rt3071.bin` is documented as "a copy of
   bytes 4096-8191 of rt2870.bin."
-- **RTL8814AU.** Both the mainline (`rtw88_8814au`) and the vendor-DKMS (`rtl8814au_dkms`)
-  ports carry an 8814a blob; they are the same 68320-byte Realtek firmware. `linux-firmware`
-  now ships it as `rtw88/rtw8814a_fw.bin`; the DKMS copy was verified against the vendor C
-  array (`array_mp_8814a_fw_nic`).
+- **RTL8814AU.** The vendor-DKMS (`rtl8814au_dkms`) port carries the 68320-byte Realtek 8814a
+  firmware. `linux-firmware` now ships it as `rtw88/rtw8814a_fw.bin`; the DKMS copy was verified
+  against the vendor C array (`array_mp_8814a_fw_nic`).
 - **Vendor-DKMS Realtek blobs** are embedded as C `data` arrays inside the GPLv2 DKMS
   driver source rather than shipped as standalone files. The *driver code* is GPLv2; the
   embedded firmware payload is Realtek's redistributable binary and is governed by the same

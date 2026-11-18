@@ -28,7 +28,7 @@ import usb.util
 
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.parser import WlanFrameParser
 
 from . import bringup, chan, efuse, mac, phy, tx, watchdog
@@ -240,7 +240,7 @@ class Rtl8821cuDkmsDriver(Driver):
         """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
         return
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune to ``channel`` via the phydm band/channel/bandwidth set (``chan.set_channel``,
         20 MHz). Requires a prior ``connect`` (needs the cached ``info``). Under a real loop the
         tune is serialized with inject / the watchdog tick (``_io_lock``) and offloaded; the offline
@@ -252,11 +252,13 @@ class Rtl8821cuDkmsDriver(Driver):
         mis-tuned TX. Hopping (``scan``) self-heals (a later switch lands), so it skips the pause to
         avoid the per-hop drain. No RX is lost either way: ``chan.set_channel`` stops TRX for the
         RF18 write."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8821CU: channel {channel} not supported")
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             chan.set_channel(self.transport, self.info, channel)
-            return True
+            return
         async with self._io_lock:
             reader = self._reader
             pause = reader is not None and not scan
@@ -267,9 +269,8 @@ class Rtl8821cuDkmsDriver(Driver):
             finally:
                 if pause:
                     reader.resume()
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the management TX descriptor for ``frame_bytes`` (HW ACK-retry limit
         RETRY_COUNT=6) and bulk-OUT [desc][frame] once. BMC is derived from the
         frame's addr1; the descriptor builder is byte-verified against the aireplay-ng capture by
@@ -282,11 +283,10 @@ class Rtl8821cuDkmsDriver(Driver):
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self.transport.bulk_out(pkt)
-            return True
+            self.transport.usb_write_port(pkt)
+            return
         async with self._io_lock:
-            await loop.run_in_executor(None, self.transport.bulk_out, pkt)
-        return True
+            await loop.run_in_executor(None, self.transport.usb_write_port, pkt)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Realtek HW assigns the 802.11 sequence number (the txdesc sets EN_HWSEQ), so the

@@ -201,3 +201,81 @@ unclear how scanning should use those widths. Unconfirmed as a bug: the wifit3-v
 showed about the same AP counts.
 
 **Direction.** Reproduce with the 40 MHz AP, then decide whether scanning needs wide-channel support.
+
+## Spoofed MACs appear in the clients list after campaigns
+
+We unregister the "own" MAC when the campaign ends, but subsequent TX to the faked MAC (M1, retries)
+cause the old faked MAC to appear as a client (it's no longer in "own macs").
+
+Fix: Timer on unregister_own_mac for 30s.
+
+## MT76, Ralink and RTL8187L resend unicast that was already ACKed
+
+These cards stop resending only when the ACK is for their active-monitor MAC (RTL8187L: its silicon
+MAC). Any other source keeps resending to the retry limit even though every copy is ACKed: 7-16
+copies per frame against a live AP (`docs/ACKS.md`, "HW ACK-Based Retries"). Hits every unicast sent
+without active monitor, e.g. `deauth_client` spoofing the AP and the client.
+
+Measured: mt7601u, mt76x0u, mt76x2u, mt7921au, mt7925au, rt3070, rt5370, rt5372, rt5572, rtl8187.
+Unmeasured, same vendor families: rt3572, rt2800usb.
+
+Fix: when the frame's source isn't the active-monitor MAC, inject it with no ACK requested (sent
+once; `send_until_ack` retries in software), like the broadcast fix in `3201c92e`.
+
+## RTL8821CU never reports its silicon MAC
+
+`rtl8821cu_dkms` reads the MAC from EFUSE and writes it to the chip during bring-up
+(`bringup.py:124`, `driver.py:307`), but `self.mac_address` stays at its initial `None`
+(`driver.py:75`): nothing assigns it. So `WlanInterface.mac_address` is None for every 8821CU: the
+Focus card shows no MAC, and `scripts/ack/rx_autoack.py` blames a warm boot.
+
+Fix: assign `self.mac_address` from `efuse.mac_address(self.info)` at bring-up, like the other drivers.
+
+## Vault: Race condition when writing `.meta`; raises or loses fields
+
+`update_meta` (`persist/meta.py`) reads the `.meta`, merges the fields and writes it back through one
+fixed `<name>.meta.tmp`, with no lock. Two writers at once raise `OSError` on the replace (Windows
+`PermissionError`, Linux `FileNotFoundError`), or the last writer drops the other's fields. Real path:
+a crack job's PSK propagation thread and the open Vault drawer's reload write the same related AP.
+A two-thread repro (300 writes each) lost most keys on Windows 3.13 and Linux 3.11 / 3.14. Likely
+cause of one failure of `test_add_key_adds_a_psk_no_saved_capture_confirms_as_not_verified` (1 in 38
+full-suite runs, Kali, 3.14).
+
+Fix: a unique temp file per write (`tempfile.mkstemp`), plus a lock around read-merge-write. Callers
+that read the `.meta` before `update_meta` need the lock too, or `update_meta` takes a merge function.
+11 write call sites.
+
+## ar9271_v2 reopen without a power cycle fails at HTC/WMI init
+
+**Problem.** A firmware download into a chip that wasn't power-cycled fails at HTC/WMI init
+(`HTC ready: credits=33`, then a WMI timeout); a fresh plug works. 3 failures on 2 cards (Alfa x2,
+TP-Link x1). Porting the C's reboot-on-close (`hif_usb.c:1411`) made every reopen fail on Windows,
+so it was reverted.
+
+**Direction.** Capture `rmmod ath9k_htc; modprobe ath9k_htc` and compare it with our failing reopen.
+
+## MT7612U warm bring-up wedges until a replug
+
+**Problem.** After several warm bring-ups, `connect()` fails with `BringUpError(mcu-load-cr): LOAD_CR
+(BBP table) failed after a power cycle + cold reset` (`MCU CMD cmd=2 seq=1 response timeout`), and
+every later bring-up fails until the card is replugged. 1 card, 2 runs: the first failure came on
+warm bring-up #12 and #7.
+
+## RTL8192FU reopen in the same process is denied
+
+**Problem.** `scripts/bringup.py --chipset 8192 -n 10` brings the card up once; cycles 2-10 fail
+with `BringUpError: [Errno 13] Access denied`. A new process opens it fine. 1 card, 2 runs, Windows.
+
+## MAC filter and ACK delivery differ across drivers
+
+**Problem.** Some drivers pass ACK frames up by default, others filter them; `enable_rx_acks`
+counts only ACKs addressed to us. Whether active monitor (auto-ACK, retry-until-ACK) works per
+driver may depend on the same MAC filter bits. Not surveyed.
+
+**Direction.** Per driver: does RX deliver every ACK on the air, with and without `enable_rx_acks`.
+
+## WEP campaigns keep sending after the device is gone
+
+**Problem.** Once a driver reports the device gone (ENODEV), ARP replay retries a burst every
+2 s until the user leaves Focus (`arp_replay.py:294` catches and logs), and Focus shows nothing.
+Seen once, RTL8814AU on a loose cable, Windows: 9 failed bursts over 18 s; RX kept working.

@@ -40,6 +40,7 @@ Milestone status:
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 from typing import Callable, Optional
 
@@ -47,7 +48,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 
 from .constants import (
     EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK,
@@ -60,8 +61,7 @@ from wifit3.dot11.parser import WlanFrameParser
 
 from .bbp import init_bbp, prepare_bbp
 from .chan import (
-    default_power as _default_power, is_xtal_40mhz,
-    set_channel as _set_channel,
+    default_power as _default_power, hop_channel, is_xtal_40mhz,
 )
 from .eeprom import parse_eeprom, read_eeprom_efuse, resolve_rf_chip
 from .firmware import load_firmware, load_firmware_blob
@@ -439,16 +439,17 @@ class RT3572Driver(Driver):
             )
 
         progress(0.99, "Tuning to default channel 1 (M4)")
+        self.transport.device_started = True   # rt2x00lib_start, before mac80211's first config
         try:
             await loop.run_in_executor(
                 None,
-                lambda: _set_channel(
+                lambda: hop_channel(
                     self.transport, self.chip_id.silicon_id, 1,
                     **self._channel_kwargs(1),
                 ),
             )
             self.current_channel = 1
-        except (ValueError, IOError, usb.core.USBError, NotImplementedError) as e:
+        except (ValueError, NotImplementedError) as e:
             logger.warning("default-channel tune failed: %s", e)
 
     # ---- RX loop --------------------------------------------------------
@@ -544,7 +545,7 @@ class RT3572Driver(Driver):
             "freq_offset": self._eeprom.freq_offset,
         }
         if self.chip_id is not None and self.chip_id.silicon_id == 0x3572:
-            # RT3572's _set_channel writes RFCSR12/13.TX_POWER per tune. On a
+            # RT3572's hop_channel writes RFCSR12/13.TX_POWER per tune. On a
             # BURNED EFUSE the kernel sources these per-channel from TXPOWER_BG/A;
             # on an UNBURNED one (the user's AWUS051NH v2, NIC_CONF0=0x0000) there
             # is nothing to decode, so keep the wire-derived defaults the in-tree
@@ -605,34 +606,27 @@ class RT3572Driver(Driver):
             )
         return kwargs
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         if self.chip_id is None:
-            logger.error("set_channel(%d): connect() must run first", channel)
-            return False
+            raise SetChannelError(f"rt3572 set_channel({channel}): connect() must run first")
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"rt3572: channel {channel} not supported")
         kwargs = self._channel_kwargs(channel)
-        try:
-            async with self._conf_lock:
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: _set_channel(
-                        self.transport, self.chip_id.silicon_id, channel,
-                        **kwargs,
-                    ),
-                )
-        except ValueError as e:
-            logger.warning("rt3572 set_channel: %s", e)
-            return False
-        except (IOError, usb.core.USBError, NotImplementedError) as e:
-            logger.error("rt3572 set_channel(%d): %s", channel, e)
-            return False
+        async with self._conf_lock:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: hop_channel(
+                    self.transport, self.chip_id.silicon_id, channel,
+                    **kwargs,
+                ),
+            )
         self.current_channel = channel
         if self._eeprom is not None:
             self._rssi_cal = rssi_cal_for_channel(self._eeprom, channel)
-        # _set_channel just rewrote BBP66 to the per-channel AGC seed, so the
+        # hop_channel just rewrote BBP66 to the per-channel AGC seed, so the
         # tuner must re-establish from scratch on the new channel (and not
         # carry the old channel's averaged RSSI across the hop).
         self._link_tuner.reset()
-        return True
 
     # ---- TX inject (M5) -------------------------------------------------
     def _stamp_tx_seq(self, frame: bytes) -> bytes:
@@ -649,17 +643,19 @@ class RT3572Driver(Driver):
         buf[22:24] = ((seq << 4) & 0xFFFF).to_bytes(2, "little")
         return bytes(buf)
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build TXINFO + TXWI (TXWI ACK bit ON for a unicast addr1 so the chip retries up to the
         global TX_RTY_CFG SHORT_RTY_LIMIT (reg_init's capture value 2), set at connect) and
         bulk-OUT ``frame_bytes`` once. The seq is already stamped by the base."""
         if self.chip_id is None:
             logger.error("inject_frame: connect() must run first")
-            return False
+            return
         txwi_sz = txwi_size_for_silicon(self.chip_id.silicon_id)
         # 5 GHz has no CCK modulation, so a CCK-tagged frame is armed but never
         # emitted; 5 GHz TX must be OFDM (MCS 0 = 6 Mbps OFDM).
         phymode = TXWI_PHYMODE_OFDM if self.current_channel > 14 else TXWI_PHYMODE_CCK
+        if not self.transport.device_present:   # rt2x00mac.c:104-105
+            raise usb.core.USBError("device not present", errno=errno.ENODEV)
         loop = asyncio.get_event_loop()
         if logger.isEnabledFor(logging.DEBUG) and not self._first_inject_dumped:
             await loop.run_in_executor(None, self._dump_tx_state, "pre-first-inject")
@@ -675,15 +671,17 @@ class RT3572Driver(Driver):
             )
         except ValueError as e:
             logger.warning("rt3572 inject_frame bad frame: %s", e)
-            return False
+            return
         except usb.core.USBError as e:
-            logger.error("rt3572 inject_frame USBError: %s", e)
-            return False
+            if is_device_gone(e):              # rt2x00usb.c:330-333
+                self.transport.device_present = False
+                raise
+            logger.debug("rt3572 inject_frame USBError: %s", e)
+            return
         logger.trace("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
                      self.current_channel, len(frame_bytes), txwi_sz, phymode, sent)
         if logger.isEnabledFor(logging.DEBUG):
             await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
-        return True
 
     async def _enable_rx_acks(self) -> None:
         """No-op: the Ralink monitor RX filter (RX_FILTER_CFG DROP_ACK + DROP_NOT_TO_ME clear)

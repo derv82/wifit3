@@ -89,7 +89,7 @@ async def test_inject_wires_hw_retry_limit():
     sent: list[bytes] = []
     d.dev.write = lambda ep, payload, timeout: (sent.append(bytes(payload)), len(payload))[1]
     frame = _mgmt_frame()
-    assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
+    await d.inject_frame(frame)   # base entry -> _stamp_tx_seq -> _inject_frame
     assert len(sent) == 1
     retry = int.from_bytes(sent[0][8:12], "little")            # tx_hdr __le32 retry = (n-1)<<8
     assert ((retry >> 8) & 0xFF) == 7 - 1                      # RETRY_COUNT=7 -> tx_hdr (n-1)

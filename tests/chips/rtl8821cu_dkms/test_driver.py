@@ -3,10 +3,17 @@
 The reference EFUSE burn is logged untagged; a burn that selects a ported-but-HW-untested branch
 is tagged `[untested variant]`, and a 2-antenna board (no ported coex module) is called out.
 """
+import errno
 import logging
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import pytest
+import usb.core
+
+from wifit3.chips.rtl8821cu_dkms import driver as driver_mod
 from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver
+from wifit3.errors import SetChannelError
 
 
 def _info(**kw):
@@ -42,3 +49,23 @@ def test_non_reference_cut_is_tagged(caplog):
 def test_two_antenna_board_warned(caplog):
     txt = _log(_info(ant_num=2), caplog)
     assert "2-antenna board" in txt
+
+
+async def test_a_failed_tune_keeps_the_latched_band(monkeypatch):
+    """need_switch_band never rolls current_band_type back (rtl8821c_phy.c:492-494)."""
+    def failing_set_channel(t, _info, channel):
+        t.current_band = 1
+        raise usb.core.USBError("no device", errno=errno.ENODEV)
+
+    monkeypatch.setattr(driver_mod.chan, "set_channel", failing_set_channel)
+    d = Rtl8821cuDkmsDriver(MagicMock())
+    d.transport = MagicMock()
+    with pytest.raises(usb.core.USBError):
+        await d.set_channel(36)
+    assert d.transport.current_band == 1
+
+
+async def test_set_channel_rejects_an_unsupported_channel():
+    d = Rtl8821cuDkmsDriver(MagicMock())
+    with pytest.raises(SetChannelError):
+        await d.set_channel(15)

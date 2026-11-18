@@ -1,10 +1,7 @@
 """RTL8188EUS DKMS (vendor) port.
 
-Sibling vendor port of ``chips/rtl8188eus`` (mainline). Cleanroom port of the
-``realtek-rtl8188eus`` 5.3.9 DKMS driver (phydm/ODM RX stack) for hotter, more
-stable 2.4 GHz monitor RX. See ``RTL8188EUS_DKMS.md`` for status and the A/B.
-
-VID:PID set kept in lockstep with the mainline sibling ``chips/rtl8188eus`` (all one silicon).
+Cleanroom port of the ``realtek-rtl8188eus`` 5.3.9 DKMS driver (phydm/ODM RX stack)
+for hotter, more stable 2.4 GHz monitor RX. See ``RTL8188EUS_DKMS.md`` for status and the A/B.
 """
 from wifit3.models.device_id import DeviceID
 from wifit3.chips.products import AboCom, DLink, Edimax, Elecom, Mercusys, Realtek, Sitecom, TPLink

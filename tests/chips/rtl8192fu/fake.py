@@ -21,9 +21,10 @@ class FakeTransport:
         self.ops.append(("R", address, width, value))
         return value
 
-    def _write(self, address: int, width: int, value: int) -> None:
+    def _write(self, address: int, width: int, value: int) -> int:
         self.regs[address] = value
         self.ops.append(("W", address, width, value))
+        return width
 
     def read8(self, address: int) -> int:
         return self._read(address, 1)
@@ -34,14 +35,14 @@ class FakeTransport:
     def read32(self, address: int) -> int:
         return self._read(address, 4)
 
-    def write8(self, address: int, value: int) -> None:
-        self._write(address, 1, value)
+    def write8(self, address: int, value: int) -> int:
+        return self._write(address, 1, value)
 
-    def write16(self, address: int, value: int) -> None:
-        self._write(address, 2, value)
+    def write16(self, address: int, value: int) -> int:
+        return self._write(address, 2, value)
 
-    def write32(self, address: int, value: int) -> None:
-        self._write(address, 4, value)
+    def write32(self, address: int, value: int) -> int:
+        return self._write(address, 4, value)
 
     def write_block(self, address: int, data: bytes) -> None:
         self._write(address, len(data), int.from_bytes(data, "little"))

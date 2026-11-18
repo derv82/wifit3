@@ -313,13 +313,13 @@ class WpsCampaign(Campaign):
     # ---- the sweep ----------------------------------------------------------
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
-            # The lease armed our fake MAC (HW-ACK); a _rotate_mac changes it, so re-arm then.
-            rotated = (self._lease is not None and self._lease.mac
-                       and str_to_mac(self._lease.mac) != self.our_mac)
+            # The lease entered active monitor as our MAC; a _rotate_mac changes it, so enter it again.
+            rotated = (self._lease is not None and self._lease.active_monitor_mac
+                       and str_to_mac(self._lease.active_monitor_mac) != self.our_mac)
             if rotated:
-                await self._lease.rearm(self.our_mac)
-                if self._lease.mac:
-                    self.our_mac = str_to_mac(self._lease.mac)
+                await self._lease.enter_active_monitor(self.our_mac)
+                if self._lease.active_monitor_mac:
+                    self.our_mac = str_to_mac(self._lease.active_monitor_mac)
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, self.wsc_2_0),
@@ -479,8 +479,8 @@ class WpsCampaign(Campaign):
         self._lease = self.array.lease(channel=self.channel, fake_mac=self.our_mac,
                                        bssid=str_to_mac(self.bssid), ack_tally=self._tx_ack)
         await self._lease.acquire()
-        if self._lease.mac:
-            self.our_mac = str_to_mac(self._lease.mac)
+        if self._lease.active_monitor_mac:
+            self.our_mac = str_to_mac(self._lease.active_monitor_mac)
         name = self.target.ssid or self.bssid
         logger.info("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
 

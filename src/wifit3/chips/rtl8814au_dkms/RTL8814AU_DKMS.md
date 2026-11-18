@@ -12,9 +12,8 @@
 - Location (vendored in-repo): `driver_captures/captures_rtl8814au/driver-source/`.
 
 ## Python Port Details
-- VID/PID: `0bda:8813`; the default driver for it (`WIFIT3_RTL8814=mainline` selects the rtw88 port).
+- VID/PID: `0bda:8813`.
 - Status: **complete for this card, with [known problems](#known-problems)** — full bring-up, 2.4 + 5 GHz monitor RX + RSSI, and TX (deauth, handshake, PMKID, WEP replay + chopchop, WPS), all hardware-proven. `verify_pcap` reproduces all six cold-boot captures 100% byte-for-byte; `verify_pcap_selftest.py` confirms the gate FAILs on a mutation in each op-class. Runs on **any RTL8814AU card's EFUSE**, not only this ALFA's fuse burns — the rfe_type / rf_path branches are runtime-detected (see [EFUSE variants](#efuse-variants--any-card-support)); non-rfe-1 branches are ported-from-C but hardware-untested.
-- Related port: mainline rtw88 @ `chips/rtw88_8814au/`.
 - Non-obvious in the port (would cost a maintainer time):
   - Firmware uploads as beacon-queue TX packets on bulk EP `0x02` (3081 IDDMA), not an EP0 block-write.
   - RF registers are memory-mapped: write via the per-path LSSI reg (`0xc90`/`0xe90`/`0x1890`/`0x1a90`), read via `read32(base + addr*4)` (`0x2800`/`0x2c00`/`0x3800`/`0x3c00`); `0xfe`/`0xffe` are 50 ms settles.

@@ -26,6 +26,10 @@ import asyncio
 import logging
 import struct
 
+import usb.core
+
+from wifit3.errors import is_device_gone
+
 from .constants import EP_IN_CMD_RESP, EP_OUT_INBAND_CMD
 from .transport import MT76x2UTransport
 
@@ -172,6 +176,8 @@ class McuChannel:
                 EP_OUT_INBAND_CMD, frame, timeout_ms=500,
             )
         except Exception as e:
+            if isinstance(e, usb.core.USBError) and is_device_gone(e):
+                raise
             logger.error("MCU CMD cmd=%d send failed: %s", cmd, e)
             return False
         if written != len(frame):

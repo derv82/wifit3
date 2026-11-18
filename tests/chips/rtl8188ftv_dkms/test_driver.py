@@ -72,14 +72,14 @@ def test_set_channel_threads_hal():
     try:
         chan_mod.switch_channel = lambda t, ch, hal, p, b, rc, ro: calls.append(
             (ch, hal["rf_chnl_val"], rc, ro))
-        assert asyncio.run(d.set_channel(7)) is True
+        asyncio.run(d.set_channel(7))
     finally:
         chan_mod.switch_channel = orig
     assert calls == [(7, 0xC01, 1, 0)]
     assert d.current_channel == 7
 
 
-def test_set_channel_failure_returns_false():
+def test_set_channel_propagates_a_failed_tune():
     import asyncio
     d = _driver()
     d.transport = MagicMock()
@@ -91,9 +91,18 @@ def test_set_channel_failure_returns_false():
         def boom(*a, **k):
             raise IOError("usb gone")
         chan_mod.switch_channel = boom
-        assert asyncio.run(d.set_channel(7)) is False
+        with pytest.raises(IOError):
+            asyncio.run(d.set_channel(7))
     finally:
         chan_mod.switch_channel = orig
+
+
+def test_set_channel_rejects_an_unsupported_channel():
+    import asyncio
+    from wifit3.errors import SetChannelError
+    d = _driver()
+    with pytest.raises(SetChannelError):
+        asyncio.run(d.set_channel(36))
 
 
 def test_stamp_tx_seq_uses_mgnt_seq_without_advancing():
@@ -116,13 +125,31 @@ def test_inject_frame_sends_mgnt_urb_and_advances_seq():
     ap = bytes.fromhex("020000000002")
     card = bytes.fromhex("020000000001")
     frame = tx_mod.stamp_seqnum(tx_mod.build_deauth_frame(ap, card, ap, 0), 5)
-    assert asyncio.run(d._inject_frame(frame)) is True
+    asyncio.run(d._inject_frame(frame))
     data = d.transport.bulk_out.call_args[0][0]
     assert data[40:] == frame
     assert data[:40] == tx_mod.build_mgnt_desc(size=len(frame), seq=5,
                                                bmc=False)
     assert d.hal["mgnt_seq"] == 6
 
+
+
+def test_inject_frame_raises_when_the_device_is_gone():
+    import asyncio
+    import errno
+
+    import usb.core
+
+    from wifit3.chips.rtl8188ftv_dkms import tx as tx_mod
+    d = _driver()
+    d.transport = MagicMock()
+    d.transport.bulk_out.side_effect = usb.core.USBError("no device", errno=errno.ENODEV)
+    d.hal = {"mgnt_seq": 5}
+    ap = bytes.fromhex("020000000002")
+    card = bytes.fromhex("020000000001")
+    frame = tx_mod.stamp_seqnum(tx_mod.build_deauth_frame(ap, card, ap, 0), 5)
+    with pytest.raises(usb.core.USBError):
+        asyncio.run(d._inject_frame(frame))
 
 def test_inject_frame_sends_data_without_consuming_seq_on_reject():
     import asyncio
@@ -131,10 +158,10 @@ def test_inject_frame_sends_data_without_consuming_seq_on_reject():
     d.hal = {"mgnt_seq": 5}
     qos = (bytes((0x88, 0x01, 0x00, 0x00)) + bytes(18) + bytes((0x50, 0x00))
            + bytes(36))
-    assert asyncio.run(d._inject_frame(qos)) is True
+    asyncio.run(d._inject_frame(qos))
     assert d.hal["mgnt_seq"] == 6
-    assert asyncio.run(d._inject_frame(b"\xD4" + bytes(30))) is False
-    assert asyncio.run(d._inject_frame(b"\xc0" * 10)) is False
+    asyncio.run(d._inject_frame(b"\xD4" + bytes(30)))
+    asyncio.run(d._inject_frame(b"\xc0" * 10))
     assert d.transport.bulk_out.call_count == 1
     assert d.hal["mgnt_seq"] == 6
 

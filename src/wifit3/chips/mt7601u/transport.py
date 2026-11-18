@@ -25,6 +25,8 @@ from typing import Optional
 import usb.core
 import usb.util
 
+from wifit3.errors import is_device_gone
+
 from .constants import (
     MT_EP_IN_CMD_RESP,
     MT_EP_IN_PKT_RX,
@@ -52,23 +54,13 @@ _FW_BULK_TIMEOUT_MS = 1000   # mcu.c:317 firmware-upload completion timeout
 _RX_TIMEOUT_MS = 200         # must stay well under RxReaderThread.stop()'s 1.5s join timeout
 
 
-class DeviceGone(Exception):
-    """The card was unplugged (the kernel's -ENODEV path, usb.c:105)."""
-
-
-def _is_device_gone(e: usb.core.USBError) -> bool:
-    """True for -ENODEV, the one error mt7601u_vendor_request does not retry."""
-    if getattr(e, "backend_error_code", None) == -4:      # LIBUSB_ERROR_NO_DEVICE
-        return True
-    return e.errno == errno.ENODEV
-
-
 class MT7601UTransport:
     """Owns the PyUSB handle and the vendor-control encoding usb.c implements."""
 
     def __init__(self, dev: usb.core.Device, timeout_ms: int = MT_VEND_REQ_TOUT_MS):
         self.dev = dev
         self.timeout_ms = timeout_ms
+        self.removed = False   # MT7601U_STATE_REMOVED
         self._interface_claimed = False
         self.in_eps: list[int] = []
         self.in_max_packet: int = 0
@@ -154,6 +146,8 @@ class MT7601UTransport:
         req_type = direction | USB_TYPE_VENDOR | USB_RECIP_DEVICE
         last_exc: Optional[usb.core.USBError] = None
         for attempt in range(MT_VEND_REQ_MAX_RETRY):
+            if self.removed:
+                raise usb.core.USBError("device removed", errno=errno.ENODEV)
             try:
                 if data is not None:
                     payload: object = data
@@ -177,14 +171,15 @@ class MT7601UTransport:
                 return int(got)
             except usb.core.USBError as e:
                 last_exc = e
-                if _is_device_gone(e):
-                    raise DeviceGone(f"vendor req {req:#04x} off {offset:#06x}") from e
+                if is_device_gone(e):               # usb.c:105-108
+                    self.removed = True
+                    raise
                 if attempt < MT_VEND_REQ_MAX_RETRY - 1:
                     logger.warning("vendor req %02x off %04x attempt %d/%d: %s",
                                    req, offset, attempt + 1, MT_VEND_REQ_MAX_RETRY, e)
                     time.sleep(_VEND_RETRY_SLEEP_MS / 1000)
         logger.error("Vendor request req:%02x off:%04x failed:%s", req, offset, last_exc)
-        raise last_exc                                   # type: ignore[misc]
+        return 0                                         # callers carry on; rr reads ~0
 
     # ------------------------------------------------------------------
     # Register access (usb.c:126 __mt7601u_rr / usb.c:157 __mt7601u_vendor_single_wr)
@@ -244,7 +239,7 @@ class MT7601UTransport:
     def bulk_out(self, data: bytes, timeout_ms: int = _BULK_TIMEOUT_MS) -> int:
         """Write to the inband-command endpoint (MT_EP_OUT_INBAND_CMD)."""
         ep = self.out_eps[MT_EP_OUT_INBAND_CMD]
-        return self.dev.write(ep, data, timeout=timeout_ms)
+        return self._bulk_write(ep, data, timeout_ms)
 
     def bulk_out_tx(self, data: bytes, queue: int, timeout_ms: int = _BULK_TIMEOUT_MS) -> int:
         """Write one 802.11 frame to the OUT endpoint for ``queue`` (dma.c:310).
@@ -257,7 +252,17 @@ class MT7601UTransport:
         to stop the packet stream on the receive endpoint.
         """
         ep = self.out_eps[queue]
-        return self.dev.write(ep, data, timeout=timeout_ms)
+        return self._bulk_write(ep, data, timeout_ms)
+
+    def _bulk_write(self, ep: int, data: bytes, timeout_ms: int) -> int:
+        if self.removed:
+            raise usb.core.USBError("device removed", errno=errno.ENODEV)
+        try:
+            return self.dev.write(ep, data, timeout=timeout_ms)
+        except usb.core.USBError as e:
+            if is_device_gone(e):
+                self.removed = True
+            raise
 
     def bulk_out_inband_fw(self, data: bytes, timeout_ms: int = _FW_BULK_TIMEOUT_MS) -> int:
         """The firmware-download URB (mcu.c:311): same endpoint, longer timeout."""

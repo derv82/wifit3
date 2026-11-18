@@ -21,6 +21,7 @@ REALTEK_USB_VENQT_CMD_REQ = 0x05
 REALTEK_USB_VENQT_CMD_IDX = 0x00
 MAX_USBCTRL_VENDORREQ_TIMES = 10
 USB_CONTROL_MSG_TIMEOUT = 1000           # usb.c:44 usb_control_msg(..., 1000)
+RTL_USB_MAX_RX_COUNT = 100               # wifi.h:83: slots in rtlpriv->usb_data
 
 # usb.h
 USB_HIGH_SPEED_BULK_SIZE = 512

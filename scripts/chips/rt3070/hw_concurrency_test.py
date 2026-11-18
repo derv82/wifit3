@@ -71,7 +71,7 @@ async def main() -> int:
     # RX-frames-flowing IS the wedge test (294/3s ⇒ RX-DMA works). Read WPDMA only AFTER
     # the reader stops — reading it mid-bulk-IN returns a racy/stale value, not a wedge.
     await driver.close()
-    glo = RT3070Transport(driver.transport.dev, timeout_ms=300).register_read(C.WPDMA_GLO_CFG)
+    glo = RT3070Transport(driver.transport.dev).register_read(C.WPDMA_GLO_CFG)
 
     print(f"\n[RESULT] post-stress RX frames in 3s: {after_frames}   "
           f"WPDMA_GLO_CFG (reader stopped) = 0x{glo:08x}")

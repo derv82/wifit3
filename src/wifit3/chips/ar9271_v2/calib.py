@@ -13,9 +13,13 @@ strict-cursor replay's recorded read responses drive them positionally.
 """
 from __future__ import annotations
 
+import logging
+
 from . import reg as R
 from .chan import Channel
 from .hw import AthHw
+
+logger = logging.getLogger(__name__)
 
 # ar5416_cca_regs — ah->nf_regs [SRC] ar5008_phy.c:1346. Only index 0 is touched on this
 # 1T1R non-HT40 path (chains 1/2 are masked out, the ext chain is HT40-only).
@@ -23,16 +27,17 @@ NF_REGS = [R.AR_PHY_CCA, 0xA864, 0xB864, R.AR_PHY_EXT_CCA0, 0xA9BC, 0xB9BC]
 
 
 def cl_cal(hw: AthHw, chan: Channel) -> bool:
-    """ar9285_hw_cl_cal [SRC] ar9002_calib.c:747 — carrier-leak calibration. The HT20
-    parallel-cal branch is skipped on the legacy-20 channel."""
+    """ar9285_hw_cl_cal: carrier-leak calibration."""
     hw.rmw(R.AR_PHY_CL_CAL_CTL, R.AR_PHY_CL_CAL_ENABLE, 0)
-    if chan.is_ht20():                                   # not taken on the 2.4 GHz legacy path
+    if chan.is_ht20():
         hw.rmw(R.AR_PHY_CL_CAL_CTL, R.AR_PHY_PARALLEL_CAL_ENABLE, 0)
         hw.rmw(R.AR_PHY_TURBO, R.AR_PHY_FC_DYN2040_EN, 0)
         hw.rmw(R.AR_PHY_AGC_CONTROL, 0, R.AR_PHY_AGC_CONTROL_FLTR_CAL)
         hw.rmw(R.AR_PHY_TPCRG1, 0, R.AR_PHY_TPCRG1_PD_CAL_ENABLE)
         hw.rmw(R.AR_PHY_AGC_CONTROL, R.AR_PHY_AGC_CONTROL_CAL, 0)
         if not hw.wait(R.AR_PHY_AGC_CONTROL, R.AR_PHY_AGC_CONTROL_CAL, 0):
+            logger.debug("offset calibration failed to complete in %d ms; noisy environment?",
+                         R.AH_WAIT_TIMEOUT // 1000)
             return False
         hw.rmw(R.AR_PHY_TURBO, 0, R.AR_PHY_FC_DYN2040_EN)
         hw.rmw(R.AR_PHY_CL_CAL_CTL, 0, R.AR_PHY_PARALLEL_CAL_ENABLE)
@@ -42,6 +47,8 @@ def cl_cal(hw: AthHw, chan: Channel) -> bool:
     hw.rmw(R.AR_PHY_TPCRG1, R.AR_PHY_TPCRG1_PD_CAL_ENABLE, 0)
     hw.rmw(R.AR_PHY_AGC_CONTROL, R.AR_PHY_AGC_CONTROL_CAL, 0)
     if not hw.wait(R.AR_PHY_AGC_CONTROL, R.AR_PHY_AGC_CONTROL_CAL, 0):
+        logger.debug("offset calibration failed to complete in %d ms; noisy environment?",
+                     R.AH_WAIT_TIMEOUT // 1000)
         return False
     hw.rmw(R.AR_PHY_ADC_CTL, R.AR_PHY_ADC_CTL_OFF_PWDADC, 0)
     hw.rmw(R.AR_PHY_CL_CAL_CTL, 0, R.AR_PHY_CL_CAL_ENABLE)
@@ -173,8 +180,7 @@ def _setup_iq_calibration(hw: AthHw) -> None:
 
 
 def init_cal(hw: AthHw, chan: Channel) -> bool:
-    """ar9002_hw_init_cal [SRC] ar9002_calib.c:845 — AR9271 path. Carrier-leak then PA cal,
-    load + start the noise floor, then arm the IQ-mismatch per-calibration."""
+    """ar9002_hw_init_cal, AR9271 branch."""
     if not cl_cal(hw, chan):
         return False
     pa_cal(hw)

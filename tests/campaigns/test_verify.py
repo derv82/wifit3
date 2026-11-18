@@ -28,7 +28,7 @@ def _no_leaving_echo_wait(monkeypatch):
 class _FakeLease:
     def __init__(self, iface, mac):
         self.iface = iface
-        self.mac = mac
+        self.active_monitor_mac = mac
 
     async def __aenter__(self):
         return self.iface

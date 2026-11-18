@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO / "scripts" / "porting"))
 import rtw88_pcap_replay as rp
 from wifit3.chips.rtl8188ftv_dkms import dm, prom, queues, tx
 from wifit3.chips.rtl8188ftv_dkms.driver import Rtl8188ftvDkmsDriver
+from wifit3.errors import SetChannelError
 
 # dm.watchdog_tick head: misc.check_rxfifo_full (0x667/0x664) + false_alarm_stats hold (0xC00/0xD00).
 TICK_HEAD = [("R", 0x667, 1), ("W", 0x667, 1), ("R", 0x664, 2),
@@ -204,8 +205,7 @@ class Walk:
     async def run_race(self, end: int, channel: int) -> None:
         switch_t = SubsequenceTransport(self.ops[self.i:end], self.i)
         self.driver.transport = switch_t
-        if not await self.driver.set_channel(channel):
-            raise HandlerFailed(f"set_channel({channel}) returned False")
+        await self.driver.set_channel(channel)
         rest = switch_t.remainder()
         tick_t = rp.ReplayTransport(rest)
         self.driver.transport = tick_t
@@ -314,7 +314,7 @@ def run_capture(pcap: Path) -> int:
         print("  precondition: isMonitor static left TRUE by an earlier plug (opmode resets RCR)")
     try:
         counts = asyncio.run(_walk(w))
-    except (rp.Divergence, HandlerFailed) as e:
+    except (rp.Divergence, HandlerFailed, SetChannelError) as e:
         first = first_divergence(e)
         at = f" at {fmt_op(w.ops[w.i])}" if w.i < len(w.ops) else ""
         print(f"\nFAIL after {w.i} matched ops{at}:\n  {type(first).__name__}: {first}")

@@ -204,7 +204,7 @@ class ReplayDevice:
         """A TX bulk-OUT frame identical to the wire except the single COOKIE byte (the TX slot).
         The slot is host-scheduling state: find_first_zero_bit over the frames in flight, whose
         allocation order races mac80211 queue servicing against the wmi_event tasklet — not
-        derivable from the 802.11 frame the gate hands inject_frame (verified: 747/753 cookies
+        derivable from the 802.11 frame the gate hands inject_frame (verified: 193/251 cookies
         reproduce exactly; the residue is this race). Everything else — HIF/htc/tx headers and the
         whole frame — must match byte-for-byte. The cookie sits at the 2nd-to-last byte of the tx
         header (mgmt 8 B -> off 18, data 12 B -> off 22). Counted, never silently waived."""

@@ -9,7 +9,7 @@ import usb.core
 from wifit3.chips.driver import Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.errors import BringUpError, is_device_gone
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.models.device_id import DeviceID
 
 from . import constants as C
@@ -206,16 +206,15 @@ class RTL8192CUDriver(Driver):
         if packet is not None:
             self._rx_callback(packet)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         if channel not in self.SUPPORTED_CHANNELS:
-            raise ValueError(f"unsupported RTL8192CU channel: {channel}")
+            raise SetChannelError(f"RTL8192CU: channel {channel} not supported")
         if not self._started:
             raise BringUpError("RTL8192CU channel", "driver is not connected")
         async with self._io_lock:
             await asyncio.get_running_loop().run_in_executor(None, self._tune, channel)
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """rtl_op_tx for a monitor-injected frame: no STA, mac80211's queue pick, the lowest rate."""
         if not self._started:
             raise BringUpError("RTL8192CU TX", "driver is not connected")
@@ -223,7 +222,7 @@ class RTL8192CUDriver(Driver):
                                queue_mapping=ieee80211_select_queue_80211(frame_bytes))
         urb = rtl_op_tx(self.priv, frame_bytes, info, rtl_usb_tx)
         if urb is None:
-            return False
+            return
         ep_num, payload = urb
         try:
             await asyncio.get_running_loop().run_in_executor(
@@ -233,7 +232,6 @@ class RTL8192CUDriver(Driver):
             if is_device_gone(error):
                 self._on_rx_fatal(error)
             raise
-        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """HWSEQ_EN is set only under firmware-controlled LPS (trx.c:600), never on USB, and

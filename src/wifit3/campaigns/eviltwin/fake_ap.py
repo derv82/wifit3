@@ -1,6 +1,6 @@
 """FakeAP: the WPA2 twin's beacon + responder + per-client state (mechanism only, no UI/log).
 
-Owns the decoy-channel interface: arms active-monitor on the cloned BSSID, beacons the WPA2 twin,
+Owns the decoy-channel interface: enters active monitor as the cloned BSSID, beacons the WPA2 twin,
 answers probe/auth/assoc, and crafts + injects M1 with a fresh per-client ANonce. It emits nothing
 to the UI. The campaign polls ``stats`` for the activity log and reads the sink for the
 crackable-handshake stop condition. Each M1 is passed to ``record_m1`` (the campaign seeds the sink)
@@ -73,7 +73,7 @@ class FakeAP:
         self.stats = FakeApStats()
         self._probe_resp = self._probe_resp_from(twin_beacon)
         self._running = False
-        self._fake_mac_armed = False
+        self._in_active_monitor = False
         self._rx_registered = False
         self._beacon_task: Optional[asyncio.Task] = None
         self._m1_tasks: Dict[str, asyncio.Task] = {}
@@ -83,8 +83,8 @@ class FakeAP:
     async def start(self) -> None:
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
-        armed_mac = await self.iface.set_fake_mac(self.bssid, self.bssid)
-        self._fake_mac_armed = armed_mac is not None
+        active_monitor_mac = await self.iface.set_fake_mac(self.bssid, self.bssid)
+        self._in_active_monitor = active_monitor_mac is not None
         if self.rx_source is not None:
             self.rx_source.register_rx_callback(self.on_rx)
             self._rx_registered = True
@@ -115,8 +115,8 @@ class FakeAP:
                 pass
             except Exception as exc:
                 error = error or exc
-        if self._fake_mac_armed:
-            self._fake_mac_armed = False
+        if self._in_active_monitor:
+            self._in_active_monitor = False
             try:
                 await self.iface.clear_fake_mac()
             except Exception as exc:

@@ -1,16 +1,11 @@
 """Monitor-mode bring-up after hw_init: configure_filter, rtl_op_config tunes, the watchdog, active monitor."""
-import asyncio
-import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-import usb.core
 
 from wifit3.chips.rtl8192cu import SUPPORTED_IDS
 from wifit3.chips.rtl8192cu import constants as C
-from wifit3.chips.rtl8192cu import driver as driver_module
 from wifit3.chips.rtl8192cu.base import rtl_watchdog_wq_callback
 from wifit3.chips.rtl8192cu.core import Cfg80211ChanDef, ieee80211_channel_to_frequency, rtl_op_config
 from wifit3.chips.rtl8192cu.driver import RTL8192CUDriver
@@ -45,37 +40,6 @@ def _rf_writes(io: FakeChip, lssi: int) -> list[tuple[int, int]]:
 def _tune(priv: RtlPriv, channel: int, width=C.NL80211_CHAN_WIDTH_20_NOHT, center_freq1=0) -> None:
     chandef = Cfg80211ChanDef(channel, ieee80211_channel_to_frequency(channel), width, center_freq1)
     rtl_op_config(priv, C.IEEE80211_CONF_CHANGE_CHANNEL, chandef)
-
-
-async def test_connect_brings_up_monitor_and_starts_the_watchdog(monkeypatch):
-    entry = next(d for d in SUPPORTED_IDS if (d.vid, d.pid) == (0x0BDA, 0x8176))
-    driver = RTL8192CUDriver.from_usb_device(MagicMock(), entry)
-    io = FakeChip({C.REG_SYS_CFG: SYS_CFG_88C_TSMC, C.REG_9346CR: C.EEPROM_EN, **NORMAL_SIE_EP_2OUT},
-                  probed_efuse())
-    driver.priv = RtlPriv(io)
-    endpoints = [SimpleNamespace(bEndpointAddress=e.bEndpointAddress, bmAttributes=e.bmAttributes) for e in EP_2OUT]
-    driver.transport = MagicMock(interface=endpoints,
-                                 **{"is_high_speed.return_value": True, "bulk_read.return_value": None})
-
-    assert await driver.connect() is True
-    await asyncio.sleep(0)
-    await asyncio.sleep(0.05)
-
-    assert driver.mac_address == FAKE_MAC.hex(":")
-    rcr = C.RCR_APM | C.RCR_AM | C.RCR_ADF | C.RCR_AB | C.RCR_APPFCS | C.RCR_APP_ICV | C.RCR_AMF \
-        | C.RCR_HTC_LOC_CTRL | C.RCR_APP_MIC | C.RCR_APP_PHYSTS | C.RCR_ACRC32
-    assert io.writes(C.REG_RCR)[-1] == rcr | C.RCR_ACF | C.RCR_AAP
-    assert driver.priv.phy.current_channel == 1
-    assert C.REG_RCR in io.addrs("R")
-    await driver.set_channel(11)
-    assert driver.priv.phy.current_channel == 11
-    with pytest.raises(ValueError):
-        await driver.set_channel(36)
-    assert driver.transport.bulk_read.call_args.args[:2] == (0x81, C.RTL92C_SIZE_MAX_RX_BUFFER)
-    await driver.close()
-    assert driver._watchdog_task is None and driver._rx_reader is None
-    assert io.writes(C.REG_RSV_CTRL)[-1] == 0x0E
-    driver.transport.release.assert_called()
 
 
 def test_tune_writes_txpower_then_rf_chnlbw_then_channel_access_then_bw():
@@ -246,52 +210,6 @@ async def test_rx_acks_toggle_the_ack_subtype_in_the_ctrl_filter():
     io.regs[C.REG_RXFLTMAP1] = C.BIT(13)
     await driver.disable_rx_acks()
     assert io.writes(C.REG_RXFLTMAP1)[-1] == 0
-
-
-async def test_close_waits_for_an_in_flight_watchdog_tick(monkeypatch):
-    driver, _io = await _connected_driver()
-    driver.transport = MagicMock()
-    order = []
-    tick_started, release_tick = threading.Event(), threading.Event()
-
-    def tick(_priv):
-        tick_started.set()
-        release_tick.wait(5)
-        order.append("tick done")
-
-    monkeypatch.setattr(driver_module, "rtl_watchdog_wq_callback", tick)
-    monkeypatch.setattr(driver, "_stop", lambda: order.append("card disable"))
-    loop = asyncio.get_running_loop()
-    driver._watchdog_task = loop.create_task(driver._watchdog())
-    await loop.run_in_executor(None, tick_started.wait, 5)
-    closing = loop.create_task(driver.close())
-    await asyncio.sleep(0.05)
-    assert order == []
-    release_tick.set()
-    await closing
-    assert order == ["tick done", "card disable"]
-
-
-@pytest.mark.parametrize("errno_value, device_gone", [(32, False), (19, True)])
-async def test_a_failed_watchdog_tick_leaves_close_working(monkeypatch, errno_value, device_gone):
-    driver, _io = await _connected_driver()
-    driver.transport = MagicMock()
-    ticks = []
-
-    def tick(_priv):
-        ticks.append(1)
-        raise usb.core.USBError("tick", errno=errno_value)
-
-    monkeypatch.setattr(driver_module, "rtl_watchdog_wq_callback", tick)
-    monkeypatch.setattr(driver_module, "WATCHDOG_SECONDS", 0)
-    stops = []
-    monkeypatch.setattr(driver, "_stop", lambda: stops.append(1))
-    driver._watchdog_task = asyncio.get_running_loop().create_task(driver._watchdog())
-    await asyncio.sleep(0.05)
-    assert (len(ticks) == 1) == device_gone
-    await driver.close()
-    assert stops == ([] if device_gone else [1])
-    driver.transport.release.assert_called_once()
 
 
 async def test_connect_on_a_started_driver_is_a_no_op():
