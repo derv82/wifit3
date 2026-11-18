@@ -8,9 +8,8 @@ from wifit3 import chips
 from wifit3.chips.driver import Driver
 from wifit3.chips.rt3572.driver import RT3572Driver
 from wifit3.chips.rt5572.driver import RT5572Driver
-from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
-DRIVERS_WITHOUT_DFS = {RT3572Driver, RTL8814AUDriver}
+DRIVERS_WITHOUT_DFS = {RT3572Driver}
 
 
 def _driver_classes() -> list[type[Driver]]:

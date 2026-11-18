@@ -11,7 +11,6 @@ import errno
 import functools
 import importlib
 import logging
-import os
 import pkgutil
 import sys
 from dataclasses import dataclass, replace
@@ -70,15 +69,6 @@ class Claim(NamedTuple):
 
 
 @dataclass(frozen=True)
-class DkmsFamily:
-    """Env var picks the DKMS ``default`` or the ``mainline`` package."""
-    key: str
-    default: str
-    mainline: Optional[str] = None
-    env: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class VidPidFamily:
     """Distinct chips on one vid:pid; ``resolve(dev)`` routes by live device."""
     default: str
@@ -96,20 +86,16 @@ def _resolve_2357_0137(dev: usb.core.Device) -> str:
     return "rtl8822cu"
 
 
-# One chip, two driver packages; an env var picks the winner. Keyed by every dir a family owns.
-_DKMS_BY_DIR: dict[str, DkmsFamily] = {
-    d: fam
-    for fam in (
-        DkmsFamily(key="ar9271",     default="ar9271_v2"),
-        DkmsFamily(key="rtl8821cu",  default="rtl8821cu_dkms"),
-        DkmsFamily(key="rtl8188eus", default="rtl8188eus_dkms", mainline="rtl8188eus",   env="WIFIT3_RTL8188"),
-        DkmsFamily(key="rtl8188ftv", default="rtl8188ftv_dkms"),
-        DkmsFamily(key="rtl8812au",  default="rtl8812au_dkms",  mainline="rtl8812au",    env="WIFIT3_RTL8812"),
-        DkmsFamily(key="rtl8821au",  default="rtl8821au_dkms",  mainline="rtl8821au",    env="WIFIT3_RTL8821"),
-        DkmsFamily(key="rtl8814au",  default="rtl8814au_dkms",  mainline="rtw88_8814au", env="WIFIT3_RTL8814"),
-        DkmsFamily(key="rtl8822bu",  default="rtl8822bu_dkms",  mainline="rtl8822bu",    env="WIFIT3_RTL8822"),
-    )
-    for d in (fam.default, fam.mainline) if d
+# Driver dirs whose setup key is not the dir name.
+_SETUP_KEY_BY_DIR: dict[str, str] = {
+    "ar9271_v2":       "ar9271",
+    "rtl8821cu_dkms":  "rtl8821cu",
+    "rtl8188eus_dkms": "rtl8188eus",
+    "rtl8188ftv_dkms": "rtl8188ftv",
+    "rtl8812au_dkms":  "rtl8812au",
+    "rtl8821au_dkms":  "rtl8821au",
+    "rtl8814au_dkms":  "rtl8814au",
+    "rtl8822bu_dkms":  "rtl8822bu",
 }
 
 def _resolve_148f_760a(dev: usb.core.Device) -> str:
@@ -138,28 +124,17 @@ _VIDPID_FAMILIES: dict[VidPid, VidPidFamily] = {
 }
 
 
-def _winner_dir(fam: DkmsFamily) -> str:
-    """Driver dir: env var opts into ``mainline``, else ``default``."""
-    if fam.mainline and os.environ.get(fam.env or "", "").strip().lower() == "mainline":
-        return fam.mainline
-    return fam.default
-
-
 @functools.cache
 def supported_ids() -> dict[VidPid, Claim]:
     """``{(vid, pid): Claim}`` for every supported vid:pid."""
     from wifit3 import chips as chips_pkg
 
-    winners = {fam.key: _winner_dir(fam) for fam in set(_DKMS_BY_DIR.values())}
     mapping: dict[VidPid, Claim] = {}
     for mod_info in pkgutil.iter_modules(chips_pkg.__path__, chips_pkg.__name__ + "."):
         if not mod_info.ispkg:
             continue
         dir_name = mod_info.name.rsplit(".", 1)[-1]
-        fam = _DKMS_BY_DIR.get(dir_name)
-        if fam is not None and dir_name != winners[fam.key]:
-            continue  # a DKMS family's losing package
-        key = fam.key if fam is not None else dir_name
+        key = _SETUP_KEY_BY_DIR.get(dir_name, dir_name)
         mod = importlib.import_module(mod_info.name)
         for entry in getattr(mod, "SUPPORTED_IDS", None) or ():
             slot = (entry.vid, entry.pid)
@@ -168,16 +143,14 @@ def supported_ids() -> dict[VidPid, Claim]:
                 continue  # a shared vid:pid's non-default chip
             assert slot not in mapping, (
                 f"VID:PID {slot[0]:#06x}:{slot[1]:#06x} claimed by two packages; "
-                f"add a DkmsFamily or VidPidFamily to disambiguate")
+                f"add a VidPidFamily to disambiguate")
             mapping[slot] = Claim(entry, key, mod.import_driver)
     return mapping
 
 
 @functools.cache
 def zerocd_ids() -> frozenset[VidPid]:
-    """Every ZeroCD (mass-storage stub) VID:PID any driver opts into, merged across all packages.
-    Unlike ``supported_ids`` this keeps both members of a DKMS pair: the stub needs ejecting whichever
-    driver ultimately wins."""
+    """Every ZeroCD (mass-storage stub) VID:PID any driver opts into, merged across all packages."""
     from wifit3 import chips as chips_pkg
 
     ids: set[VidPid] = set()
