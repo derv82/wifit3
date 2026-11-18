@@ -13,10 +13,7 @@ goal). The whole operational stream (monitor entry, per-hop channel tunes, every
 byte-diffed against the cold-boot capture by ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``. The
 TX path (``tx.py`` + ``inject_frame``) is wired and HW-confirmed (deauth/EAPOL on the air).
 
-Registered in ``wlan/discovery.py`` behind ``WIFIT3_RTL8188`` — the mainline-derived
-``rtl8188eus`` stays the default for 2357:010c until this vendor port is hardware-proven to
-tie/beat it on 2.4 GHz breadth; ``WIFIT3_RTL8188=dkms`` opts in. Exercise via
-``scripts/chips/rtl8188eus_dkms/``.
+Exercise via ``scripts/chips/rtl8188eus_dkms/``.
 """
 from __future__ import annotations
 
@@ -29,7 +26,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -285,8 +282,10 @@ class Rtl8188eusDkmsDriver(Driver):
         async with self._io_lock:
             await loop.run_in_executor(None, monitor.drop_ack_frames, self.transport)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune to a 2.4 GHz channel at 20 MHz."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8188EUS: channel {channel} not supported")
         loop = asyncio.get_running_loop()
         async with self._io_lock:
             self._rf_chnl = await loop.run_in_executor(
@@ -294,9 +293,8 @@ class Rtl8188eusDkmsDriver(Driver):
                 self._i_cut_series, self._pt_state.remnant_cck_swing_idx,
                 self._pt_state.remnant_ofdm_swing_idx, self._watchdog_state)
         self._channel = channel
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the management TX descriptor (tx.build_mgmt_txdesc, HW ACK-retry limit
         12, the vendor value) and send ``[desc | frame]`` on the bulk-OUT pipe (the
         single EP 0x02, where the MGMT queue maps) once. ``frame_bytes`` is the MPDU without FCS
@@ -304,7 +302,7 @@ class Rtl8188eusDkmsDriver(Driver):
         so the frame is never emitted mid-retune. TX is explicit-action only (passive-by-default):
         nothing on the scan/connect path calls this."""
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
-            return False
+            return
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
         # The driver copies the frame's 802.11 sequence number into the TX descriptor (the
@@ -314,7 +312,6 @@ class Rtl8188eusDkmsDriver(Driver):
         payload = tx.build_mgmt_txdesc(len(frame_bytes), bmc=bmc, seqnum=seqnum) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
-        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Realtek HW assigns the 802.11 sequence number (the txdesc sets EN_HWSEQ), so the

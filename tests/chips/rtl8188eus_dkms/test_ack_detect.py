@@ -82,7 +82,7 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     sent: list[bytes] = []
     d.transport.bulk_out = lambda pkt: sent.append(pkt)
     frame = _mgmt_frame()
-    assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
+    await d.inject_frame(frame)   # base entry -> _stamp_tx_seq -> _inject_frame
     assert len(sent) == 1
     pkt = sent[0]
     rty = (int.from_bytes(pkt[20:24], "little") >> 18) & 0x3F    # txdw5 DATA_RETRY_LIMIT

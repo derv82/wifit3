@@ -7,7 +7,10 @@ capture) lives in ``scripts/chips/rtl8188eus_dkms/verify_pcap.py``.
 from wifit3.chips.rtl8188eus_dkms import firmware
 from wifit3.chips.rtl8188eus_dkms.constants import (
     FW_8188E_START_ADDRESS,
+    FWDL_ChkSum_rpt,
     MAX_REG_BLOCK_SIZE,
+    REG_HMETFR,
+    WINTINI_RDY,
 )
 
 
@@ -27,12 +30,15 @@ class FakeTx:
 
     def write8(self, a, v):
         self.writes.append((a, 1, v & 0xFF))
+        return True
 
     def write32(self, a, v):
         self.writes.append((a, 4, v & 0xFFFFFFFF))
+        return True
 
     def write_block(self, a, data):
         self.blocks.append((a, bytes(data)))
+        return True
 
 
 def test_blob_identity():
@@ -59,3 +65,23 @@ def test_block_write_split_matches_capture_profile():
     # Per-page the FW-SRAM address restarts at FW_8188E_START_ADDRESS.
     assert t.blocks[0][0] == FW_8188E_START_ADDRESS
     assert t.blocks[1][0] == FW_8188E_START_ADDRESS + MAX_REG_BLOCK_SIZE
+
+
+def test_download_firmware_rewrites_the_image_after_a_failed_page_write(mocker):
+    t = mocker.Mock()
+    t.read8.return_value = 0
+    t.read32.return_value = FWDL_ChkSum_rpt | WINTINI_RDY
+    t.write_block.side_effect = [False, True]
+    fw_blob = bytes(MAX_REG_BLOCK_SIZE)
+    assert firmware.download_firmware(t, fw_blob) is True
+    assert t.write_block.call_count == 2
+
+
+def test_download_firmware_inits_the_firmware_vars_after_a_failed_download(mocker):
+    mocker.patch("wifit3.chips.rtl8188eus_dkms.firmware.time.sleep")
+    mocker.patch("wifit3.chips.rtl8188eus_dkms.firmware.time.perf_counter",
+                 side_effect=range(1000))
+    t = FakeTx()
+    assert firmware.download_firmware(t, bytes(MAX_REG_BLOCK_SIZE)) is False
+    assert len(t.blocks) == 3
+    assert t.writes[-1] == (REG_HMETFR, 1, 0x0F)
