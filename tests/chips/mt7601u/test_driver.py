@@ -14,6 +14,7 @@ import pytest
 import usb.core
 
 from wifit3.chips.driver import Driver, FakeMacSupport
+from wifit3.errors import SetChannelError
 from wifit3.chips.mt7601u import SUPPORTED_IDS, import_driver
 from wifit3.chips.mt7601u.constants import (
     MT_MAC_ADDR_DW0,
@@ -235,13 +236,14 @@ class TestTransmitSubmits:
     def test_inject_frame_submits_to_the_queue(self, driver: MT7601UDriver) -> None:
         queue = RecordingQueues()
         driver._tx_queues = queue
-        assert asyncio.run(driver.inject_frame(FRAME)) is True
+        asyncio.run(driver.inject_frame(FRAME))
         assert queue.submitted == [FRAME]
 
-    def test_a_rejected_send_reports_false(self, driver: MT7601UDriver) -> None:
+    def test_a_rejected_send_is_not_queued(self, driver: MT7601UDriver) -> None:
         queue = RecordingQueues(accepts=False)
         driver._tx_queues = queue
-        assert asyncio.run(driver.inject_frame(FRAME)) is False
+        asyncio.run(driver.inject_frame(FRAME))
+        assert queue.submitted == []
 
     def test_a_frame_the_queue_rejects_raises_rather_than_reporting_failure(
             self, driver: MT7601UDriver) -> None:
@@ -317,10 +319,12 @@ class TestAckTaps:
 
 class TestChannelSelection:
     def test_rejects_a_channel_outside_the_radio(self, driver: MT7601UDriver) -> None:
-        assert asyncio.run(driver.set_channel(36)) is False
+        with pytest.raises(SetChannelError):
+            asyncio.run(driver.set_channel(36))
 
     def test_rejects_channel_zero(self, driver: MT7601UDriver) -> None:
-        assert asyncio.run(driver.set_channel(0)) is False
+        with pytest.raises(SetChannelError):
+            asyncio.run(driver.set_channel(0))
 
     def test_scan_flag_does_not_change_the_channel_set(self) -> None:
         assert MT7601UDriver.SUPPORTED_CHANNELS == list(range(1, 15))

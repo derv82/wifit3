@@ -11,6 +11,12 @@ caller when that bound is reached.
 """
 from __future__ import annotations
 
+import logging
+
+import usb.core
+
+from wifit3.errors import is_device_gone
+
 from .mcu import MT7601UMcu
 from .transport import MT7601UTransport
 from .tx_status import DRAIN_LIMIT, TxStatus, TxStatusFifo
@@ -32,6 +38,8 @@ TX_TIMEOUT_MS = 300
 TX_STATUS_HISTORY = 64
 """Statuses kept for the caller. Bounds memory on a long-running scanner; the
 kernel hands each one to mac80211 and forgets it, so nothing reads them twice."""
+
+logger = logging.getLogger(__name__)
 
 
 class TxQueue:
@@ -73,7 +81,10 @@ class TxQueue:
             return False
         try:
             self.transport.bulk_out_tx(payload, self.queue, TX_TIMEOUT_MS)
-        except (TimeoutError, OSError):
+        except (TimeoutError, OSError) as e:
+            if isinstance(e, usb.core.USBError) and is_device_gone(e):   # dma.c:331-332
+                raise
+            logger.error("Error: TX urb submit failed:%s", e)                 # dma.c:334
             return False
         self.end = (self.end + 1) % self.entries
         self.used += 1

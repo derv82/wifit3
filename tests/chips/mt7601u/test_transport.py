@@ -31,6 +31,7 @@ def make_device(fake: FakeUsbDevice) -> MT7601UTransport:
     tp = MT7601UTransport.__new__(MT7601UTransport)
     tp.dev = fake
     tp.timeout_ms = 300
+    tp.removed = False
     tp._in_buf = bytearray(C.MT_VEND_BUF if hasattr(C, "MT_VEND_BUF") else 0x40)
     return tp
 
