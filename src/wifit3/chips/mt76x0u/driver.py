@@ -20,7 +20,7 @@ import usb.core
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.products import Panda
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 
 from .constants import (
     EP_IN_PKT_RX,
@@ -598,7 +598,7 @@ class MT76x0UDriver(Driver):
             return False
         return True
 
-    def _set_channel_sync(self, channel: int) -> bool:
+    def _set_channel_sync(self, channel: int) -> None:
         """Sync core of `set_channel` — usable from sync contexts (M5 hop
         loop) and from the async Protocol method below.
 
@@ -608,11 +608,12 @@ class MT76x0UDriver(Driver):
         is ~150 MCU commands of wasted work that blocks the asyncio loop.
         """
         if channel == self.current_channel:
-            return True
+            return
         # Block until any in-flight (incl. cancelled-but-draining) tune on
         # another executor thread finishes, so the two never interleave their
         # register batches on the USB control endpoint. See _hw_lock in __init__.
         with self._hw_lock:
+            self.current_channel = None
             WIRE_LOG.marker(f"begin set_channel({channel})")
             try:
                 # Kernel mac80211 invokes mt76x0_phy_set_channel TWICE per
@@ -627,25 +628,25 @@ class MT76x0UDriver(Driver):
                         self.transport, self.mcu, channel,
                         efuse_full=self.efuse_full, is_mt7630=self.is_mt7630,
                     )
-                self.current_channel = channel
-                logger.debug("MT7610U: set_channel(%d) OK", channel)
-                WIRE_LOG.marker(f"end set_channel({channel}) OK")
-                return True
             except (PHYInitError, MCUError, usb.core.USBError) as e:
-                logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)
                 WIRE_LOG.marker(f"end set_channel({channel}) FAIL: {e!r}")
-                return False
+                raise
+            self.current_channel = channel
+            logger.debug("MT7610U: set_channel(%d) OK", channel)
+            WIRE_LOG.marker(f"end set_channel({channel}) OK")
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Runs the full `mt76x0_phy_set_channel` chain for 20 MHz monitor mode.
 
         The body is synchronous (~150 MCU commands via PyUSB), so we offload
-        to the default executor — mirrors `chips/rtl8188eus/driver.py`. Calling
+        to the default executor. Calling
         the sync helper directly here would block the asyncio event loop for
         the full set_channel duration and freeze the UI + the RX drainer.
         """
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"MT7610U: channel {channel} not supported")
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._set_channel_sync, channel)
+        await loop.run_in_executor(None, self._set_channel_sync, channel)
 
     def enable_trx(self) -> None:
         """M4b — enable MAC TX+RX engines. [SRC] mt76x02_mac.c:1071-1072.
@@ -733,14 +734,15 @@ class MT76x0UDriver(Driver):
             self._drain_bulk_in_to_empty()
 
             t0 = _time.monotonic()
+            tune_failed = False
             try:
-                ok2 = self._set_channel_sync(ch)
+                self._set_channel_sync(ch)
             except Exception as e:
                 logger.warning("scan_channels: ch %d set_channel exception: %s", ch, e)
-                ok2 = False
+                tune_failed = True
             tune_ms = (_time.monotonic() - t0) * 1000.0
 
-            if not ok2:
+            if tune_failed:
                 per_channel[ch] = {
                     "beacons": 0, "bssids": 0, "bytes": 0,
                     "rssi_dbm_max": None, "tune_ms": tune_ms,
@@ -977,7 +979,7 @@ class MT76x0UDriver(Driver):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._set_ack_admit, False)
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the mt76x02 DMA-info + TXWI for ``frame_bytes`` and bulk-OUT it once over
         EP 0x07 (AC_VO). A unicast addr1 requests ACK, so the chip's own HW retry (limit set
         globally in TX_RTY_CFG at connect) retransmits it un-ACKed. The sequence number
@@ -997,13 +999,9 @@ class MT76x0UDriver(Driver):
                                                  wcid=0xFF, rate=rate))
         except TXError as e:
             logger.error("MT7610U: inject_frame failed: %s", e)
-            return False
-        except usb.core.USBError as e:
-            logger.error("MT7610U: inject_frame USB error: %s", e)
-            return False
+            return
         logger.debug("MT7610U: _inject_frame(%d bytes) -> %d bulk-OUT bytes",
                      len(frame_bytes), n)
-        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Software-stamp an incrementing 802.11 sequence number into seq_ctrl. build_txwi sets

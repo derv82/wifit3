@@ -33,6 +33,8 @@ from typing import Optional
 import usb.core
 import usb.util
 
+from wifit3.errors import is_device_gone
+
 from .constants import (
     MT_VEND_DEV_MODE,
     MT_VEND_MULTI_READ,
@@ -54,62 +56,6 @@ _VEND_RETRY_SLEEP_MS = 7.5      # midpoint of kernel usleep_range(5000, 10000)
 _BULK_TIMEOUT_MS = 2000
 
 
-def _is_fatal_usb_error(e: usb.core.USBError) -> bool:
-    """Kernel only stops retrying on -ENODEV / -EPROTO (device gone / protocol
-    error). Timeout, pipe stall, and others are retried.
-    """
-    # libusb backend codes (negative): -4 NO_DEVICE, -7 TIMEOUT, -9 PIPE,
-    # -1 IO. PyUSB exposes these via e.backend_error_code OR e.errno.
-    code = getattr(e, "backend_error_code", None)
-    if code is not None and code == -4:   # LIBUSB_ERROR_NO_DEVICE
-        return True
-    if e.errno == errno.ENODEV:
-        return True
-    return False
-
-
-def _vendor_ctrl_with_retry(
-    dev: usb.core.Device,
-    bmRequestType: int,
-    bRequest: int,
-    wValue: int,
-    wIndex: int,
-    data_or_wLength,
-    timeout_ms: int,
-    label: str,
-):
-    """Wraps dev.ctrl_transfer with kernel-equivalent retry semantics.
-
-    Mirrors __mt76u_vendor_request (mt76-source-v6.18/usb.c:18-44):
-      - up to MT_VEND_REQ_MAX_RETRY=10 attempts
-      - each attempt uses MT_VEND_REQ_TOUT_MS=300ms timeout
-      - sleep 5-10ms between attempts
-      - stop early on -ENODEV / -EPROTO; retry on timeout / pipe / I/O
-    """
-    last_exc: Optional[usb.core.USBError] = None
-    for attempt in range(_VEND_REQ_MAX_RETRY):
-        try:
-            return dev.ctrl_transfer(
-                bmRequestType=bmRequestType,
-                bRequest=bRequest,
-                wValue=wValue,
-                wIndex=wIndex,
-                data_or_wLength=data_or_wLength,
-                timeout=timeout_ms,
-            )
-        except usb.core.USBError as e:
-            last_exc = e
-            if _is_fatal_usb_error(e):
-                raise
-            if attempt < _VEND_REQ_MAX_RETRY - 1:
-                logger.warning("%s: attempt %d/%d failed (%s); retrying",
-                               label, attempt + 1, _VEND_REQ_MAX_RETRY, e)
-                time.sleep(_VEND_RETRY_SLEEP_MS / 1000)
-    assert last_exc is not None
-    logger.error("%s: gave up after %d retries", label, _VEND_REQ_MAX_RETRY)
-    raise last_exc
-
-
 class MT76x0UTransport:
     """Synchronous USB transport for MT76x0U.
 
@@ -121,6 +67,31 @@ class MT76x0UTransport:
         self.dev = dev
         self.timeout_ms = timeout_ms
         self._interface_claimed = False
+        self.removed = False   # MT76_REMOVED
+
+    def _vendor_request(self, bmRequestType: int, bRequest: int, wValue: int, wIndex: int,
+                        data_or_wLength):
+        """__mt76u_vendor_request: up to MT_VEND_REQ_MAX_RETRY tries; ENODEV marks the device
+        removed and raises, the last failure is logged and returns None. libusb reports the
+        kernel's -EPROTO as a generic EIO, which stays retryable. [SRC] usb.c:18-46."""
+        last_error = None
+        for _ in range(_VEND_REQ_MAX_RETRY):
+            if self.removed:
+                raise usb.core.USBError("device removed", errno=errno.ENODEV)
+            try:
+                return self.dev.ctrl_transfer(bmRequestType=bmRequestType, bRequest=bRequest,
+                                              wValue=wValue, wIndex=wIndex,
+                                              data_or_wLength=data_or_wLength,
+                                              timeout=self.timeout_ms)
+            except usb.core.USBError as e:
+                if is_device_gone(e):
+                    self.removed = True
+                    raise
+                last_error = e
+            time.sleep(_VEND_RETRY_SLEEP_MS / 1000)
+        logger.error("vendor request req:%02x off:%04x failed:%d",
+                     bRequest, wIndex, -(last_error.errno or errno.EIO))
+        return None
 
     # ------------------------------------------------------------------
     # Interface lifecycle.
@@ -174,18 +145,9 @@ class MT76x0UTransport:
         """Read a 32-bit register via MT_VEND_MULTI_READ (bReq=0x07)."""
         wValue = (addr >> 16) & 0xFFFF
         wIndex = addr & 0xFFFF
-        data = _vendor_ctrl_with_retry(
-            self.dev,
-            bmRequestType=0xC0,            # vendor IN
-            bRequest=MT_VEND_MULTI_READ,
-            wValue=wValue,
-            wIndex=wIndex,
-            data_or_wLength=4,
-            timeout_ms=self.timeout_ms,
-            label=f"read32(0x{addr:08x})",
-        )
-        if len(data) != 4:
-            raise RuntimeError(f"read32(0x{addr:08x}): got {len(data)} bytes, expected 4")
+        data = self._vendor_request(0xC0, MT_VEND_MULTI_READ, wValue, wIndex, 4)   # vendor IN
+        if data is None or len(data) != 4:
+            return 0xFFFFFFFF          # ___mt76u_rr: data = ~0 unless ret == sizeof(__le32)
         if WIRE_LOG.enabled:
             WIRE_LOG.emit(fmt_vendor(MT_VEND_MULTI_READ, is_in=True,
                                      wValue=wValue, wIndex=wIndex,
@@ -197,20 +159,7 @@ class MT76x0UTransport:
         wValue = (addr >> 16) & 0xFFFF
         wIndex = addr & 0xFFFF
         payload = struct.pack("<I", val & 0xFFFFFFFF)
-        n = _vendor_ctrl_with_retry(
-            self.dev,
-            bmRequestType=0x40,            # vendor OUT
-            bRequest=MT_VEND_MULTI_WRITE,
-            wValue=wValue,
-            wIndex=wIndex,
-            data_or_wLength=payload,
-            timeout_ms=self.timeout_ms,
-            label=f"write32(0x{addr:08x}, 0x{val:08x})",
-        )
-        if n != 4:
-            raise RuntimeError(
-                f"write32(0x{addr:08x}, 0x{val:08x}): wrote {n} bytes, expected 4"
-            )
+        self._vendor_request(0x40, MT_VEND_MULTI_WRITE, wValue, wIndex, payload)   # vendor OUT
         if WIRE_LOG.enabled:
             WIRE_LOG.emit(fmt_vendor(MT_VEND_MULTI_WRITE, is_in=False,
                                      wValue=wValue, wIndex=wIndex,
@@ -238,22 +187,7 @@ class MT76x0UTransport:
     def single_wr(self, reg: int, val: int) -> None:
         """Encode a 32-bit value via 2 control transfers (low half, then high)."""
         for offset, half in ((0, val & 0xFFFF), (2, (val >> 16) & 0xFFFF)):
-            n = _vendor_ctrl_with_retry(
-                self.dev,
-                bmRequestType=0x40,            # vendor OUT
-                bRequest=MT_VEND_WRITE_FCE,
-                wValue=half,
-                wIndex=reg + offset,
-                data_or_wLength=None,          # no payload either half
-                timeout_ms=self.timeout_ms,
-                label=f"single_wr(0x{reg:04x}+{offset}, 0x{half:04x})",
-            )
-            # ctrl_transfer with data=None returns 0 on success.
-            if n != 0:
-                raise RuntimeError(
-                    f"single_wr(reg=0x{reg:04x}+{offset}, half=0x{half:04x}) "
-                    f"returned {n}"
-                )
+            self._vendor_request(0x40, MT_VEND_WRITE_FCE, half, reg + offset, None)   # no payload
             if WIRE_LOG.enabled:
                 WIRE_LOG.emit(fmt_vendor(MT_VEND_WRITE_FCE, is_in=False,
                                          wValue=half, wIndex=reg + offset,
@@ -266,16 +200,7 @@ class MT76x0UTransport:
     def vendor_dev_mode(self, wValue: int, payload: Optional[bytes] = None) -> None:
         data = payload if payload is not None else b""
         wLen = len(data)
-        n = _vendor_ctrl_with_retry(
-            self.dev,
-            bmRequestType=0x40,
-            bRequest=MT_VEND_DEV_MODE,
-            wValue=wValue,
-            wIndex=0,
-            data_or_wLength=data if wLen else None,
-            timeout_ms=self.timeout_ms,
-            label=f"vendor_dev_mode(wVal=0x{wValue:04x}, wLen={wLen})",
-        )
+        n = self._vendor_request(0x40, MT_VEND_DEV_MODE, wValue, 0, data if wLen else None)
         # When payload supplied, n is bytes written; when None it's 0.
         expected = wLen
         if n != expected:
@@ -292,7 +217,14 @@ class MT76x0UTransport:
     # Bulk OUT (FW chunks on EP 0x08).
     # ------------------------------------------------------------------
     def bulk_out(self, ep: int, data: bytes, timeout_ms: int = _BULK_TIMEOUT_MS) -> int:
-        n = self.dev.write(ep, data, timeout=timeout_ms)
+        if self.removed:
+            raise usb.core.USBError("device removed", errno=errno.ENODEV)
+        try:
+            n = self.dev.write(ep, data, timeout=timeout_ms)
+        except usb.core.USBError as e:
+            if is_device_gone(e):
+                self.removed = True
+            raise
         if n != len(data):
             raise RuntimeError(
                 f"bulk_out(ep=0x{ep:02x}, len={len(data)}): wrote {n} bytes"

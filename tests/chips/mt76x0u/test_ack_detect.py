@@ -98,7 +98,7 @@ async def test_inject_requests_ack_and_sends_once():
     d = _driver()
     sent: list[tuple[int, bytes]] = []
     d.transport.bulk_out = lambda ep, pkt, timeout_ms=1000: sent.append((ep, pkt))
-    assert await d.inject_frame(_mgmt_frame()) is True   # base -> _stamp_tx_seq -> _inject_frame
+    await d.inject_frame(_mgmt_frame())   # base -> _stamp_tx_seq -> _inject_frame
     assert len(sent) == 1
     _ep, pkt = sent[0]
     txwi = pkt[4:24]                                     # [DMA-info 4][TXWI 20]
