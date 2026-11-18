@@ -27,6 +27,7 @@ from .constants import (
     REALTEK_USB_VENQT_CMD_REQ,
     REALTEK_USB_VENQT_READ,
     REALTEK_USB_VENQT_WRITE,
+    USB_INTERFACE_CLASS_VENDOR,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,21 +138,25 @@ class RTL8821AUDkmsTransport:
                 self.surprise_removed = True
                 raise
 
-    # --- bulk IN (RX, ep 0x84) --------------------------------------------
+    # --- bulk IN (RX) -------------------------------------------------------
+    def wlan_interface(self) -> usb.core.Interface:
+        """The vendor-class interface the C probes; interfaces 0-1 of 0x0820/0x0823 are Bluetooth. usb_intf.c:199-200."""
+        cfg = self.dev.get_active_configuration()
+        intf = usb.util.find_descriptor(cfg, bInterfaceClass=USB_INTERFACE_CLASS_VENDOR)
+        if intf is None:
+            intf = cfg[(0, 0)]
+        return intf
+
     def _bulk_in_ep(self) -> int:
-        """Probe the active interface for the bulk-IN (RX) endpoint, cached."""
+        """RtInPipe[0]: the first bulk-IN on the WLAN interface, cached. usb_intf.c:590-616, usb_ops_linux.c:291."""
         if self._in_ep is not None:
             return self._in_ep
-        cfg = self.dev.get_active_configuration()
-        for intf in cfg:
-            for ep in intf:
-                if (usb.util.endpoint_direction(ep.bEndpointAddress)
-                        == usb.util.ENDPOINT_IN
-                        and usb.util.endpoint_type(ep.bmAttributes)
-                        == usb.util.ENDPOINT_TYPE_BULK):
-                    self._in_ep = ep.bEndpointAddress
-                    return self._in_ep
-        raise RuntimeError("RTL8821AU: no bulk-IN endpoint on the active interface")
+        for ep in self.wlan_interface():
+            if (usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_IN
+                    and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK):
+                self._in_ep = ep.bEndpointAddress
+                return self._in_ep
+        raise RuntimeError("RTL8821AU: no bulk-IN endpoint on the WLAN interface")
 
     def bulk_in(self, size: int = RX_BUF_SIZE, timeout: int = RX_TIMEOUT_MS):
         """One blocking bulk-IN read. Returns the raw buffer, or None on a benign
