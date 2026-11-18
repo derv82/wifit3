@@ -17,6 +17,7 @@ from wifit3.chips.rtl8822cu.efuse import EfuseInfo
 from wifit3.chips.rtl8822cu.firmware import MacHiddenRpt
 from wifit3.chips.rtl8822cu.mac import set_mac_addr
 from wifit3.chips.driver import FakeMacSupport
+from wifit3.errors import SetChannelError
 from wifit3.wlan.interface import WlanInterface
 
 
@@ -37,6 +38,7 @@ def _deauth() -> bytes:
 def _driver() -> RTL8822CUDriver:
     d = RTL8822CUDriver(MagicMock())
     d.transport = MagicMock()          # driver ctor wraps dev in a real transport; tests mock it
+    d.transport.surprise_removed = False
     d._parsed = []
     d.register_rx_callback(d._parsed.append)
     return d
@@ -57,7 +59,7 @@ async def test_inject_frame_sends_desc_and_stamped_frame(monkeypatch):
 
     monkeypatch.setattr(drv, "write_bulk", _fake_write)
     frame = _deauth()
-    assert await d.inject_frame(frame) is True
+    await d.inject_frame(frame)
     assert len(sent) == 1
     assert len(sent[0]) == 48 + len(frame)
     assert sent[0][:2] == (len(frame) & 0xFFFF).to_bytes(2, "little")   # TXPKTSIZE
@@ -66,13 +68,16 @@ async def test_inject_frame_sends_desc_and_stamped_frame(monkeypatch):
     assert sent[0][48 + 24:] == frame[24:]          # remainder unchanged
 
 
-async def test_inject_frame_returns_false_without_bulk_out():
+async def test_inject_frame_drops_the_frame_without_bulk_out(monkeypatch):
+    write_bulk = MagicMock()
+    monkeypatch.setattr(drv, "write_bulk", write_bulk)
     d = _driver()
     d._bulk_out_eps = []
-    assert await d.inject_frame(_deauth()) is False
+    await d.inject_frame(_deauth())
+    write_bulk.assert_not_called()
 
 
-async def test_inject_frame_returns_false_on_short_write(monkeypatch):
+async def test_inject_frame_drops_the_frame_on_a_short_write(monkeypatch):
     d = _driver()
     d._bulk_out_eps = [0x05]
 
@@ -80,10 +85,11 @@ async def test_inject_frame_returns_false_on_short_write(monkeypatch):
         return len(payload) - 1
 
     monkeypatch.setattr(drv, "write_bulk", _short)
-    assert await d.inject_frame(_deauth()) is False
+    await d.inject_frame(_deauth())
+    assert not d.transport.surprise_removed
 
 
-async def test_inject_frame_returns_false_on_usb_error(monkeypatch):
+async def test_inject_frame_drops_the_frame_on_a_usb_error(monkeypatch):
     d = _driver()
     d._bulk_out_eps = [0x05]
 
@@ -91,7 +97,8 @@ async def test_inject_frame_returns_false_on_usb_error(monkeypatch):
         raise usb.core.USBError("boom")
 
     monkeypatch.setattr(drv, "write_bulk", _boom)
-    assert await d.inject_frame(_deauth()) is False
+    await d.inject_frame(_deauth())
+    assert not d.transport.surprise_removed
 
 
 def test_stamp_tx_seq_increments():
@@ -191,7 +198,7 @@ async def test_set_channel_tunes_via_switch_channel(monkeypatch):
     d = _driver()
     tuned: list[int] = []
     monkeypatch.setattr(drv, "switch_channel", lambda transport, ch, txpwr: tuned.append(ch))
-    assert await d.set_channel(6, scan=True) is True
+    await d.set_channel(6, scan=True)
     assert tuned == [6]
     assert d._current_channel == 6 and d.current_band_is_2g is True
 
@@ -200,19 +207,29 @@ async def test_set_channel_tracks_the_5ghz_band(monkeypatch):
     d = _driver()
     tuned: list[int] = []
     monkeypatch.setattr(drv, "switch_channel", lambda transport, ch, txpwr: tuned.append(ch))
-    assert await d.set_channel(149, scan=False) is True
+    await d.set_channel(149, scan=False)
     assert tuned == [149]
     assert d._current_channel == 149 and d.current_band_is_2g is False
 
 
-async def test_set_channel_reports_failure(monkeypatch):
+async def test_set_channel_propagates_a_failed_tune(monkeypatch):
     d = _driver()
 
     def _boom(transport, ch, txpwr):
-        raise ValueError("bad channel")
+        raise usb.core.USBError("timeout")
 
     monkeypatch.setattr(drv, "switch_channel", _boom)
-    assert await d.set_channel(200, scan=True) is False
+    with pytest.raises(usb.core.USBError):
+        await d.set_channel(6, scan=True)
+
+
+async def test_set_channel_rejects_an_unsupported_channel_before_any_write(monkeypatch):
+    d = _driver()
+    tuned: list[int] = []
+    monkeypatch.setattr(drv, "switch_channel", lambda transport, ch, txpwr: tuned.append(ch))
+    with pytest.raises(SetChannelError):
+        await d.set_channel(200, scan=True)
+    assert tuned == []
 
 
 # --- bring up wiring: the EFUSE and the MAC hidden report, not literals --------
