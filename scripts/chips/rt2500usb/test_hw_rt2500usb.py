@@ -15,7 +15,7 @@ Phase summary (mirrors the milestone breakdown):
                     PHY_CSR7/8 indirect path + EEPROM overrides). Verifies
                     the BBP is responsive and the EEPROM override readbacks
                     match. (M2b)
-  --phase chaninit: bbpinit + sweep set_channel 1..14 (RF2525E). RF is
+  --phase chaninit: bbpinit + sweep config_channel 1..14 (RF2525E). RF is
                     write-only, so this verifies no RF_BUSY timeout and
                     reports PHY_CSR10.RF_PLL_LD (PLL lock) per channel. (M2c)
   --phase rx      : chaninit + config_ant + tune --channel + drain EP 0x81
@@ -86,7 +86,7 @@ from wifit3.chips.rt2500usb.bbp import (
     eeprom_bbp_overrides,
     init_bbp,
 )
-from wifit3.chips.rt2500usb.chan import antenna_defaults, config_ant, set_channel
+from wifit3.chips.rt2500usb.chan import antenna_defaults, config_ant, config_channel
 from wifit3.chips.rt2500usb.mac import (
     apply_monitor_filter,
     init_registers,
@@ -316,18 +316,18 @@ def phase_chaninit(transport: RT2500USBTransport) -> None:
     rf_type = get_field16(antenna, EEPROM_ANTENNA_RF_TYPE)
     print(f"  RF_TYPE = 0x{rf_type:x} ({_RF_NAMES.get(rf_type, '?')})")
 
-    step("Sweep set_channel 1..14 (RF write-only → check RF_BUSY + PLL lock)")
+    step("Sweep config_channel 1..14 (RF write-only → check RF_BUSY + PLL lock)")
     pll_locked = 0
     for ch in range(1, 15):
-        tuned = set_channel(transport, rf_type, ch)
+        config_channel(transport, rf_type, ch)
         csr10 = transport.read16(PHY_CSR10)
         busy = bool(csr10 & PHY_CSR10_RF_BUSY)
         pll = bool(csr10 & PHY_CSR10_RF_PLL_LD)
         pll_locked += int(pll)
-        flag = "" if tuned and not busy else "  <-- RF_BUSY stuck!"
-        print(f"  ch {ch:2d}: tuned={tuned}  PHY_CSR10=0x{csr10:04x}  "
+        flag = "  <-- RF_BUSY stuck!" if busy else ""
+        print(f"  ch {ch:2d}: PHY_CSR10=0x{csr10:04x}  "
               f"PLL_LD={pll}{flag}")
-        if not tuned or busy:
+        if busy:
             fail(f"channel {ch} tune failed (RF_BUSY did not clear).")
     ok(f"all 14 channels tuned without RF_BUSY timeout "
        f"(PLL lock seen on {pll_locked}/14)")
@@ -349,8 +349,7 @@ def phase_rx(transport: RT2500USBTransport, dev, channel: int) -> None:
     ok("config_ant applied")
 
     step(f"Tune to channel {channel} + enable RX")
-    if not set_channel(transport, rf_type, channel):
-        fail(f"set_channel({channel}) hit an RF_BUSY timeout.")
+    config_channel(transport, rf_type, channel)
     apply_monitor_filter(transport)   # ensure DISABLE_RX clear (start_queue RX)
     eps = probe_endpoints(dev)
     ep = eps.primary_bulk_in
@@ -447,8 +446,7 @@ def phase_deauth(transport: RT2500USBTransport, dev, channel: int,
     ant_tx, ant_rx = antenna_defaults(antenna)
     config_ant(transport, rf_type, ant_tx, ant_rx)
     apply_monitor_filter(transport)
-    if not set_channel(transport, rf_type, channel):
-        fail(f"set_channel({channel}) failed.")
+    config_channel(transport, rf_type, channel)
     ok(f"radio up, tuned to channel {channel}")
 
     eps = probe_endpoints(dev)

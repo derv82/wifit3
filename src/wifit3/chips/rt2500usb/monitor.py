@@ -54,18 +54,18 @@ def enable_monitor(t: RT2500USBTransport, rf_type: int, eeprom: bytes,
 
 
 def tune_hop(t: RT2500USBTransport, rf_type: int, channel: int, eeprom: bytes,
-             ant_tx: int, ant_rx: int, txpower: int = DEFAULT_TXPOWER) -> bool:
+             ant_tx: int, ant_rx: int, txpower: int = DEFAULT_TXPOWER) -> None:
     """One rt2x00mac_config(CHANGE_CHANNEL) — the airodump/iw hop sequence.
 
     RX is bracketed off (stop_queue_rx … start_queue_rx) because the chip
-    ignores antenna/channel changes while RX is live. Returns config_channel's
-    RF-busy status. reset_tuner re-seeds the AGC twice (once from
+    ignores antenna/channel changes while RX is live. reset_tuner re-seeds the AGC twice (once from
     rt2x00lib_config's CHANGE_CHANNEL, once from config_antenna) — kernel-exact.
     """
     mac.stop_queue_rx(t)
-    ok = chan.config_channel(t, rf_type, channel, txpower)   # rt2x00lib_config
-    bbp.reset_tuner(t, eeprom)                               # lib_config CHANGE_CHANNEL
-    chan.config_ant(t, rf_type, ant_tx, ant_rx)             # rt2x00lib_config_antenna
-    bbp.reset_tuner(t, eeprom)                               # config_antenna
-    mac.start_queue_rx(t)
-    return ok
+    try:
+        chan.config_channel(t, rf_type, channel, txpower)        # rt2x00lib_config
+        bbp.reset_tuner(t, eeprom)                               # lib_config CHANGE_CHANNEL
+        chan.config_ant(t, rf_type, ant_tx, ant_rx)             # rt2x00lib_config_antenna
+        bbp.reset_tuner(t, eeprom)                               # config_antenna
+    finally:
+        mac.start_queue_rx(t)

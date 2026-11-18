@@ -27,7 +27,8 @@ unit wants 0x3b) and never re-seeded per hop. Now in `bbp.reset_tuner`, wired in
 
 **The headline bug was an RF-death wedge** under sustained load — the bulk-IN pipe stalls after
 ~1 min, then control ops fail with `Errno 32 Pipe error` (a full-speed control op racing the bulk-IN
-reader fast-fails). Hardened, not eliminated: `transport._ctrl` does a bounded transient retry, and
+reader fast-fails). Hardened, not eliminated: `transport._vendor_request` retries until its deadline like
+`rt2x00usb_vendor_request`, and
 `driver` carries the rt3070 `_io_lock`/`_hw_lock` pair so a cancelled tune's draining thread can't
 collide with a new tune/inject on the control endpoint.
 
