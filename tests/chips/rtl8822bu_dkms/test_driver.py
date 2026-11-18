@@ -6,8 +6,12 @@ ported, iFEM fallback) gets an explicit warning.
 """
 import logging
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
 
 from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
+from wifit3.errors import SetChannelError
 
 
 def _chip(rfe_type=3, chip_ver=3):
@@ -62,3 +66,11 @@ def test_unported_rfe_pinmux_warns(caplog):
         _log(info, e, caplog)
     assert "not ported" in caplog.text and "iFEM fallback" in caplog.text
 
+
+
+async def test_set_channel_rejects_an_unsupported_channel_before_any_write():
+    drv = object.__new__(Rtl8822buDkmsDriver)     # skip __init__ (no USB device needed)
+    drv.transport = MagicMock()
+    with pytest.raises(SetChannelError):
+        await drv.set_channel(200)
+    assert drv.transport.method_calls == []
