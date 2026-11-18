@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from importlib.resources import files
 from typing import Callable
 
@@ -9,7 +10,7 @@ import usb.core
 from wifit3.chips.driver import Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.errors import BringUpError, is_device_gone
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.models.device_id import DeviceID
 
 from .core import (
@@ -29,6 +30,8 @@ from .rtl8192f import rtl8192fu_fops
 from .rx import read_burst, rtl8xxxu_c2hcmd_callback, rtl8xxxu_parse_rxdesc24
 from .transport import RTL8192FUTransport
 from .tx import rtl8xxxu_tx
+
+logger = logging.getLogger(__name__)
 
 RSSI_UNKNOWN = 0  # RX_FLAG_NO_SIGNAL_VAL: the descriptor carried no PHY status
 WATCHDOG_SECONDS = 2.0  # core.c:7358 schedule_delayed_work(&priv->ra_watchdog, 2 * HZ)
@@ -151,29 +154,32 @@ class RTL8192FUDriver(Driver):
         async with self._io_lock:
             await asyncio.get_running_loop().run_in_executor(None, rtl8xxxu_c2hcmd_callback, self.priv)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         if channel not in self.SUPPORTED_CHANNELS:
-            raise ValueError(f"unsupported RTL8192FU channel: {channel}")
+            raise SetChannelError(f"RTL8192FU: channel {channel} not supported")
         if not self._started:
             raise BringUpError("RTL8192FU channel", "driver is not connected")
         if channel == self.current_channel:
-            return True
+            return
         async with self._io_lock:
+            self.current_channel = None
             await asyncio.get_running_loop().run_in_executor(None, rtl8xxxu_config, self.priv, channel)
             self.current_channel = channel
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         if not self._started:
             raise BringUpError("RTL8192FU TX", "driver is not connected")
-        endpoint, urb = rtl8xxxu_tx(self.priv, frame_bytes)
+        try:
+            endpoint, urb = rtl8xxxu_tx(self.priv, frame_bytes)
+        except ValueError as error:
+            logger.warning("rtl8xxxu_tx: %s", error)   # core.c:5439-5443 dev_warn with __func__, drop
+            return
         try:
             await asyncio.get_running_loop().run_in_executor(None, self.transport.bulk_write, endpoint, urb)
         except Exception as error:
             if is_device_gone(error):
                 self._on_rx_fatal(error)
             raise
-        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         if len(frame_bytes) < 24:
