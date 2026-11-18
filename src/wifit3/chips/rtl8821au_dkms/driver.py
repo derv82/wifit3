@@ -13,9 +13,7 @@ posts the bulk-IN URBs (os_intfs.c:4026 ``rtw_intf_start``) before monitor opmod
 ``inject_frame`` (M6) transmits one fake-descriptor frame on bulk-OUT — deauth,
 fake-auth, and WEP ARP replay all ride this one path; it is explicit-action only
 (passive-by-default). 2.4 GHz + 5 GHz (M7) RX/TX with EFUSE-calibrated per-rate power
-are complete. Paired with the mainline ``chips/rtl8821au/`` in ``device/manager.py``
-``_DKMS_BY_DIR``, ordered by ``$WIFIT3_RTL8821`` — **this DKMS port is the default**;
-``=mainline`` falls back to the mainline driver. Sibling to the untouched mainline driver.
+are complete.
 """
 from __future__ import annotations
 
@@ -29,7 +27,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -237,7 +235,7 @@ class Rtl8821auDkmsDriver(Driver):
         """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
         return
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz primary.
 
         Runs the runtime tune (M7 ``set_channel_bw``: phy_SwBand switches band only on a
@@ -250,6 +248,8 @@ class Rtl8821auDkmsDriver(Driver):
         and wifit3 always calls ``set_channel(scan=False)`` before injecting, so skipping
         it on transient passive hops is safe and buys back dwell time for RX.
         """
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8821AU: channel {channel} not supported")
         loop = asyncio.get_running_loop()
 
         def _tune(t):
@@ -264,9 +264,8 @@ class Rtl8821auDkmsDriver(Driver):
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(None, _tune, self.transport)
         self._channel = channel
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Transmit one 802.11 frame (M6) — deauth, fake-auth, or WEP ARP replay.
 
         Builds the fake TX descriptor (M6; no retry-limit field, HW global retry)
@@ -279,7 +278,7 @@ class Rtl8821auDkmsDriver(Driver):
         Per-rate EFUSE TX power is applied by connect() and every non-scan channel settle.
         """
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
-            return False
+            return
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
         # [SRC] rtl8812a_phycfg.c:1360 "avoid using cck rate in 5G band": 6M OFDM, rate group G
@@ -291,7 +290,6 @@ class Rtl8821auDkmsDriver(Driver):
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         self._start_tx_led_blink()
-        return True
 
     def _start_tx_led_blink(self) -> None:
         if self._tx_led_task is not None and not self._tx_led_task.done():

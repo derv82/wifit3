@@ -127,8 +127,7 @@ async def discover_iface(debug: bool, card: str = ""):
 
 async def find_ap(iface, array, channel: int, bssid: str | None, ssid: str | None, scan_s: float):
     step(f"Park on channel {channel}, find the AP")
-    if not await iface.set_channel(channel):
-        fail(f"set_channel({channel}) failed.")
+    await iface.set_channel(channel)
     deadline = time.time() + scan_s
     while time.time() < deadline:
         for ap in array.get_access_points():

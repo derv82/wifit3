@@ -134,7 +134,7 @@ def open_device():
 
 def phase_open(transport: RTL8187Transport) -> None:
     step("Read MAC@0xFF00 (6 bytes)")
-    mac_bytes = transport.read_bytes(REG_MAC0, 6)
+    mac_bytes = bytes(transport.read8(REG_MAC0 + i) for i in range(6))
     mac_str = ":".join(f"{b:02x}" for b in mac_bytes)
     print(f"  MAC0..5 = {mac_str}")
     if mac_bytes == b"\xff" * 6:

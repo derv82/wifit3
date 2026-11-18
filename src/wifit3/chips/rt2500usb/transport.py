@@ -31,12 +31,12 @@ from __future__ import annotations
 import errno
 import logging
 import time
-from typing import Sequence, Union
 
 import usb.core
 
+from wifit3.errors import is_device_gone
+
 from .constants import (
-    CSR_CACHE_SIZE,
     EEPROM_SIZE,
     EEPROM_TIMEOUT,
     REGISTER_BUSY_DELAY,
@@ -50,22 +50,6 @@ from .constants import (
 )
 
 logger = logging.getLogger(__name__)
-
-_LIBUSB_NO_DEVICE = -4            # LIBUSB_ERROR_NO_DEVICE
-_CTRL_MAX_ATTEMPTS = 3           # bounded — never busy-spin a struggling endpoint
-
-
-def _is_device_gone(err: usb.core.USBError) -> bool:
-    """True only when the device is physically gone — retry everything else.
-
-    On full-speed RT2570 a control transfer that collides with an in-flight
-    bulk-IN read can fast-fail with a transient pipe error (Windows/WinUSB);
-    retrying after a short backoff recovers it. Only ENODEV / LIBUSB_NO_DEVICE
-    mean the device actually unplugged. Matches chips/rt3070's transport."""
-    if getattr(err, "errno", None) == errno.ENODEV:
-        return True
-    return getattr(err, "backend_error_code", None) == _LIBUSB_NO_DEVICE
-
 
 # ---- rt2x00_{get,set}_field16 helpers -------------------------------------
 # The kernel stores bitfields as a mask; the shift is the position of the
@@ -84,89 +68,61 @@ class RT2500USBTransport:
     """Vendor control-transfer transport. Bulk endpoints (EP1 OUT / EP1
     IN) are claimed by the rx/tx modules, not here."""
 
-    def __init__(self, dev: usb.core.Device, timeout_ms: int = REGISTER_TIMEOUT):
+    def __init__(self, dev: usb.core.Device):
         self.dev = dev
-        self.timeout_ms = timeout_ms
+        self.device_present = True   # DEVICE_STATE_PRESENT
+        self.device_started = False  # DEVICE_STATE_STARTED, set once bring-up is done
+        self.num_proto_errs = 0
 
-    # ---- bounded-retry control transfer ---------------------------------
-    def _ctrl(self, requesttype, request, value, index, data_or_length, timeout):
-        """One vendor control transfer with a small, bounded transient-error
-        retry. On full-speed RT2570 a control op racing the bulk-IN reader can
-        fast-fail with a transient pipe error; retry with backoff recovers it
-        without busy-spinning. The replay gate never errors, so attempt 0
-        returns immediately and the gate is unaffected."""
-        last: usb.core.USBError | None = None
-        for attempt in range(_CTRL_MAX_ATTEMPTS):
+    def rt2x00usb_check_usb_error(self, error: usb.core.USBError) -> bool:
+        """[SRC] rt2x00usb.c:23-40. libusb has no kernel -ENOENT (its NOT_FOUND is a transient
+        Windows stale handle) and reports -EPROTO as EIO."""
+        if is_device_gone(error):
+            return True
+        if not self.device_started:
+            return False
+        if getattr(error, "errno", None) in (errno.EIO, errno.ETIMEDOUT):
+            self.num_proto_errs += 1
+        else:
+            self.num_proto_errs = 0
+        return self.num_proto_errs > 3
+
+    def _vendor_request(self, requesttype, request, value, index, data_or_length,
+                        timeout_ms: int = REGISTER_TIMEOUT):
+        """rt2x00usb_vendor_request: retries until ``timeout_ms`` passes; a failure is logged and
+        returns None, or raises ENODEV once the device is gone. [SRC] rt2x00usb.c:45-80."""
+        if not self.device_present:
+            raise usb.core.USBError("device not present", errno=errno.ENODEV)
+        expire = time.monotonic() + timeout_ms / 1000
+        while True:
             try:
-                result = self.dev.ctrl_transfer(
-                    requesttype, request, value, index, data_or_length, timeout)
-                if attempt:
-                    logger.info("rt2500usb: ctrl req 0x%02x idx 0x%04x recovered on "
-                                "attempt %d", request, index, attempt + 1)
-                return result
+                return self.dev.ctrl_transfer(requesttype, request, value, index,
+                                              data_or_length, timeout_ms // 2)
             except usb.core.USBError as e:
-                last = e
-                if _is_device_gone(e) or attempt == _CTRL_MAX_ATTEMPTS - 1:
+                error = e
+                if self.rt2x00usb_check_usb_error(e):
+                    self.device_present = False
                     break
-                time.sleep(0.003 * (attempt + 1))     # 3ms, 6ms — backoff, not a spin
-        raise last
+            if time.monotonic() >= expire:
+                break
+        logger.error("Vendor Request 0x%02x failed for offset 0x%04x with error %d",
+                     request, index, -(error.errno or errno.EIO))
+        if not self.device_present:
+            raise usb.core.USBError("device not present", errno=errno.ENODEV) from error
+        return None
 
     # ---- 2-byte (16-bit) CSR access -------------------------------------
     # wValue=0, wIndex=addr. See module docstring for the wValue/wIndex
     # convention (address in wIndex, not wValue).
     def read16(self, addr: int) -> int:
-        data = self._ctrl(
-            USB_VENDOR_REQUEST_IN, USB_MULTI_READ,
-            0, addr, 2, self.timeout_ms,
-        )
-        b = bytes(data)
-        return b[0] | (b[1] << 8)
+        data = self._vendor_request(USB_VENDOR_REQUEST_IN, USB_MULTI_READ, 0, addr, 2)
+        if data is None:
+            return 0          # rt2500usb.c:47-55 returns its uninitialised reg; 0 here
+        return int.from_bytes(bytes(data), "little")
 
     def write16(self, addr: int, val: int) -> None:
         payload = bytes((val & 0xFF, (val >> 8) & 0xFF))
-        sent = self._ctrl(
-            USB_VENDOR_REQUEST_OUT, USB_MULTI_WRITE,
-            0, addr, payload, self.timeout_ms,
-        )
-        if sent != 2:
-            raise IOError(f"write16(0x{addr:04x}) short: {sent}/2")
-
-    # ---- multi-byte read/write (rt2500usb_register_multiwrite) ----------
-    # Chunked to CSR_CACHE_SIZE per transfer, matching the kernel
-    # rt2x00usb_vendor_request_buff loop.
-    def read_multi(self, addr: int, length: int) -> bytes:
-        chunks: list[bytes] = []
-        remaining = length
-        off = addr
-        while remaining > 0:
-            bsize = min(CSR_CACHE_SIZE, remaining)
-            data = self._ctrl(
-                USB_VENDOR_REQUEST_IN, USB_MULTI_READ,
-                0, off, bsize, self.timeout_ms,
-            )
-            chunks.append(bytes(data))
-            off += bsize
-            remaining -= bsize
-        return b"".join(chunks)
-
-    def write_multi(self, addr: int, payload: Union[bytes, Sequence[int]]) -> None:
-        payload = bytes(payload)
-        remaining = len(payload)
-        off = addr
-        pos = 0
-        while remaining > 0:
-            bsize = min(CSR_CACHE_SIZE, remaining)
-            sent = self._ctrl(
-                USB_VENDOR_REQUEST_OUT, USB_MULTI_WRITE,
-                0, off, payload[pos:pos + bsize], self.timeout_ms,
-            )
-            if sent != bsize:
-                raise IOError(
-                    f"write_multi(0x{off:04x}) short chunk: {sent}/{bsize}"
-                )
-            off += bsize
-            pos += bsize
-            remaining -= bsize
+        self._vendor_request(USB_VENDOR_REQUEST_OUT, USB_MULTI_WRITE, 0, addr, payload)
 
     # ---- single-command writes (rt2x00usb_vendor_request_sw) ------------
     # No data phase: ``offset`` → wIndex, ``value`` → wValue. Used for
@@ -175,10 +131,7 @@ class RT2500USBTransport:
     # (capture-2 frame 203: req=1 wValue=4 wIndex=1; frame 205: req=2
     # wValue=0xf0 wIndex=0x308).
     def vendor_request_sw(self, request: int, offset: int, value: int) -> None:
-        self._ctrl(
-            USB_VENDOR_REQUEST_OUT, request,
-            value, offset, b"", self.timeout_ms,
-        )
+        self._vendor_request(USB_VENDOR_REQUEST_OUT, request, value, offset, b"")
 
     # ---- indirect-register busy poll (rt2500usb_regbusy_read) -----------
     def regbusy_read(self, addr: int, busy_mask: int) -> tuple[bool, int]:
@@ -193,6 +146,7 @@ class RT2500USBTransport:
             if not (reg & busy_mask):
                 return True, reg
             time.sleep(REGISTER_BUSY_DELAY / 1_000_000)   # udelay(us)
+        logger.error("Indirect register access failed: offset=0x%.08x, value=0x%.08x", addr, reg)
         return False, 0xFFFF
 
     # ---- read/modify/write convenience ----------------------------------
@@ -210,8 +164,6 @@ class RT2500USBTransport:
         wValue=wIndex=0; the chip streams the whole EEPROM from byte 0.
         There is no per-word addressing.
         """
-        data = self._ctrl(
-            USB_VENDOR_REQUEST_IN, USB_EEPROM_READ,
-            0, 0, length, EEPROM_TIMEOUT,
-        )
-        return bytes(data)
+        data = self._vendor_request(USB_VENDOR_REQUEST_IN, USB_EEPROM_READ,
+                                    0, 0, length, EEPROM_TIMEOUT)
+        return bytes(length) if data is None else bytes(data)

@@ -130,9 +130,7 @@ async def run(args) -> int:
             print(f"[*] Target {bssid}  CH{channel}  {ap.signal} dBm  ssid={ssid!r}  enc={ap.encryption}")
         rows.append(("WPS advertised", "not seen" if ap is None else ("yes" if ap.wps else "no")))
         bssid_b = str_to_mac(bssid)
-        if not await iface.set_channel(channel):
-            print(f"[-] set_channel({channel}) failed.", file=sys.stderr)
-            return 1
+        await iface.set_channel(channel)
 
         fake_mac = await iface.set_fake_mac(None, bssid_b)
         if fake_mac is None:

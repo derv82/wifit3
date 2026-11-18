@@ -1,4 +1,9 @@
 """Unit tests for the interface Lease: config on enter, restore on exit."""
+from unittest.mock import AsyncMock
+
+import pytest
+import usb.core
+
 from wifit3.wlan.lease import Lease, SPOOFABLE
 
 
@@ -91,3 +96,52 @@ async def test_enter_active_monitor_replaces_the_mac():
         assert arr.own == {"02:bb:bb:bb:bb:02"}              # old released, new registered
         assert lease.active_monitor_mac == "02:bb:bb:bb:bb:02"
     assert arr.own == set()                                  # released on exit
+
+
+class UnpluggedIface(FakeIface):
+    """Every write after ``unplug()`` raises, as a pulled USB device does."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.name = "wlan0"
+        self.unplugged = False
+
+    def unplug(self):
+        self.unplugged = True
+
+    def _write(self, *call):
+        if self.unplugged:
+            raise usb.core.USBError("No such device", errno=19)
+        self.calls.append(call)
+
+    async def set_channel(self, ch, scan=False):
+        self._write("set_channel", ch)
+        self.current_channel = ch
+
+    async def clear_fake_mac(self):
+        self._write("clear_fake_mac")
+
+    async def enable_rx_acks(self):
+        self._write("enable_rx_acks")
+
+    async def disable_rx_acks(self):
+        self._write("disable_rx_acks")
+
+
+async def test_lease_enter_failure_undoes_the_steps_that_ran():
+    iface, arr = UnpluggedIface(channel=1), FakeArray()
+    iface.enable_rx_acks = AsyncMock(side_effect=usb.core.USBError("Pipe error", errno=32))
+    with pytest.raises(usb.core.USBError):
+        async with Lease(arr, iface, channel=6, fake_mac=SPOOFABLE, ack_tally=True):
+            pass
+    assert ("clear_fake_mac",) in iface.calls
+    assert arr.own == set()
+    assert iface.current_channel == 1
+
+
+async def test_lease_exit_on_an_unplugged_device_logs_and_releases_the_own_mac(caplog):
+    iface, arr = UnpluggedIface(channel=1), FakeArray()
+    async with Lease(arr, iface, channel=6, fake_mac=SPOOFABLE, ack_tally=True):
+        iface.unplug()
+    assert arr.own == set()
+    assert len([r for r in caplog.records if r.levelname == "ERROR"]) == 3

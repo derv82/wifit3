@@ -54,3 +54,13 @@ def test_download_blocks_cover_blob_exactly():
     assert blocks[0][2] is True and blocks[3][3] is True   # DMEM fs / ls
     assert blocks[4][2] is True and blocks[45][3] is True  # IRAM fs / ls
     assert b"".join(b[0] for b in blocks) == fw[64:]
+
+
+def test_download_firmware_logs_the_fwdl_result(mocker, caplog):
+    t = mocker.Mock()
+    t.read8.return_value = 0x80
+    t.read16.return_value = 0
+    t.read32.return_value = firmware.CPU_DL_READY
+    with caplog.at_level("INFO"):
+        assert firmware.download_firmware(t, _blob()) is True
+    assert caplog.messages[-1].startswith("FWDL success. write_fw:0, ")

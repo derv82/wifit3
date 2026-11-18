@@ -5,9 +5,12 @@ the stateful RfRegChnlVal threading through set_channel, the RX dispatch, the (n
 inject_frame, and the manager registration + env-var ordering. asyncio_mode=auto runs the
 async tests without a decorator.
 """
+import pytest
+
 from wifit3.chips.rtl8188eus_dkms import SUPPORTED_IDS, chan, driver as drv_mod, powertrack
 from wifit3.chips.rtl8188eus_dkms.constants import PID, VID
 from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
+from wifit3.errors import SetChannelError
 
 
 class _FakeTransport:
@@ -41,13 +44,22 @@ async def test_set_channel_threads_rfregchnlval(monkeypatch):
     monkeypatch.setattr(chan, "set_channel", fake_set_channel)
 
     drv._rf_chnl = 0x07407
-    assert await drv.set_channel(6) is True
+    await drv.set_channel(6)
     assert calls[0] == (0x07407, 6)
     assert drv._channel == 6 and drv._rf_chnl == (0x07C00 | 6)
     # the next tune threads the updated RfRegChnlVal (stateful across tunes).
     await drv.set_channel(11)
     assert calls[1][0] == (0x07C00 | 6)
 
+
+
+async def test_set_channel_rejects_a_5ghz_channel_before_any_write(monkeypatch):
+    drv = Rtl8188eusDkmsDriver(_FakeTransport())
+    calls = []
+    monkeypatch.setattr(chan, "set_channel", lambda *args: calls.append(args))
+    with pytest.raises(SetChannelError):
+        await drv.set_channel(44)
+    assert calls == []
 
 def test_dispatch_parses_and_fans(monkeypatch):
     drv = Rtl8188eusDkmsDriver(_FakeTransport())
@@ -69,7 +81,7 @@ async def test_inject_frame_prepends_descriptor():
     drv = Rtl8188eusDkmsDriver(_FakeTransport())
     # broadcast deauth: addr1 = ff:ff:ff:ff:ff:ff (bytes [4:10]).
     frame = b"\xc0\x00\x00\x00" + b"\xff" * 6 + b"\x00" * 16
-    assert await drv.inject_frame(frame) is True
+    await drv.inject_frame(frame)
     sent = drv.transport.sent[0]
     assert sent[32:] == frame                        # frame rides behind the 32 B desc
     assert int.from_bytes(sent[0:4], "little") >> 24 & 1 == 1   # BMC (broadcast addr1)
@@ -77,21 +89,13 @@ async def test_inject_frame_prepends_descriptor():
 
 async def test_inject_frame_rejects_too_short():
     drv = Rtl8188eusDkmsDriver(_FakeTransport())
-    assert await drv.inject_frame(b"\xc0\x00\x00\x00") is False
+    await drv.inject_frame(b"\xc0\x00\x00\x00")
     assert drv.transport.sent == []
 
 
-def test_manager_registration_and_env_order(monkeypatch):
-    from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
+def test_manager_registration():
     from wifit3.device import manager
 
-    def selected():
-        manager.supported_ids.cache_clear()   # bust the cached map so the env var is re-read
-        return manager.driver_for(0x2357, 0x010C)[0]
-
-    monkeypatch.delenv("WIFIT3_RTL8188", raising=False)
-    assert selected() is Rtl8188eusDkmsDriver     # default: vendor/DKMS port for 2357:010c (stress-stable)
-
-    monkeypatch.setenv("WIFIT3_RTL8188", "mainline")
-    assert selected() is RTL8188EUSDriver          # opt back to mainline via env
+    manager.supported_ids.cache_clear()
+    assert manager.driver_for(0x2357, 0x010C)[0] is Rtl8188eusDkmsDriver
     manager.supported_ids.cache_clear()            # leave the cache clean

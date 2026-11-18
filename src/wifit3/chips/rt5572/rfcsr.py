@@ -26,7 +26,8 @@ from .constants import (
     LDO_CFG0_LDO_CORE_VLEVEL,
     OPT_14_CSR,
     OPT_14_CSR_BIT0,
-    REGISTER_BUSY_COUNT,
+    REGISTER_BUSY_DELAY,
+    REGISTER_USB_BUSY_COUNT,
     REV_RT5592C,
     RF_CSR_CFG,
     RF_CSR_CFG_BUSY,
@@ -64,12 +65,12 @@ logger = logging.getLogger(__name__)
 def _wait_for_rfcsr(t: RT5572Transport) -> int:
     """Poll RF_CSR_CFG until BUSY clears.  Returns the final word, or
     0xFFFFFFFF on timeout (matches kernel's "give up" pattern)."""
-    for _ in range(REGISTER_BUSY_COUNT):
+    for _ in range(REGISTER_USB_BUSY_COUNT):
         reg = t.read32(RF_CSR_CFG)
         if not (reg & RF_CSR_CFG_BUSY):
             return reg
-        time.sleep(0.000_05)
-    logger.warning("RF_CSR_CFG.BUSY never cleared")
+        time.sleep(REGISTER_BUSY_DELAY / 1_000_000)   # udelay(us)
+    logger.error("Indirect register access failed: offset=0x%.08x, value=0x%.08x", RF_CSR_CFG, reg)
     return 0xFFFFFFFF
 
 

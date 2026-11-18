@@ -10,9 +10,8 @@ the capture's monitor switch: MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO s
 RXFLTMAP0/1/2=0xFFFF). RX frames decode via `rx.iter_frames` (24-byte rx_pkt_desc + jaguar2 phy-status
 RSSI, FCS-stripped).
 
-Not registered in the manager (the mainline `chips/rtl8822bu/` owns 2357:0138); this `_dkms` port
-is exercised standalone via `scripts/chips/rtl8822bu_dkms/test_hw.py`. `inject_frame` is a stub — the TX
-descriptor is a later milestone, and the agent never fires live TX.
+`scripts/chips/rtl8822bu_dkms/test_hw.py` exercises it standalone. `inject_frame` sends one frame
+(`tx.build_inject_txdesc` + `usb_write_port`); the agent never fires live TX.
 """
 from __future__ import annotations
 
@@ -26,7 +25,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -384,7 +383,9 @@ class Rtl8822buDkmsDriver(Driver):
             line = await loop.run_in_executor(None, _rx_state_line, self.transport)
         logger.debug("[RXSTATE %s] %s", ctx, line)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8822BU: channel {channel} not supported")
         loop = asyncio.get_running_loop()
         prev = self._channel
         # Report the dwell we're leaving — exposes the "ch1..13 caught 0, ch36 caught N"
@@ -407,9 +408,8 @@ class Rtl8822buDkmsDriver(Driver):
         self._channel = channel
         if band_change:
             await self._dbg_rx_state(f"post-tune ch{channel} (band change)")
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the fill_fake_txdesc descriptor (`tx.build_inject_txdesc`, HW ACK-retry limit
         12) and bulk-OUT the frame once. Live TX is the user's explicit
         action — the agent never calls this; the descriptor build is unit-tested in test_tx.py (no
@@ -419,8 +419,7 @@ class Rtl8822buDkmsDriver(Driver):
         payload = tx.build_inject_txdesc(bytes(frame_bytes), hw_rate=hw_rate, rate_id=rate_id)
         loop = asyncio.get_running_loop()
         async with self._io_lock:
-            await loop.run_in_executor(None, self.transport.bulk_out, payload)
-        return True
+            await loop.run_in_executor(None, self.transport.usb_write_port, payload)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Realtek HW assigns the 802.11 sequence number (the txdesc sets EN_HWSEQ), so the

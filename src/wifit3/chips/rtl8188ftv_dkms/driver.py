@@ -37,7 +37,7 @@ import usb.util
 from wifit3.chips.driver import Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.models.device_id import DeviceID
 
 from . import bb as bb_mod
@@ -279,19 +279,16 @@ class Rtl8188ftvDkmsDriver(Driver):
         hal["channel"] = 1
         return True
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"rtl8188ftv_dkms: channel {channel} not supported")
         loop = asyncio.get_running_loop()
-        try:
-            async with self._io_lock:
-                await loop.run_in_executor(
-                    None, chan_mod.switch_channel, self.transport, channel,
-                    self.hal, self.params, self.by_rate, self.hal.get("rem_cck", 0),
-                    self.hal.get("rem_ofdm", 0))
-            self.current_channel = channel
-            return True
-        except (ValueError, IOError):
-            logger.exception("set_channel(%d) failed", channel)
-            return False
+        async with self._io_lock:
+            await loop.run_in_executor(
+                None, chan_mod.switch_channel, self.transport, channel,
+                self.hal, self.params, self.by_rate, self.hal.get("rem_cck", 0),
+                self.hal.get("rem_ofdm", 0))
+        self.current_channel = channel
 
     async def _watchdog_loop(self) -> None:
         """Periodic DM watchdog: FA + DIG + adaptivity + CCK-PD + RA retry +
@@ -357,7 +354,7 @@ class Rtl8188ftvDkmsDriver(Driver):
             self._rx_reader = None
         self._release_usb()
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Send one pre-stamped MGMT/DATA frame via ``tx.inject_frame``
         (monitor template, descriptor sequence follows the frame;
         ``mgnt_seq`` advances). Control frames raise."""
@@ -370,10 +367,9 @@ class Rtl8188ftvDkmsDriver(Driver):
                 await loop.run_in_executor(
                     None, inject,
                     self.transport, self.hal, bytes(frame_bytes))
-        except (ValueError, IOError):
+        except ValueError:
             logger.exception("inject failed")
-            return False
-        return True
+            return
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         if len(frame_bytes) >= 24:

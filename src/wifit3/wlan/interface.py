@@ -98,22 +98,24 @@ class WlanInterface:
                 raise BringUpPermissionsError("open", str(e)) from e
             raise
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune to ``channel``, one tune at a time; a cancelled caller doesn't cut the tune short. A
         calibrated tune to the channel already calibrated is skipped; ``scan=True`` skips calibration."""
-        return await asyncio.shield(self._serialized_set_channel(channel, scan))
+        await asyncio.shield(self._serialized_set_channel(channel, scan))
 
-    async def _serialized_set_channel(self, channel: int, scan: bool) -> bool:
+    async def _serialized_set_channel(self, channel: int, scan: bool) -> None:
         async with self._tune_lock:
             if not scan and channel == self._calibrated_channel:
-                return True
+                return
             self._calibrated_channel = None
-            success = await self.driver.set_channel(channel, scan=scan)
-            if success:
-                self.current_channel = channel
-                if not scan:
-                    self._calibrated_channel = channel
-            return success
+            try:
+                await self.driver.set_channel(channel, scan=scan)
+            except Exception:
+                self.current_channel = None
+                raise
+            self.current_channel = channel
+            if not scan:
+                self._calibrated_channel = channel
 
     async def set_fake_mac(self, mac: Any = None, bssid: Any = None) -> Optional[str]:
         """Enable active-monitor (HW-ACK frames addressed to our forged STA) and return the MAC the
@@ -207,11 +209,11 @@ class WlanInterface:
             except Exception as e:
                 logger.error(f"RX Callback failed: {e}")
 
-    async def send_no_wait(self, frame_bytes: bytes) -> bool:
+    async def send_no_wait(self, frame_bytes: bytes) -> None:
         """Inject a frame fire-and-forget."""
         if self.on_tx:
             self.on_tx(frame_bytes)          # array records TX packet-stats
-        return await self.driver.inject_frame(frame_bytes)
+        await self.driver.inject_frame(frame_bytes)
 
     async def send_until_ack(self, frame_bytes: bytes, max_retries: int = 0) -> bool:
         """Inject a frame, then watch the monitor tap for the recipient's link-ACK, resending up
@@ -325,7 +327,11 @@ class WlanInterface:
                 except Exception as e:
                     if is_device_gone(e):
                         self._on_device_lost(e)
-                    break
+                        break
+                    logger.warning("%s: hop to channel %d failed: %s", self._chipset, channel, e)
+                    last_channel = None
+                    await asyncio.sleep(interval)
+                    continue
                 last_channel = channel
             await asyncio.sleep(interval)
 

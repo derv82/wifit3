@@ -79,39 +79,45 @@ def _fw_download_enable(t, enable: bool) -> None:
 
 
 # --- block / page / image write [SRC] _BlockWrite / _PageWrite / _WriteFW
-def _block_write(t, buf: bytes) -> None:
+def _block_write(t, buf: bytes) -> bool:
     """USB phase #1 196-byte, phase #2 8-byte, phase #3 1-byte control writes,
-    each to FW_8188E_START_ADDRESS + running offset."""
+    each to FW_8188E_START_ADDRESS + running offset; stops at the first failed write."""
     n1, rem1 = divmod(len(buf), MAX_REG_BLOCK_SIZE)
     for i in range(n1):
         off = i * MAX_REG_BLOCK_SIZE
-        t.write_block(FW_8188E_START_ADDRESS + off, buf[off:off + MAX_REG_BLOCK_SIZE])
+        if not t.write_block(FW_8188E_START_ADDRESS + off, buf[off:off + MAX_REG_BLOCK_SIZE]):
+            return False
     if rem1:
         base = n1 * MAX_REG_BLOCK_SIZE
         n2, rem2 = divmod(rem1, 8)
         for i in range(n2):
             off = base + i * 8
-            t.write_block(FW_8188E_START_ADDRESS + off, buf[off:off + 8])
+            if not t.write_block(FW_8188E_START_ADDRESS + off, buf[off:off + 8]):
+                return False
         if rem2:
             base2 = base + n2 * 8
             for i in range(rem2):
-                t.write8(FW_8188E_START_ADDRESS + base2 + i, buf[base2 + i])
+                if not t.write8(FW_8188E_START_ADDRESS + base2 + i, buf[base2 + i]):
+                    return False
+    return True
 
 
-def _page_write(t, page: int, buf: bytes) -> None:
+def _page_write(t, page: int, buf: bytes) -> bool:
     v = (t.read8(REG_MCUFWDL + 2) & 0xF8) | (page & 0x07)
     t.write8(REG_MCUFWDL + 2, v)
-    _block_write(t, buf)
+    return _block_write(t, buf)
 
 
-def _write_fw(t, buf: bytes) -> None:
+def _write_fw(t, buf: bytes) -> bool:
     pages, remain = divmod(len(buf), MAX_DLFW_PAGE_SIZE)
     for page in range(pages):
         off = page * MAX_DLFW_PAGE_SIZE
-        _page_write(t, page, buf[off:off + MAX_DLFW_PAGE_SIZE])
+        if not _page_write(t, page, buf[off:off + MAX_DLFW_PAGE_SIZE]):
+            return False
     if remain:
         off = pages * MAX_DLFW_PAGE_SIZE
-        _page_write(t, pages, buf[off:])
+        return _page_write(t, pages, buf[off:])
+    return True
 
 
 # --- FW-ready polling [SRC] polling_fwdl_chksum / _FWFreeToGo
@@ -147,16 +153,21 @@ def download_firmware(t, blob: bytes) -> bool:
         _8051_reset(t)
 
     _fw_download_enable(t, True)
-    for _ in range(3):   # vendor retries up to 3x / 500 ms until chksum OK
+    ok = False
+    write_fw = 0
+    start = time.perf_counter()
+    while write_fw < 3 or (time.perf_counter() - start) * 1000 < 500:  # [SRC] rtl8188e_hal_init.c:997-1008
+        write_fw += 1
         t.write8(REG_MCUFWDL, t.read8(REG_MCUFWDL) | FWDL_ChkSum_rpt)  # reset chksum
-        _write_fw(t, buf)
+        if not _write_fw(t, buf):
+            continue
         if _polling_chksum(t):
+            ok = True
             break
     _fw_download_enable(t, False)
-    if not _fw_free_to_go(t):
-        return False
-    _initialize_firmware_vars(t)
-    return True
+    ready = ok and _fw_free_to_go(t)  # :1010-1016
+    _initialize_firmware_vars(t)      # :1029, after a failed download too
+    return ready
 
 
 def _initialize_firmware_vars(t) -> None:

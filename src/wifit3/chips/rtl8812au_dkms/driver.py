@@ -13,11 +13,7 @@ The RX reader is started **before** ``monitor.set_monitor_mode`` opens the RX ga
 kernel posts RX URBs before the gate, and an undrained bulk-IN pipe wedges the chip's RX
 FIFO (see ``rx_reader.py``).
 
-Registered in ``wlan/discovery.py`` for 0bda:8812 alongside the mainline
-``chips/rtl8812au/``. **This DKMS port is the default** — it survives the 2.4+5 GHz channel
-hop that RF-synth-wedges the mainline driver (A/B-proven on hardware); set
-``WIFIT3_RTL8812=mainline`` to fall back to the mainline driver. ``inject_frame`` (2.4 GHz
-TX: deauth /
+``inject_frame`` (2.4 GHz TX: deauth /
 fake-auth / WEP ARP replay) rides bulk-OUT 0x02 — a source port of the vendor fake-txdesc,
 live-verified (no TX pcap exists), not byte-for-byte. ``set_channel`` tunes 2.4 GHz + 5 GHz
 @ 20 MHz (the band switch is byte-verified against the capture's 5 GHz hops).
@@ -32,7 +28,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rtl88xxau_base.transport import Rtl88xxauTransport
@@ -255,7 +251,7 @@ class Rtl8812auDkmsDriver(Driver):
         async with self._io_lock:
             await loop.run_in_executor(None, monitor.drop_ack_frames, self.transport)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz primary.
 
         Runs the runtime tune (``set_channel_bw``: phy_SwChnl switches band only on a
@@ -264,9 +260,11 @@ class Rtl8812auDkmsDriver(Driver):
         transmits at the EFUSE-calibrated power; ``scan=True`` (the hopper) skips that
         TX-only re-apply to buy back dwell time for RX.
         """
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8812AU: channel {channel} not supported")
         params = self._params
         if params is None:
-            return False
+            raise SetChannelError(f"RTL8812AU set_channel({channel}): connect() must run first")
         loop = asyncio.get_running_loop()
 
         def _tune(t):
@@ -284,9 +282,8 @@ class Rtl8812auDkmsDriver(Driver):
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(None, _tune, self.transport)
         self._channel = channel
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the vendor fake TX descriptor (``rtl8812a_fill_fake_txdesc``, the shared base
         builder, the 8812a function; no retry-limit field, HW global retry)
         and send ``[desc | frame]`` once on bulk-OUT 0x02 (the 8812's MGMT queue).
@@ -297,7 +294,7 @@ class Rtl8812auDkmsDriver(Driver):
         No byte-for-byte gate backs this path — morrownr's cold-boot captures contain no
         successful card TX. It is a source port of the vendor fake-txdesc."""
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read the BMC bit
-            return False
+            return
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast/broadcast) bit
         # [SRC] rtl8812a_phycfg.c:1360 "avoid using cck rate in 5G band": 6M OFDM, rate group G
@@ -308,7 +305,6 @@ class Rtl8812auDkmsDriver(Driver):
                                     bmc=bmc) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel / DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
-        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Realtek HW assigns the 802.11 sequence number (the txdesc sets HWSEQ_EN), so the

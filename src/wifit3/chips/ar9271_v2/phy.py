@@ -235,23 +235,21 @@ def load_ani_reg(hw: AthHw, chan: Channel) -> None:
 
 
 def rf_set_freq(hw: AthHw, chan: Channel) -> None:
-    """ar9002_hw_set_channel [SRC] ar9002_phy.c:66 — program the single-chip synthesizer. The
-    AR9271 is 2.4 GHz only, so this is always the fractional 2 GHz path: seed CHANSEL_2G and
-    set bMode/fracMode in AR_PHY_SYNTH_CONTROL (the 5 GHz ndiv branch is guarded out)."""
-    freq = chan.center_freq                              # centers.synth_center
+    """ar9002_hw_set_channel: program the synthesizer for ``chan`` and record it as curchan."""
+    freq = chan.center_freq                              # centers.synth_center: 20 MHz only
     reg32 = hw.read(R.AR_PHY_SYNTH_CONTROL) & 0xc0000000
-    if freq >= 4800:                                     # 5 GHz — never on the 9271
+    if freq >= 4800:                                     # 5 GHz branch not ported
         raise NotImplementedError("ar9271_v2: 5 GHz synthesizer not ported")
     b_mode, frac_mode, amode_ref_sel = 1, 1, 0
     channel_sel = R.CHANSEL_2G(freq)
-    # not AR_SREV_9287_11_OR_LATER: toggle CCK channel-14 spreading via AR_PHY_CCK_TX_CTRL.
     txctl = hw.read(R.AR_PHY_CCK_TX_CTRL)
-    if freq == 2484:                                     # channel 14 (unused here)
+    if freq == 2484:
         hw.write(R.AR_PHY_CCK_TX_CTRL, txctl | R.AR_PHY_CCK_TX_CTRL_JAPAN)
     else:
         hw.write(R.AR_PHY_CCK_TX_CTRL, txctl & ~R.AR_PHY_CCK_TX_CTRL_JAPAN)
     reg32 |= (b_mode << 29) | (frac_mode << 28) | (amode_ref_sel << 26) | channel_sel
     hw.write(R.AR_PHY_SYNTH_CONTROL, reg32 & 0xFFFFFFFF)
+    hw.curchan = chan
 
 
 def init_chain_masks(hw: AthHw) -> None:

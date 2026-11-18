@@ -269,10 +269,7 @@ async def main() -> int:
         return 1
     err(f"[*] MAC: {iface.mac_address}")
 
-    if not await iface.set_channel(args.channel):
-        err(f"[-] set_channel({args.channel}) failed")
-        await wlan_close(ifaces)
-        return 1
+    await iface.set_channel(args.channel)
     err(f"[*] CH{args.channel}. Scanning"
         + (f" frames for {args.mac}" if args.mac else "") + ". Ctrl+C to stop.")
 

@@ -31,8 +31,10 @@ USB_VENDOR_REQUEST_OUT = 0x40  # USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVIC
 CSR_CACHE_SIZE = 64               # max bytes per vendor-request chunk
 REGISTER_TIMEOUT = 100            # ms
 REGISTER_TIMEOUT_FIRMWARE = 1000  # ms
+EEPROM_TIMEOUT = 2000             # ms
 REGISTER_BUSY_COUNT = 100         # CSR-ready / PBF-ready poll attempts
 REGISTER_USB_BUSY_COUNT = 20      # indirect-register (BBP/RFCSR/MCU/EFUSE) poll attempts
+REGISTER_BUSY_DELAY = 100         # us
 
 # --- EEPROM / RF sizes [SRC rt2800.h:100,104] ------------------------------
 EEPROM_SIZE = 0x0200              # bytes (256 u16 words)

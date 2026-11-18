@@ -111,7 +111,7 @@ class Driver(ABC):
         ...
 
     @abstractmethod
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune to ``channel``. ``scan=True`` marks a transient hop, permitting a lighter path."""
         ...
 
@@ -122,7 +122,7 @@ class Driver(ABC):
 
     # ---- TX ---------------------------------------------------------------
 
-    async def inject_frame(self, frame_bytes: bytes) -> bool:
+    async def inject_frame(self, frame_bytes: bytes) -> None:
         """Transmit one raw 802.11 frame, fire-and-forget. The chip's own HW ACK-based retry
         (the driver's per-chip retry limit) is the only retransmission. When the ACK tally is
         armed, the frame's Addr2 is registered so ``record_ack`` counts its ACKs. For a
@@ -131,7 +131,7 @@ class Driver(ABC):
             mac = self._extract_mac(frame_bytes)
             if mac is not None:
                 self._our_tx_macs.add(mac)
-        return await self._inject_frame(self._stamp_tx_seq(frame_bytes))
+        await self._inject_frame(self._stamp_tx_seq(frame_bytes))
 
     async def inject_frame_slow_retry(self, frame_bytes: bytes,
                                       timeout: Optional[float] = None,
@@ -144,9 +144,9 @@ class Driver(ABC):
         mac = self._extract_mac(frame_bytes)
         for _ in range(max_resends + 1):
             base = self.acks_seen(mac)
-            ok = await self.inject_frame(frame_bytes)
+            await self.inject_frame(frame_bytes)
             if not self._ack_detect_on or mac is None:
-                return ok                              # can't observe an ACK -> fire-and-forget
+                return True                            # can't observe an ACK -> fire-and-forget
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if self.acks_seen(mac) > base:
@@ -155,7 +155,7 @@ class Driver(ABC):
         return False                                   # never ACKed after every send
 
     @abstractmethod
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the chip's TX descriptor and send ``frame_bytes`` once over bulk-OUT."""
         ...
 

@@ -1,11 +1,14 @@
 """A campaign's scoped hold on one interface: apply config on enter, restore it on exit."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 # Sentinel for ``fake_mac``: let the driver pick a random locally-administered MAC
 # (SPOOFABLE cards) or fall back to the card's own MAC (FIXED_MAC cards).
 SPOOFABLE = object()
+
+logger = logging.getLogger(__name__)
 
 
 class Lease:
@@ -41,29 +44,44 @@ class Lease:
         return self._own_mac
 
     async def _exit_active_monitor(self) -> None:
-        if self._in_active_monitor:
-            await self.iface.clear_fake_mac()
-        if self._own_mac is not None:
-            self._array.unregister_own_mac(self._own_mac)
-        self._in_active_monitor = False
-        self._own_mac = None
+        try:
+            if self._in_active_monitor:
+                await self.iface.clear_fake_mac()
+        finally:
+            if self._own_mac is not None:
+                self._array.unregister_own_mac(self._own_mac)
+            self._in_active_monitor = False
+            self._own_mac = None
 
     async def __aenter__(self):
         self._orig_channel = self.iface.current_channel
-        if self._channel is not None:
-            await self.iface.set_channel(self._channel)
-        if self._fake_mac is not None:
-            await self.enter_active_monitor(self._fake_mac)
-        if self._ack_tally:
-            await self.iface.enable_rx_acks()
+        try:
+            if self._channel is not None:
+                await self.iface.set_channel(self._channel)
+            if self._fake_mac is not None:
+                await self.enter_active_monitor(self._fake_mac)
+            if self._ack_tally:
+                await self.iface.enable_rx_acks()
+        except BaseException:
+            await self.__aexit__(None, None, None)
+            raise
         return self.iface
 
     async def __aexit__(self, *exc) -> bool:
         if self._ack_tally:
-            await self.iface.disable_rx_acks()
-        await self._exit_active_monitor()
+            try:
+                await self.iface.disable_rx_acks()
+            except Exception:
+                logger.exception("Lease exit: disable_rx_acks failed on %s", self.iface.name)
+        try:
+            await self._exit_active_monitor()
+        except Exception:
+            logger.exception("Lease exit: exiting active monitor failed on %s", self.iface.name)
         if self._channel is not None and self._orig_channel is not None:
-            await self.iface.set_channel(self._orig_channel)
+            try:
+                await self.iface.set_channel(self._orig_channel)
+            except Exception:
+                logger.exception("Lease exit: retune to channel %d failed on %s", self._orig_channel, self.iface.name)
         return False
 
     async def acquire(self):

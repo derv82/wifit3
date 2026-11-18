@@ -118,6 +118,15 @@ MT_WL_TX_EN          = 0x00800000   # BIT(23), :449
 MT_SSUSB_EPCTL_CSR_EP_RST_OPT = 0x74011890
 MT_EPCTL_EP_RST_OPT_MASK      = (0x3F << 4) | (0x7 << 20)   # 0x007003f0
 
+# mt792xu_wfsys_reset (mt792x_usb.c:237-267) and mt7925_init_hardware's retry (init.c:128-139).
+MT_CBTOP_RGU_WF_SUBSYS_RST               = 0x70002600
+MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH = 1 << 0
+MT_UDMA_CONN_INFRA_STATUS                = 0x74000a20
+MT_UDMA_CONN_INFRA_STATUS_SEL            = 0x74000a24
+MT_UDMA_CONN_WFSYS_INIT_DONE             = 1 << 22
+MT792x_WFSYS_INIT_RETRY_COUNT            = 2
+MT792x_MCU_INIT_RETRY_COUNT              = 10
+
 # ===========================================================================
 # Firmware download (mt7925_run_firmware -> mt792x_load_firmware ->
 # mt76_connac2_load_patch / mt76_connac2_load_ram). Container = connac2 format.

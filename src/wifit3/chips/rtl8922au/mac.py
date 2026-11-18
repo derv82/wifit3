@@ -1,5 +1,7 @@
 """RTL8922AU MAC helpers, ported from rtw89-7.2 (mac.c, mac_be.c, core.c, rtw8922a.c)."""
 
+import logging
+import os
 import time
 
 from .constants import (
@@ -7,11 +9,11 @@ from .constants import (
     B_AX_CHIP_VER_MASK, B_BE_HW_ID_MASK,
     B_AX_WL_XTAL_SI_ADDR_MASK, B_AX_WL_XTAL_SI_DATA_MASK, B_AX_WL_XTAL_SI_MODE_MASK,
     B_AX_WL_XTAL_SI_BITMASK_MASK, B_AX_WL_XTAL_SI_CMD_POLL,
-    XTAL_SI_NORMAL_READ, XTAL_SI_NORMAL_WRITE, XTAL_SI_POLL_ATTEMPTS,
+    XTAL_SI_NORMAL_READ, XTAL_SI_NORMAL_WRITE,
     XTAL_SI_CV, XTAL_SI_ACV_MASK, XTAL_SI_CHIP_ID_L, XTAL_SI_CHIP_ID_H,
     XTAL_SI_PLL, XTAL_SI_PLL_1, XTAL_SI_ANAPAR_WL, XTAL_SI_WL_RFC_S0, XTAL_SI_WL_RFC_S1,
     XTAL_SI_XREF_RF1, XTAL_SI_XREF_RF2, XTAL_SI_SRAM_CTRL, XTAL_SI_SRAM_DIS,
-    CHIP_CAV, PWR_POLL_ATTEMPTS,
+    CHIP_CAV, TRXCFG_WAIT_CNT, LINUX_ETIMEDOUT,
     R_AX_GPIO_MUXCFG, B_AX_BOOT_MODE, R_AX_SYS_PW_CTRL, B_AX_APFN_ONMAC,
     R_AX_SYS_STATUS1, B_AX_AUTO_WLPON, R_AX_RSV_CTRL, B_AX_R_DIS_PRST,
     R_BE_SYSON_FSM_MON, WLAN_FSM_MASK, WLAN_FSM_SET, WLAN_FSM_STATE_MASK, WLAN_FSM_IDLE,
@@ -178,6 +180,9 @@ from .constants import (
     MAC_AX_PHY_RPT_SIZE_8, R_BE_DRV_INFO_OPTION, B_BE_DRV_INFO_PHYRPT_EN,
     R_BE_AGG_LEN_HT_0, B_AX_RTS_TXTIME_TH_MASK, B_AX_RTS_LEN_TH_MASK, RTS_TXTIME_TH, RTS_LEN_TH,
     RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, RTW89_H2CREG_GET_FEATURE_PART_NUM,
+    RTW89_FWCMD_C2HREG_FUNC_PHY_CAP, RTW89_FWCMD_C2HREG_FUNC_PHY_CAP_PART1,
+    EFUSE_HCI_DIG_USB_BLOCK_OFFSET, EFUSE_HCI_DIG_USB_BLOCK_SIZE,
+    RTW89_EFUSE_BLOCK_RF, RTW89_EFUSE_BLOCK_HCI_DIG_USB, RTW89_EFUSE_BLOCK_HCI_DIG_PCIE_SDIO,
     SEC_CTRL_EFUSE_SIZE, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE,
     EFUSE_BLOCK_ID_MASK, EFUSE_BLOCK_SIZE_MASK,
     EFUSE_HDR_PAGE_MASK, EFUSE_HDR_OFFSET_MASK, EFUSE_HDR_WORD_EN_MASK,
@@ -202,6 +207,9 @@ from .constants import (
     R_BE_PREBKF_CFG_1, B_BE_SIFS_MACTXEN_T1_MASK, R_BE_MUEDCA_EN, B_BE_SIFS_MACTXEN_TB_T1_MASK,
 )
 from . import firmware
+from .iopoll import read_poll_timeout, read_poll_timeout_atomic
+
+logger = logging.getLogger(__name__)
 
 
 def field_replace(val: int, mask: int, field: int) -> int:
@@ -226,56 +234,65 @@ def field_get(mask: int, val: int) -> int:
 def read_xtal_si(t, offset: int) -> int:
     """rtw89_mac_read_xtal_si_ax: indirect crystal-SI read. Writes an address+read command
     to XTAL_SI_CTRL, polls the same register until the command bit clears, returns the data
-    byte. [SRC] mac.c:7208-7234."""
+    byte; raises TimeoutError if it never clears. [SRC] mac.c:7208-7234, mac_be.c:443-470."""
     cmd = (field_prep(B_AX_WL_XTAL_SI_ADDR_MASK, offset)
            | field_prep(B_AX_WL_XTAL_SI_MODE_MASK, XTAL_SI_NORMAL_READ)
            | B_AX_WL_XTAL_SI_CMD_POLL)
     t.write32(R_AX_WLAN_XTAL_SI_CTRL, cmd)
-    for _ in range(XTAL_SI_POLL_ATTEMPTS):
-        val32 = t.read32(R_AX_WLAN_XTAL_SI_CTRL)
-        if not (val32 & B_AX_WL_XTAL_SI_CMD_POLL):
-            return field_get(B_AX_WL_XTAL_SI_DATA_MASK, val32)
-    return 0
+    done, val32 = read_poll_timeout(lambda: t.read32(R_AX_WLAN_XTAL_SI_CTRL),
+                                    lambda v: not (v & B_AX_WL_XTAL_SI_CMD_POLL), 50, 50000)  # mac_be.c:457
+    if not done:
+        logger.warning("xtal si not ready(R): offset=%x", offset)      # mac_be.c:460
+        raise TimeoutError("rtl8922au: rtw89_mac_read_xtal_si_be poll timeout")
+    return field_get(B_AX_WL_XTAL_SI_DATA_MASK, val32)
 
 
 def read_chip_ver(t) -> dict:
     """rtw89_read_chip_ver (BE path): read chip version, analog cut, hw id, and analog id.
     [SRC] core.c:7091-7130. The RTL8852A cv-fixup branch is not on the 8922A graph
     (its guard is chip_id == RTL8852A), so it is not ported here."""
-    cv = field_get(B_AX_CHIP_VER_MASK, t.read32(R_AX_SYS_CFG1))
-    acv = field_get(XTAL_SI_ACV_MASK, read_xtal_si(t, XTAL_SI_CV))
-    cid = field_get(B_BE_HW_ID_MASK, t.read32(R_BE_SYS_CHIPINFO))
-    aid = read_xtal_si(t, XTAL_SI_CHIP_ID_L) | (read_xtal_si(t, XTAL_SI_CHIP_ID_H) << 8)
-    return {"cv": cv, "acv": acv, "cid": cid, "aid": aid}
+    ver = {"cv": field_get(B_AX_CHIP_VER_MASK, t.read32(R_AX_SYS_CFG1)), "acv": 0, "cid": 0, "aid": 0}
+    try:
+        ver["acv"] = field_get(XTAL_SI_ACV_MASK, read_xtal_si(t, XTAL_SI_CV))
+        ver["cid"] = field_get(B_BE_HW_ID_MASK, t.read32(R_BE_SYS_CHIPINFO))
+        ver["aid"] = read_xtal_si(t, XTAL_SI_CHIP_ID_L) | (read_xtal_si(t, XTAL_SI_CHIP_ID_H) << 8)
+    except TimeoutError:
+        pass        # an xtal_si read error returns early, leaving the rest unset. core.c:7111-7127
+    return ver
 
 
 def write_xtal_si(t, offset: int, val: int, mask: int) -> None:
     """rtw89_mac_write_xtal_si (BE): indirect crystal-SI write. Writes an address+data+bitmask
-    command to XTAL_SI_CTRL, then polls until the command bit clears. [SRC] mac_be.c:413-441.
-    The BE field positions match the AX ones (mac.c:7179), so the AX masks apply."""
+    command to XTAL_SI_CTRL, then polls until the command bit clears; raises TimeoutError if it
+    never clears. [SRC] mac_be.c:413-441. The BE field positions match the AX ones (mac.c:7179)."""
     cmd = (field_prep(B_AX_WL_XTAL_SI_ADDR_MASK, offset)
            | field_prep(B_AX_WL_XTAL_SI_DATA_MASK, val)
            | field_prep(B_AX_WL_XTAL_SI_BITMASK_MASK, mask)
            | field_prep(B_AX_WL_XTAL_SI_MODE_MASK, XTAL_SI_NORMAL_WRITE)
            | B_AX_WL_XTAL_SI_CMD_POLL)
     t.write32(R_AX_WLAN_XTAL_SI_CTRL, cmd)
-    for _ in range(XTAL_SI_POLL_ATTEMPTS):
-        if not (t.read32(R_AX_WLAN_XTAL_SI_CTRL) & B_AX_WL_XTAL_SI_CMD_POLL):
-            return
-    # TODO: verify, untested here. Kernel warns "xtal si not ready(W)". [SRC] mac_be.c:428.
+    done, _ = read_poll_timeout(lambda: t.read32(R_AX_WLAN_XTAL_SI_CTRL),
+                                lambda v: not (v & B_AX_WL_XTAL_SI_CMD_POLL), 50, 50000)  # mac_be.c:426
+    if not done:
+        logger.warning("xtal si not ready(W): offset=%x val=%x mask=%x", offset, val, mask)  # mac_be.c:429
+        raise TimeoutError("rtl8922au: rtw89_mac_write_xtal_si_be poll timeout")
 
 
-def _poll32(t, addr: int, cond, mask: int = None) -> int:
+def _poll32(t, addr: int, cond, sleep_us: int, timeout_us: int, mask: int = None,
+            err_fmt: str = None) -> None:
     """read_poll_timeout over rtw89_read32[_mask]: read `addr` (extracting `mask`'s field when
-    given) until `cond(val)` holds. The replay feeds the recorded reads, so the loop stops at
-    the same count the kernel did. [SRC] linux/iopoll.h read_poll_timeout."""
-    for _ in range(PWR_POLL_ATTEMPTS):
+    given) every `sleep_us` until `cond(val)` holds or `timeout_us` has passed. On timeout, logs
+    `err_fmt` % the last value when given, then raises. [SRC] linux/iopoll.h read_poll_timeout."""
+    def read() -> int:
         val = t.read32(addr)
         if mask is not None:
             val = field_get(mask, val)
-        if cond(val):
-            return val
-    raise TimeoutError(f"rtl8922au: poll timeout on 0x{addr:04x}")
+        return val
+    done, val = read_poll_timeout(read, cond, sleep_us, timeout_us)
+    if not done:
+        if err_fmt is not None:
+            logger.error(err_fmt, val)
+        raise TimeoutError(f"rtl8922au: poll timeout on 0x{addr:04x}")
 
 
 def power_switch_boot_mode(t) -> None:
@@ -296,41 +313,52 @@ def reset_pwr_state_be(t) -> None:
     val32 = t.read32(R_BE_SYSON_FSM_MON)
     val32 = (val32 & WLAN_FSM_MASK) | WLAN_FSM_SET
     t.write32(R_BE_SYSON_FSM_MON, val32)
-    _poll32(t, R_BE_SYSON_FSM_MON, lambda v: v == WLAN_FSM_IDLE, mask=WLAN_FSM_STATE_MASK)
+    _poll32(t, R_BE_SYSON_FSM_MON, lambda v: v == WLAN_FSM_IDLE, 1000, 2000000, mask=WLAN_FSM_STATE_MASK,
+            err_fmt="[ERR]Polling WLAN PMC timeout= %X")        # mac_be.c:488
 
     state = field_get(B_BE_WLMAC_PWR_STE_MASK, t.read32(R_BE_IC_PWR_STATE))
     if state == MAC_AX_MAC_OFF:
         # TODO: verify, untested here. Cold boot came up MAC_ON. [SRC] mac_be.c:493-516.
         t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HAXIDMA_IO_EN)
-        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v,
-                mask=B_BE_HAXIDMA_IO_ST | B_BE_HAXIDMA_BACKUP_RESTORE_ST)
+        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, 1000, 2000000,
+                mask=B_BE_HAXIDMA_IO_ST | B_BE_HAXIDMA_BACKUP_RESTORE_ST,
+                err_fmt="[ERR]Polling HAXI IO timeout= %X")     # mac_be.c:501
         t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HCI_WLAN_IO_EN)
-        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, mask=B_BE_HCI_WLAN_IO_ST)
+        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, 1000, 2000000, mask=B_BE_HCI_WLAN_IO_ST,
+                err_fmt="[ERR]Polling WLAN IO timeout= %X")     # mac_be.c:511
         t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_EN_WLON)
         t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_APFM_SWLPS)
     elif state == MAC_AX_MAC_ON:
         t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HAXIDMA_IO_EN)
-        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v,
-                mask=B_BE_HAXIDMA_IO_ST | B_BE_HAXIDMA_BACKUP_RESTORE_ST)
+        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, 1000, 2000000,
+                mask=B_BE_HAXIDMA_IO_ST | B_BE_HAXIDMA_BACKUP_RESTORE_ST,
+                err_fmt="[ERR]Polling HAXI IO timeout= %X")     # mac_be.c:525
         t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HCI_WLAN_IO_EN)
-        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, mask=B_BE_HCI_WLAN_IO_ST)
+        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, 1000, 2000000, mask=B_BE_HCI_WLAN_IO_ST,
+                err_fmt="[ERR]Polling WLAN IO timeout= %X")     # mac_be.c:535
         t.write32_set(R_BE_SYS_PW_CTRL, B_BE_EN_WLON)
         t.write32_set(R_BE_SYS_PW_CTRL, B_BE_APFM_OFFMAC)
-        _poll32(t, R_BE_SYS_PW_CTRL, lambda v: v == MAC_AX_MAC_OFF, mask=B_BE_APFM_OFFMAC)
+        _poll32(t, R_BE_SYS_PW_CTRL, lambda v: v == MAC_AX_MAC_OFF, 1000, 2000000, mask=B_BE_APFM_OFFMAC,
+                err_fmt="[ERR]Polling MAC state timeout= %X")   # mac_be.c:546
         t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_EN_WLON)
         t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_APFM_SWLPS)
     elif state == MAC_AX_MAC_LPS:
         # TODO: verify, untested here. Cold boot came up MAC_ON. [SRC] mac_be.c:552-597.
         t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HAXIDMA_IO_EN)
-        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v,
-                mask=B_BE_HAXIDMA_IO_ST | B_BE_HAXIDMA_BACKUP_RESTORE_ST)
+        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, 1000, 2000000,
+                mask=B_BE_HAXIDMA_IO_ST | B_BE_HAXIDMA_BACKUP_RESTORE_ST,
+                err_fmt="[ERR]Polling HAXI IO timeout= %X")     # mac_be.c:560
         t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HCI_WLAN_IO_EN)
-        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, mask=B_BE_HCI_WLAN_IO_ST)
+        _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not v, 1000, 2000000, mask=B_BE_HCI_WLAN_IO_ST,
+                err_fmt="[ERR]Polling WLAN IO timeout= %X")     # mac_be.c:570
         t.write32_set(R_BE_WLLPS_CTRL, B_BE_FORCE_LEAVE_LPS)
-        _poll32(t, R_BE_IC_PWR_STATE, lambda v: v == MAC_AX_MAC_ON, mask=B_BE_WLMAC_PWR_STE_MASK)
+        _poll32(t, R_BE_IC_PWR_STATE, lambda v: v == MAC_AX_MAC_ON, 1000, 2000000,
+                mask=B_BE_WLMAC_PWR_STE_MASK,
+                err_fmt="[ERR]Polling MAC STS timeout= %X")     # mac_be.c:580
         t.write32_set(R_BE_SYS_PW_CTRL, B_BE_EN_WLON)
         t.write32_set(R_BE_SYS_PW_CTRL, B_BE_APFM_OFFMAC)
-        _poll32(t, R_BE_SYS_PW_CTRL, lambda v: v == MAC_AX_MAC_OFF, mask=B_BE_APFM_OFFMAC)
+        _poll32(t, R_BE_SYS_PW_CTRL, lambda v: v == MAC_AX_MAC_OFF, 1000, 2000000, mask=B_BE_APFM_OFFMAC,
+                err_fmt="[ERR]Polling MAC state timeout= %X")   # mac_be.c:591
         t.write32_clr(R_BE_WLLPS_CTRL, B_BE_FORCE_LEAVE_LPS)
         t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_EN_WLON)
         t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_APFM_SWLPS)
@@ -344,12 +372,12 @@ def pwr_on_func(t, cv: int) -> None:
     t.write32_set(R_BE_WLLPS_CTRL, B_BE_DIS_WLBT_LPSEN_LOPC)
     t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_APDM_HPDN)
     t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_APFM_SWLPS)
-    _poll32(t, R_BE_SYS_PW_CTRL, lambda v: v & B_BE_RDY_SYSPWR)
+    _poll32(t, R_BE_SYS_PW_CTRL, lambda v: v & B_BE_RDY_SYSPWR, 1000, 3000000)     # rtw8922a.c:488
 
     t.write32_set(R_BE_SYS_PW_CTRL, B_BE_EN_WLON)
     t.write32_set(R_BE_WLRESUME_CTRL, B_BE_LPSROP_CMAC0 | B_BE_LPSROP_CMAC1)
     t.write32_set(R_BE_SYS_PW_CTRL, B_BE_APFN_ONMAC)
-    _poll32(t, R_BE_SYS_PW_CTRL, lambda v: not (v & B_BE_APFN_ONMAC))
+    _poll32(t, R_BE_SYS_PW_CTRL, lambda v: not (v & B_BE_APFN_ONMAC), 1000, 3000000)     # rtw8922a.c:498
 
     t.write32_clr(R_BE_AFE_ON_CTRL1, B_BE_REG_CK_MON_CK960M_EN)
     t.write8_set(R_BE_ANAPAR_POW_MAC, B_BE_POW_PC_LDO_PORT0 | B_BE_POW_PC_LDO_PORT1)
@@ -359,7 +387,7 @@ def pwr_on_func(t, cv: int) -> None:
     # TODO: verify, untested here. PCIE-only HAXIDMA enable+poll. [SRC] rtw8922a.c:510-526.
 
     t.write32_set(R_BE_HCI_OPT_CTRL, B_BE_HCI_WLAN_IO_EN)
-    _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: v & B_BE_HCI_WLAN_IO_ST)
+    _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: v & B_BE_HCI_WLAN_IO_ST, 1000, 3000000)     # rtw8922a.c:530
 
     # TODO: verify, untested here. PCIE-only force-ibx clear. [SRC] rtw8922a.c:535-537.
 
@@ -417,8 +445,12 @@ def cnv_efuse_state(t, idle: bool) -> None:
         t.write32_set(R_BE_WL_BT_PWR_CTRL, B_BE_BT_DISN_EN)
     else:
         t.write32_clr(R_BE_WL_BT_PWR_CTRL, B_BE_BT_DISN_EN)
-        _poll32(t, R_BE_IC_PWR_STATE, lambda v: v == MAC_AX_SYS_ACT,
-                mask=B_BE_WHOLE_SYS_PWR_STE_MASK)
+        try:
+            _poll32(t, R_BE_IC_PWR_STATE, lambda v: v == MAC_AX_SYS_ACT, 50, 5000,
+                    mask=B_BE_WHOLE_SYS_PWR_STE_MASK)
+        except TimeoutError:
+            # Both callers ignore the error. efuse_be.c:172, mac.c:3203
+            logger.warning("failed to convert efuse state")     # efuse_be.c:158
 
 
 def _enable_efuse_pwr_cut_ddv(t, cv: int) -> None:
@@ -456,7 +488,10 @@ def dump_physical_efuse_map(t, cv: int, dump_addr: int, dump_size: int) -> bytes
     for addr in range(dump_addr, dump_addr + dump_size, 4):
         efuse_ctl = field_prep(B_BE_EF_ADDR_MASK, addr)
         t.write32(R_BE_EFUSE_CTRL, efuse_ctl & ~B_BE_EF_RDY & 0xFFFFFFFF)
-        _poll32(t, R_BE_EFUSE_CTRL, lambda v: v & B_BE_EF_RDY)
+        done, _ = read_poll_timeout_atomic(lambda: t.read32(R_BE_EFUSE_CTRL), lambda v: v & B_BE_EF_RDY,
+                                           1, 1000000, sleep_before_read=True)     # efuse_be.c:84
+        if not done:
+            raise TimeoutError("rtl8922au: efuse dump poll timeout")
         out += t.read32(R_BE_EFUSE_CTRL_1_V1).to_bytes(4, "little")
     _disable_efuse_pwr_cut_ddv(t, cv)
     cnv_efuse_state(t, True)
@@ -467,7 +502,10 @@ def efuse_read_ecv(t, cv: int) -> int:
     """rtw89_efuse_read_ecv_be: read the efuse chip-version nibble and adopt it as the cut,
     unless it reads invalid. [SRC] efuse_be.c:516-540. Returns the cv to use for later access."""
     dump_addr = EF_FV_OFSET_BE_V1 & ~0x3
-    buff = dump_physical_efuse_map(t, cv, dump_addr, 4)
+    try:
+        buff = dump_physical_efuse_map(t, cv, dump_addr, 4)
+    except TimeoutError:
+        return cv           # the error goes to rtw89_mac_power_switch, which ignores it. mac.c:1559
     ecv = field_get(EF_CV_MASK, buff[EF_FV_OFSET_BE_V1 & 0x3])
     if ecv == EF_CV_INV:
         return cv
@@ -477,7 +515,12 @@ def efuse_read_ecv(t, cv: int) -> int:
 def efuse_read_fw_secure(t, cv: int) -> None:
     """rtw89_efuse_read_fw_secure_be: dump the secure-boot selector. [SRC] efuse_be.c:468-514.
     This card reads the default selector (secure boot off), so the MSS parse is skipped."""
-    sec_map = dump_physical_efuse_map(t, cv, EFUSE_SEC_BE_START, EFUSE_SEC_BE_SIZE)
+    try:
+        sec_map = dump_physical_efuse_map(t, cv, EFUSE_SEC_BE_START, EFUSE_SEC_BE_SIZE)
+    except TimeoutError:
+        # rtw89_mac_power_switch ignores the error. efuse_be.c:481, mac.c:1560
+        logger.warning("failed to dump secsel map")
+        return
     i = EFUSE_SB_CRYP_SEL_ADDR - EFUSE_SEC_BE_START
     sb_cryp_sel = sec_map[i] | (sec_map[i + 1] << 8)
     if sb_cryp_sel == EFUSE_SB_CRYP_SEL_DEFAULT:
@@ -497,9 +540,16 @@ def mac_pwr_on(t, cv: int, probe_done: bool = False) -> None:
     state, run the chip power-on sequence, then the first-probe efuse reads and coex notify.
     [SRC] mac.c:1586-1599, 1521-1568. probe_done marks the interface-up re-power, where
     RTW89_FLAG_PROBE_DONE is set (usb.c:1320), so the efuse-read tail is skipped."""
-    power_switch_boot_mode(t)
-    reset_pwr_state_be(t)
-    pwr_on_func(t, cv)
+    try:
+        power_switch_boot_mode(t)
+        reset_pwr_state_be(t)
+        pwr_on_func(t, cv)
+    except TimeoutError:
+        # Power off (its error ignored), then retry power-on once. mac.c:1590-1595
+        mac_pwr_off(t)
+        power_switch_boot_mode(t)
+        reset_pwr_state_be(t)
+        pwr_on_func(t, cv)
     # power_switch(on=True) tail. On first probe (RTW89_FLAG_PROBE_DONE unset) the efuse reads
     # run; efuse_read_ecv can update the cut used by the secure-boot dump. [SRC] mac.c:1557-1568.
     if not probe_done:
@@ -582,9 +632,9 @@ def pwr_off_func(t) -> None:
     # TODO: verify, untested here. PCIE-only HAXIDMA disable+poll. [SRC] rtw8922a.c:691-707.
 
     t.write32_clr(R_BE_HCI_OPT_CTRL, B_BE_HCI_WLAN_IO_EN)
-    _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not (v & B_BE_HCI_WLAN_IO_ST))
+    _poll32(t, R_BE_HCI_OPT_CTRL, lambda v: not (v & B_BE_HCI_WLAN_IO_ST), 1000, 3000000)     # rtw8922a.c:711
     t.write32_set(R_BE_SYS_PW_CTRL, B_BE_APFM_OFFMAC)
-    _poll32(t, R_BE_SYS_PW_CTRL, lambda v: not (v & B_BE_APFM_OFFMAC))
+    _poll32(t, R_BE_SYS_PW_CTRL, lambda v: not (v & B_BE_APFM_OFFMAC), 1000, 3000000)     # rtw8922a.c:718
 
     t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_SOP_EASWR)     # chip_id == RTL8922A, hci == USB
     t.write32_clr(R_BE_SYS_PW_CTRL, B_BE_XTAL_OFF_A_DIE)
@@ -599,7 +649,11 @@ def mac_pwr_off(t) -> None:
     boot bit was cleared on power-on), run the chip power-off sequence, then the coex notify.
     [SRC] mac.c:1601-1604, 1521-1584. reset_pwr_state runs only on the power-on path."""
     power_switch_boot_mode(t)
-    pwr_off_func(t)
+    try:
+        pwr_off_func(t)
+    except TimeoutError:
+        return      # power_switch returns before the notify; rtw89_mac_pwr_off ignores it. mac.c:1553-1555
+    t.cmac_pwr.clear()      # RTW89_FLAG_CMAC0_PWR / CMAC1_PWR. mac.c:1574-1575
     update_scoreboard(t, MAC_AX_NOTIFY_PWR_MAJOR)
 
 
@@ -733,7 +787,7 @@ def chk_dle_rdy(t, wde_or_ple: bool) -> None:
     [SRC] mac_be.c:297-312."""
     reg = R_AX_WDE_INI_STATUS if wde_or_ple else R_AX_PLE_INI_STATUS
     mask = WDE_MGN_INI_RDY if wde_or_ple else PLE_MGN_INI_RDY
-    _poll32(t, reg, lambda v: (v & mask) == mask)
+    _poll32(t, reg, lambda v: (v & mask) == mask, 1, 2000)     # mac_be.c:310
 
 
 def dle_init(t, mode: str) -> None:
@@ -746,8 +800,16 @@ def dle_init(t, mode: str) -> None:
     dle_mix_cfg(t, cfg["wde_size"], cfg["ple_size"])
     dle_quota_cfg(t, cfg["wde_qt"], cfg["ple_min_qt"], cfg["ple_max_qt"], cfg["ext_wcpu"])
     dle_func_en(t, True)
-    chk_dle_rdy(t, True)
-    chk_dle_rdy(t, False)
+    try:
+        chk_dle_rdy(t, True)
+    except TimeoutError:
+        logger.error("[ERR]WDE cfg ready")                              # mac.c:2324
+        raise
+    try:
+        chk_dle_rdy(t, False)
+    except TimeoutError:
+        logger.error("[ERR]PLE cfg ready")                              # mac.c:2330
+        raise
 
 
 def hfc_func_en(t, en: bool, h2c_en: bool) -> None:
@@ -872,12 +934,13 @@ def set_cpu_en(t, include_bb: bool) -> None:
 
 def wcpu_on(t, boot_reason: int, dlfw: bool) -> None:
     """wcpu_on: clear the boot/halt mailbox state, enable the CPU clock, set the boot reason,
-    and pulse the WLAN CPU out of reset. [SRC] mac_be.c:641-698. The pre-boot AON warnings are
-    read-only diagnostics; the reads are reproduced. On the 8922A the HOST_EXIST write is
+    and pulse the WLAN CPU out of reset. [SRC] mac_be.c:641-698. On the 8922A the HOST_EXIST write is
     skipped; with dlfw the trailing FreeRTOS-ready poll is skipped."""
-    t.read32(R_BE_HALT_C2H)
-    t.read32(R_BE_UDM1)
-    t.read32(R_BE_UDM2)
+    for reg, name in ((R_BE_HALT_C2H, "R_BE_HALT_C2H"), (R_BE_UDM1, "R_BE_UDM1"), (R_BE_UDM2, "R_BE_UDM2")):
+        val32 = t.read32(reg)
+        if val32:
+            logger.warning("[SER] AON L2 Debug register not empty before Boot.")   # mac_be.c:649-660
+            logger.warning("[SER] wcpu_on: %s = 0x%x", name, val32)
     t.write32(R_BE_UDM1, 0)
     t.write32(R_BE_UDM2, 0)
     t.write32(R_BE_BOOT_DBG, 0)
@@ -908,12 +971,19 @@ def fwdl_enable_wcpu(t, boot_reason: int, dlfw: bool, include_bb: bool) -> None:
 
 
 def fw_download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
-    """rtw89_fw_download(RTW89_FW_NORMAL): park the CPU, enable it for download, then transfer the
-    NORMAL firmware suit (and, when include_bb, the BB-MCU suits) via the firmware module.
-    [SRC] fw.c:1984-2047, mac.c:4334."""
-    disable_cpu(t)
-    fwdl_enable_wcpu(t, 0, True, include_bb)
-    firmware.download(t, h2c_ep, cv, include_bb)
+    """rtw89_fw_download(RTW89_FW_NORMAL): up to 5 attempts of park the CPU, enable it for download,
+    then transfer the NORMAL firmware suit (and, when include_bb, the BB-MCU suits); a failed
+    attempt dumps the download state. [SRC] fw.c:1984-2047, mac.c:4334."""
+    for attempt in range(5):                          # rtw89_fw_download retries. fw.c:2040-2046
+        disable_cpu(t)
+        fwdl_enable_wcpu(t, 0, True, include_bb)
+        try:
+            firmware.download(t, h2c_ep, cv, include_bb)
+            return
+        except (TimeoutError, RuntimeError):
+            firmware.dl_fail_dump(t)                  # fwdl_err. fw.c:2029-2031
+            if attempt == 4:
+                raise
 
 
 def bbmcu_write32(t, addr: int, data: int, phy_idx: int) -> None:
@@ -975,7 +1045,7 @@ def _parse_logical_efuse_block(phy_map: bytes, block_offset: int, size: int) -> 
             if word_en & (1 << k):
                 continue
             if i >= len(phy_map) - 1:
-                return bytes(log_map)
+                raise RuntimeError("rtl8922au: efuse map ends inside a block")   # -EINVAL. efuse_be.c:276
             log_idx = (blk_idx << 3) + (k << 1)
             if blk_page == page and lo <= log_idx < hi:
                 v0, v1 = phy_map[i], phy_map[i + 1]
@@ -996,13 +1066,33 @@ def parse_efuse_map(t, cv: int) -> dict:
     The USB HCI-DIG block reads the MAC address from a register; the RF block parse (software)
     yields rfe_type/xtal_cap. The tssi/gain-offset arrays are deferred (RFK-time). [SRC]
     efuse_be.c:341-399, rtw8922a.c:854-895."""
-    field_get(B_BE_AUTOLOAD_SUS, t.read16(R_BE_SYS_WL_EFUSE_CTRL))   # efuse->valid
-    phy_map = dump_physical_efuse_map(t, cv, 0, PHYSICAL_EFUSE_SIZE)
+    if not (t.read16(R_BE_SYS_WL_EFUSE_CTRL) & B_BE_AUTOLOAD_SUS):
+        logger.warning("failed to check efuse autoload")                   # efuse_be.c:353
+    try:
+        phy_map = dump_physical_efuse_map(t, cv, 0, PHYSICAL_EFUSE_SIZE)
+    except TimeoutError:
+        logger.warning("failed to dump efuse physical map")                # efuse_be.c:366
+        raise
+    try:
+        _parse_logical_efuse_block(phy_map, EFUSE_HCI_DIG_USB_BLOCK_OFFSET, EFUSE_HCI_DIG_USB_BLOCK_SIZE)
+    except RuntimeError:
+        logger.warning("failed to dump efuse logical block %d", RTW89_EFUSE_BLOCK_HCI_DIG_USB)       # :323
+        logger.warning("failed to parse efuse logic block %d", RTW89_EFUSE_BLOCK_HCI_DIG_PCIE_SDIO)  # :382
+        raise
     addr = bytearray()
     for off in range(0, ETH_ALEN, 2):                # rtw8922a_read_efuse_usb, from R_BE 0x4078
         val = t.read16(R_BE_EFUSE_USB_MACADDR + off)
         addr += bytes((val & 0xFF, (val >> 8) & 0xFF))
-    rf = _parse_logical_efuse_block(phy_map, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE)
+    if not any(addr):
+        logger.info("efuse mac address is zero, using random mac")         # rtw8922a.c:898
+        addr = bytearray(os.urandom(ETH_ALEN))
+        addr[0] = (addr[0] & 0xFE) | 0x02            # eth_random_addr: unicast, locally administered
+    try:
+        rf = _parse_logical_efuse_block(phy_map, EFUSE_RF_BLOCK_OFFSET, EFUSE_RF_BLOCK_SIZE)
+    except RuntimeError:
+        logger.warning("failed to dump efuse logical block %d", RTW89_EFUSE_BLOCK_RF)  # :323
+        logger.warning("failed to parse efuse logic block %d", RTW89_EFUSE_BLOCK_RF)   # :390
+        raise
     t.rfe_type = rf[EFUSE_RFE_TYPE_OFST]             # rtw8922a_read_efuse_rf. rtw8922a.c:866
     t.xtal_cap = rf[EFUSE_XTAL_K_OFST]
     _parse_gain_offset(t, rf)                        # rtw8922a_efuse_parsing_gain_offset. rtw8922a.c:778
@@ -1041,7 +1131,11 @@ def parse_phycap_map(t, cv: int) -> bytes:
     """rtw89_parse_phycap_map_be: dump the phy-cap efuse block and (rtw8922a_read_phycap) parse the
     PA/PAD bias trim into transport state for power_trim. thermal trim is deferred. [SRC]
     efuse_be.c:402-433, rtw8922a.c:942-1041."""
-    cap = dump_physical_efuse_map(t, cv, PHYCAP_ADDR, PHYCAP_SIZE)
+    try:
+        cap = dump_physical_efuse_map(t, cv, PHYCAP_ADDR, PHYCAP_SIZE)
+    except TimeoutError:
+        logger.warning("failed to dump phycap map")                        # efuse_be.c:419
+        raise
     t.pg_pa_bias_trim = cap[PHYCAP_PA_PAD_CHECK_OFST - PHYCAP_ADDR] != 0xFF
     t.pa_bias_trim = [cap[o - PHYCAP_ADDR] for o in PABIAS_TRIM_OFST]
     t.pad_bias_trim = [cap[o - PHYCAP_ADDR] for o in PADBIAS_TRIM_OFST]
@@ -1051,11 +1145,20 @@ def parse_phycap_map(t, cv: int) -> bytes:
 def read_phycap(t, part_num: int) -> dict:
     """rtw89_mac_read_phycap: query the running firmware for its phy capabilities over the
     register mailbox, bracketed by the efuse-state toggle. [SRC] mac.c:3177-3220."""
+    if part_num == 0:
+        c2h_type = RTW89_FWCMD_C2HREG_FUNC_PHY_CAP
+    else:
+        c2h_type = RTW89_FWCMD_C2HREG_FUNC_PHY_CAP_PART1
     cnv_efuse_state(t, False)
     w0 = field_prep(RTW89_H2CREG_GET_FEATURE_PART_NUM, part_num)
-    c2h = firmware.msg_reg(t, RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, 2, w0)
-    cnv_efuse_state(t, True)
-    return c2h
+    try:
+        c2h_info = firmware.msg_reg(t, RTW89_FWCMD_H2CREG_FUNC_GET_FEATURE, 2, w0)
+    finally:
+        cnv_efuse_state(t, True)    # the out: label also runs on a msg_reg error. mac.c:3210-3217
+    if c2h_info["id"] != c2h_type:
+        raise RuntimeError(f"rtl8922au: phycap part {part_num} reply id {c2h_info['id']}, "
+                           f"expected {c2h_type}")      # -EINVAL. mac.c:3213
+    return c2h_info
 
 
 def setup_phycap(t) -> None:
@@ -1063,8 +1166,8 @@ def setup_phycap(t) -> None:
     (tx/rx nss, antenna, QAM) are parsed in software. [SRC] mac.c:3222-3336.
     TODO: verify, the hal extraction (tx_nss/rx_nss/antenna/no_eht/no_mcs_12_13) is not yet done;
     RF/BB init will need it. part1 runs unless the NO_PHYCAP_P1 fw feature is set (it is not here)."""
-    read_phycap(t, 0)      # part0, expects C2H id RTW89_FWCMD_C2HREG_FUNC_PHY_CAP
-    read_phycap(t, 1)      # part1, expects C2H id RTW89_FWCMD_C2HREG_FUNC_PHY_CAP_PART1
+    read_phycap(t, 0)
+    read_phycap(t, 1)
 
 
 def partial_init(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
@@ -1077,7 +1180,11 @@ def partial_init(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
         chip_bb_preinit(t)
     hci_func_en(t)
     dmac_func_pre_en(t)
-    dle_init(t, "DLFW")
+    try:
+        dle_init(t, "DLFW")
+    except TimeoutError:
+        logger.error("[ERR]DLE pre init %d", -LINUX_ETIMEDOUT)          # mac.c:4268
+        raise
     hfc_init(t, True, False, True)          # reset, en=False, h2c_en=True (download path)
     fwdl_preconfig(t)
     fw_download(t, h2c_ep, cv, include_bb)
@@ -1102,7 +1209,11 @@ def sta_sch_init(t) -> None:
     """sta_sch_init_be (8922A, non-D): enable the STA scheduler, wait init-done, set warm-init,
     clear the band trigger enables. [SRC] mac_be.c:971-998."""
     t.write8_set(R_BE_SS_CTRL, B_BE_SS_EN)
-    _poll32(t, R_BE_SS_CTRL, lambda v: v & B_BE_SS_INIT_DONE)
+    done, _ = read_poll_timeout(lambda: t.read32(R_BE_SS_CTRL), lambda v: v & B_BE_SS_INIT_DONE,
+                                1, TRXCFG_WAIT_CNT)                       # mac_be.c:987
+    if not done:
+        logger.error("[ERR]STA scheduler init")                         # mac_be.c:990
+        raise TimeoutError("rtl8922au: sta_sch_init_be poll timeout")
     t.write32_set(R_BE_SS_CTRL, B_BE_WARM_INIT)
     t.write32_clr(R_BE_SS_CTRL, B_BE_BAND_TRIG_EN | B_BE_BAND1_TRIG_EN)
 
@@ -1156,22 +1267,39 @@ def mlo_init(t) -> None:
     val = t.read32(R_BE_MLO_INIT_CTL)
     t.write32(R_BE_MLO_INIT_CTL, val | B_BE_MLO_TABLE_REINIT)
     t.write32(R_BE_MLO_INIT_CTL, val & ~B_BE_MLO_TABLE_REINIT & 0xFFFFFFFF)
-    _poll32(t, R_BE_MLO_INIT_CTL, lambda v: v & B_BE_MLO_TABLE_INIT_DONE)
+    done, _ = read_poll_timeout_atomic(lambda: t.read32(R_BE_MLO_INIT_CTL),
+                                       lambda v: v & B_BE_MLO_TABLE_INIT_DONE, 1, 1000)   # mac_be.c:1110
+    if not done:
+        logger.error("[MLO]mlo_init_be: MLO init polling timeout")      # mac_be.c:1113
     t.write32_set(R_BE_SS_CTRL, B_BE_MLO_HW_CHGLINK_EN)
     t.write32_set(R_BE_CMAC_SHARE_ACQCHK_CFG_0, B_BE_R_MACID_ACQ_CHK_EN)
+    if not done:
+        raise TimeoutError("rtl8922au: mlo_init_be poll timeout")
 
 
 def dmac_init(t) -> None:
     """dmac_init_be(0): the DMAC-side operating init. dle_init (DBCC qta), hfc_init (operating),
     sta_sch_init, mpdu_proc_init, sec_eng_init, txpktctrl_init, mlo_init. preload_init is a no-op
     on USB (not qta_poh). [SRC] mac_be.c:1131-1184, mac.c:preload_init."""
-    dle_init(t, "DBCC")
+    try:
+        dle_init(t, "DBCC")
+    except TimeoutError:
+        logger.error("[ERR]DLE init %d", -LINUX_ETIMEDOUT)              # mac_be.c:1137
+        raise
     hfc_init(t, True, True, True)           # reset, en=True, h2c_en=True (operating path)
-    sta_sch_init(t)
+    try:
+        sta_sch_init(t)
+    except TimeoutError:
+        logger.error("[ERR]STA SCH init %d", -LINUX_ETIMEDOUT)          # mac_be.c:1154
+        raise
     mpdu_proc_init(t)
     sec_eng_init(t)
     txpktctrl_init(t)
-    mlo_init(t)
+    try:
+        mlo_init(t)
+    except TimeoutError:
+        logger.error("[ERR]MLO init %d", -LINUX_ETIMEDOUT)              # mac_be.c:1178
+        raise
 
 
 def scheduler_init(t, mac_idx: int) -> None:
@@ -1201,9 +1329,11 @@ def addr_cam_init(t, mac_idx: int) -> None:
     if mac_idx == RTW89_MAC_0:
         val |= B_BE_ADDR_CAM_CLR
     t.write32(R_BE_ADDR_CAM_CTRL + off, val)
-    for _ in range(PWR_POLL_ATTEMPTS):
-        if not (t.read16(R_BE_ADDR_CAM_CTRL + off) & B_BE_ADDR_CAM_CLR):
-            break
+    done, _ = read_poll_timeout_atomic(lambda: t.read16(R_BE_ADDR_CAM_CTRL + off),
+                                       lambda v: not (v & B_BE_ADDR_CAM_CLR), 1, TRXCFG_WAIT_CNT)  # mac_be.c:1267
+    if not done:
+        logger.error("[ERR]ADDR_CAM reset")         # mac_be.c:1270
+        raise TimeoutError("rtl8922au: addr_cam_init_be poll timeout")
 
 
 def _typ_fltr_opt(t, reg: int, mac_idx: int) -> None:
@@ -1307,9 +1437,11 @@ def trxptcl_init(t, mac_idx: int, cv: int) -> None:
 def _rst_bacam(t) -> None:
     """rst_bacam_be: reset the whole response-BA CAM, poll reset-done. [SRC] mac_be.c:1504-1519."""
     t.write32_mask(R_BE_RESPBA_CAM_CTRL, B_BE_BACAM_RST_MASK, S_BE_BACAM_RST_ALL)
-    for _ in range(PWR_POLL_ATTEMPTS):
-        if field_get(B_BE_BACAM_RST_MASK, t.read32(R_BE_RESPBA_CAM_CTRL)) == S_BE_BACAM_RST_DONE:
-            break
+    done, _ = read_poll_timeout_atomic(lambda: field_get(B_BE_BACAM_RST_MASK, t.read32(R_BE_RESPBA_CAM_CTRL)),
+                                       lambda v: v == S_BE_BACAM_RST_DONE, 1, 1000)     # mac_be.c:1512
+    if not done:
+        logger.error("[ERR]bacam rst timeout")      # mac_be.c:1516
+        raise TimeoutError("rtl8922au: rst_bacam_be poll timeout")
 
 
 def rmac_init(t, mac_idx: int) -> None:
@@ -1392,25 +1524,34 @@ def cmac_init(t, mac_idx: int, cv: int) -> None:
     spatial-reuse, tmac, trxptcl, rmac, resp-pktctl, com, ptcl, ...). cca_ctrl_init_be is a no-op.
     [SRC] mac_be.c:1756+."""
     scheduler_init(t, mac_idx)
-    addr_cam_init(t, mac_idx)
+    try:
+        addr_cam_init(t, mac_idx)
+    except TimeoutError:
+        logger.error("[ERR]CMAC%d ADDR_CAM reset %d", mac_idx, -LINUX_ETIMEDOUT)     # mac_be.c:1768
+        raise
     rx_fltr_init(t, mac_idx)
     nav_ctrl_init(t, mac_idx)
     spatial_reuse_init(t, mac_idx)
     tmac_init(t, mac_idx)
     trxptcl_init(t, mac_idx, cv)
-    rmac_init(t, mac_idx)
+    try:
+        rmac_init(t, mac_idx)
+    except TimeoutError:
+        logger.error("[ERR]CMAC%d RMAC init %d", mac_idx, -LINUX_ETIMEDOUT)          # mac_be.c:1815
+        raise
     resp_pktctl_init(t, mac_idx)
     cmac_com_init(t, mac_idx)
     ptcl_init(t, mac_idx)
     cmac_dma_init(t, mac_idx)
 
 
-def tx_idle_poll_band(t, mac_idx: int) -> None:
-    """tx_idle_poll_band_be: poll the band's PTCL TX-contention until not busy. [SRC] mac_be.c:1846-1862."""
+def tx_idle_poll_band(t, mac_idx: int) -> bool:
+    """tx_idle_poll_band_be: poll the band's PTCL TX-contention until not busy; False if it stays
+    busy. [SRC] mac_be.c:1846-1862."""
     off = mac_idx * RTW89_MAC_BE_BAND_REG_OFFSET
-    for _ in range(PWR_POLL_ATTEMPTS):
-        if not (t.read8(R_BE_PTCL_TX_CTN_SEL + off) & B_BE_PTCL_BUSY):
-            break
+    done, _ = read_poll_timeout_atomic(lambda: t.read8(R_BE_PTCL_TX_CTN_SEL + off),
+                                       lambda v: not (v & B_BE_PTCL_BUSY), 30, 66000)    # mac_be.c:1858
+    return done
 
 
 def _dle_upd_qta_aval_page_ple(t, quota_id: int) -> None:
@@ -1418,7 +1559,7 @@ def _dle_upd_qta_aval_page_ple(t, quota_id: int) -> None:
     [SRC] mac_be.c dle_upd_qta_aval_page_be."""
     t.write32_mask(R_BE_PLE_BUFMGN_CTL, B_BE_PLE_AVAL_UPD_QTAID_MASK, quota_id)
     t.write32_set(R_BE_PLE_BUFMGN_CTL, B_BE_PLE_AVAL_UPD_REQ)
-    _poll32(t, R_BE_PLE_BUFMGN_CTL, lambda v: not (v & B_BE_PLE_AVAL_UPD_REQ))
+    _poll32(t, R_BE_PLE_BUFMGN_CTL, lambda v: not (v & B_BE_PLE_AVAL_UPD_REQ), 1, 2000)     # mac_be.c:1967
 
 
 def dle_quota_change(t) -> None:
@@ -1426,8 +1567,16 @@ def dle_quota_change(t) -> None:
     available pages for the B0-TX and CMAC0-RX quotas. [SRC] mac.c dle_quota_change, mac_be.c."""
     cfg = _DLE_CFG["DBCC"]
     dle_quota_cfg(t, cfg["wde_qt"], cfg["ple_min_qt"], cfg["ple_max_qt"], cfg["ext_wcpu"])
-    _dle_upd_qta_aval_page_ple(t, PLE_QTAID_B0_TXPL)
-    _dle_upd_qta_aval_page_ple(t, PLE_QTAID_CMAC0_RX)
+    try:
+        _dle_upd_qta_aval_page_ple(t, PLE_QTAID_B0_TXPL)
+    except TimeoutError:
+        logger.error("update PLE B0 TX avail page fail %d", -LINUX_ETIMEDOUT)     # mac_be.c:1984
+        raise
+    try:
+        _dle_upd_qta_aval_page_ple(t, PLE_QTAID_CMAC0_RX)
+    except TimeoutError:
+        logger.error("update PLE CMAC0 RX avail page fail %d", -LINUX_ETIMEDOUT)  # mac_be.c:1991
+        raise
 
 
 def dbcc_bb_ctrl(t) -> None:
@@ -1472,12 +1621,22 @@ def band1_enable(t, cv: int) -> None:
     """band1_enable_be: TX-idle poll, DBCC quota change, band-1 TX preload, then CMAC1 func-en and
     a second full cmac_init at the band-1 offset, the band-1 BB enable, then the CMAC1 IMR.
     cmac_pwr_en(MAC1) already ran in mac_func_en. [SRC] mac_be.c band1_enable_be."""
-    tx_idle_poll_band(t, RTW89_MAC_0)
-    dle_quota_change(t)
+    if not tx_idle_poll_band(t, RTW89_MAC_0):
+        logger.error("[ERR]tx idle poll %d", -LINUX_ETIMEDOUT)      # mac_be.c:2140
+        raise TimeoutError("rtl8922au: tx_idle_poll_band_be poll timeout")
+    try:
+        dle_quota_change(t)
+    except TimeoutError:
+        logger.error("[ERR]DLE quota change %d", -LINUX_ETIMEDOUT)      # mac_be.c:2146
+        raise
     preload_init(t, RTW89_MAC_1)
     cmac_pwr_en(t, RTW89_MAC_1)          # no-op: CMAC1 already powered in mac_func_en
     cmac_func_en(t, RTW89_MAC_1)
-    cmac_init(t, RTW89_MAC_1, cv)
+    try:
+        cmac_init(t, RTW89_MAC_1, cv)
+    except TimeoutError:
+        logger.error("[ERR]CMAC%d init %d", RTW89_MAC_1, -LINUX_ETIMEDOUT)           # mac_be.c:2170
+        raise
     dbcc_bb_ctrl(t)
     enable_imr(t, RTW89_MAC_1, IMR_CMAC_REGS)
 
@@ -1485,7 +1644,11 @@ def band1_enable(t, cv: int) -> None:
 def dbcc_enable(t, cv: int, h2c_ep: int) -> None:
     """dbcc_enable_be(True): bring up band 1, then notify the running fw (FW_RDY is set after the
     firmware download). [SRC] mac_be.c dbcc_enable_be."""
-    band1_enable(t, cv)
+    try:
+        band1_enable(t, cv)
+    except TimeoutError:
+        logger.error("[ERR] band1_enable %d", -LINUX_ETIMEDOUT)                     # mac_be.c:2227
+        raise
     firmware.h2c_notify_dbcc(t, h2c_ep, True)
 
 
@@ -1514,9 +1677,21 @@ def set_host_rpr(t) -> None:
 def trx_init(t, cv: int, h2c_ep: int) -> None:
     """trx_init_be: dmac_init then cmac_init, the dbcc enable (qta is DBCC), the DMAC/CMAC IMR
     enables, err-imr-ctrl, host-rpr, and the 8922A rsp-chk-sig clear. [SRC] mac_be.c:2302-2352."""
-    dmac_init(t)
-    cmac_init(t, RTW89_MAC_0, cv)
-    dbcc_enable(t, cv, h2c_ep)
+    try:
+        dmac_init(t)
+    except TimeoutError:
+        logger.error("[ERR]DMAC init %d", -LINUX_ETIMEDOUT)             # mac_be.c:2310
+        raise
+    try:
+        cmac_init(t, RTW89_MAC_0, cv)
+    except TimeoutError:
+        logger.error("[ERR]CMAC%d init %d", RTW89_MAC_0, -LINUX_ETIMEDOUT)           # mac_be.c:2316
+        raise
+    try:
+        dbcc_enable(t, cv, h2c_ep)
+    except TimeoutError:
+        logger.error("[ERR]dbcc_enable init %d", -LINUX_ETIMEDOUT)                  # mac_be.c:2323
+        raise
     enable_imr(t, RTW89_MAC_0, IMR_DMAC_REGS)
     enable_imr(t, RTW89_MAC_0, IMR_CMAC_REGS)
     err_imr_ctrl(t)
@@ -1544,12 +1719,16 @@ def mac_init(t, h2c_ep: int, cv: int) -> None:
     """rtw89_mac_init: the interface-up MAC bring-up. partial_init(include_bb=True) (BB preinit +
     BB-MCU firmware re-download), enable_bb_rf, sys_init, trx_init, feat_init, the USB mac_post_init
     (RX aggregation), then the fw offload config H2C. The early-h2c list is empty. [SRC] mac.c:4359-4400."""
-    partial_init(t, h2c_ep, cv, include_bb=True)
-    enable_bb_rf(t)
-    sys_init(t)
-    trx_init(t, cv, h2c_ep)
-    feat_init(t, h2c_ep)
-    mac_post_init(t)
+    try:
+        partial_init(t, h2c_ep, cv, include_bb=True)
+        enable_bb_rf(t)
+        sys_init(t)
+        trx_init(t, cv, h2c_ep)
+        feat_init(t, h2c_ep)
+        mac_post_init(t)
+    except Exception:
+        mac_pwr_off(t)      # fail: label, on any ret. mac.c:4365-4397
+        raise
     firmware.h2c_set_ofld_cfg(t, h2c_ep)
 
 

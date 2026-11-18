@@ -46,7 +46,7 @@ import struct
 import time
 from dataclasses import dataclass
 
-from .constants import REGISTER_BUSY_COUNT
+from .constants import REGISTER_BUSY_DELAY, REGISTER_USB_BUSY_COUNT
 from .transport import RT5572Transport
 
 logger = logging.getLogger(__name__)
@@ -155,14 +155,15 @@ def _efuse_read_chunk(t: RT5572Transport, byte_offset: int) -> bytes:
     reg = _set_field32(reg, EFUSE_CTRL_KICK, 1)
     t.write32(EFUSE_CTRL, reg)
 
-    # Poll until KICK clears
-    for _ in range(REGISTER_BUSY_COUNT):
+    # Poll until KICK clears; on timeout the C logs and reads the data regs anyway
+    # (rt2800lib.c:10940, rt2x00usb.c:154-163).
+    for _ in range(REGISTER_USB_BUSY_COUNT):
         cur = t.read32(EFUSE_CTRL)
         if not (cur & EFUSE_CTRL_KICK):
             break
-        time.sleep(0.000_05)
+        time.sleep(REGISTER_BUSY_DELAY / 1_000_000)   # udelay(us)
     else:
-        raise IOError(f"EFUSE read at offset 0x{byte_offset:04x}: KICK never cleared")
+        logger.error("Indirect register access failed: offset=0x%.08x, value=0x%.08x", EFUSE_CTRL, cur)
 
     # Read 4 dwords. Kernel comment: "Apparently the data is read from
     # end to start" — DATA3 first, then DATA2, DATA1, DATA0.

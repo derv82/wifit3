@@ -32,6 +32,7 @@ from dev import select_device
 
 from wifit3.chips.driver import Driver
 from wifit3.device.manager import wlan_ifaces, wlan_close
+from wifit3.errors import SetChannelError
 
 SCAN_MINUTES = 2
 DWELL_MINUTES = 10
@@ -297,8 +298,10 @@ async def run(args) -> int:
     async def tune_all() -> bool:
         tuned = True
         for iface, label in zip(cards, labels):
-            if not await iface.set_channel(args.channel):
-                print(f"[-] {label}: set_channel({args.channel}) failed", file=sys.stderr)
+            try:
+                await iface.set_channel(args.channel)
+            except SetChannelError as e:
+                print(f"[-] {label}: set_channel({args.channel}) failed: {e}", file=sys.stderr)
                 tuned = False
         return tuned
 

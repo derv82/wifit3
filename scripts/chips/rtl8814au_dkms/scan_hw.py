@@ -1,8 +1,7 @@
 """RTL8814AU (vendor/DKMS port) — live monitor-RX scan / beacon count.
 
 Drives the DKMS driver DIRECTLY (like ``test_hw.py``), bypassing the device
-manager, because this port is intentionally not registered in ``wlan/manager.py``
-yet (master keeps the mainline ``rtw88_8814au``). Brings the card up through
+manager. Brings the card up through
 M3b-3a, registers a beacon-tallying rx callback, hops a band's channels (2.4 GHz, 5 GHz,
 or all — M5c) or sits on one, and reports the breadth headline — unique BSSIDs (nAPs) and
 per-BSSID beacon counts — that the re-port is judged on (DKMS ~21-24 APs vs mainline 1-11).

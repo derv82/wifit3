@@ -268,9 +268,7 @@ def report(probes: list[Probe], prober: ProberCounts, sniffed: Optional[SnifferC
 
 
 async def run(array: WlanArray, iface, sniffer, args) -> int:
-    if not await iface.set_channel(args.channel):
-        print(f"[-] set_channel({args.channel}) failed")
-        return 1
+    await iface.set_channel(args.channel)
     ap = await find_target(array, args)
     if ap is None:
         return 1
@@ -288,9 +286,7 @@ async def run(array: WlanArray, iface, sniffer, args) -> int:
         prober = ProberCounts(args.bssid.lower(), our_mac)
         iface.register_rx_callback(prober)
         if sniffer is not None:
-            if not await sniffer.set_channel(args.channel):
-                print(f"[-] sniffer set_channel({args.channel}) failed")
-                return 1
+            await sniffer.set_channel(args.channel)
             sniffed = SnifferCounts(our_mac, str_to_mac(args.bssid))
             sniffer.register_rx_callback(sniffed)
             # enable_rx_acks clears _our_tx_macs, so register our MAC after arming.

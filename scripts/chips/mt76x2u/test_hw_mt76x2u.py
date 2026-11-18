@@ -34,6 +34,7 @@ from wifit3.chips.mt76x2u.constants import (
 from wifit3.chips.mt76x2u.driver import MT76x2UDriver
 from wifit3.chips.driver import DeviceID
 from wifit3.dot11.packet import Packet
+from wifit3.errors import SetChannelError
 
 
 def setup_logging(debug: bool) -> None:
@@ -234,8 +235,10 @@ async def phase_hop(driver: MT76x2UDriver, dwell_s: float) -> None:
     timing: dict[int, float] = {}
     for ch in driver.SUPPORTED_CHANNELS:
         t0 = _time.monotonic()
-        if not await driver.set_channel(ch):
-            print(f"  ch {ch:3d}: set_channel FAILED")
+        try:
+            await driver.set_channel(ch)
+        except SetChannelError as e:
+            print(f"  ch {ch:3d}: set_channel FAILED: {e}")
             continue
         switch_ms = (_time.monotonic() - t0) * 1000
         timing[ch] = switch_ms
@@ -331,8 +334,7 @@ async def phase_deauth(driver: MT76x2UDriver, target: str,
     print(f"  Frame bytes:    {frame.hex()}")
 
     for i in range(count):
-        if not await driver.inject_frame(frame):
-            fail(f"inject_frame failed on attempt {i + 1}")
+        await driver.inject_frame(frame)
         await asyncio.sleep(0.05)
     ok(f"Sent {count} deauth frames.")
 

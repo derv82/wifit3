@@ -8,8 +8,7 @@ ALFA AWUS036ACH, `0bda:8812`), on the shared `chips/rtl88xxau_base/` Jaguar core
 
 Cold init, FW, MAC, BB/RF, channel tune, TX-power, phydm init, and monitor entry are
 byte-for-byte against morrownr's cold-boot captures (both capture-2 and capture-3). 2.4 GHz
-monitor RX works on hardware (clean beacons, stable 10+ min on ch1), and is the manager
-default for `0bda:8812` (`WIFIT3_RTL8812=mainline` falls back). 5 GHz tune is byte-for-byte
+monitor RX works on hardware (clean beacons, stable 10+ min on ch1). 5 GHz tune is byte-for-byte
 verified across all 37 hops including both band crossings and all DFS channels; 5 GHz RX off
 the antenna is HW-confirmed at kernel parity (2026-06-28 wifit3-vs-`rtw88_88xxa` A/B: 5 GHz breadth
 57=57, ~9.0–9.18/s on the populated non-DFS channels, RSSI −0.1 dB).
@@ -62,7 +61,7 @@ diffs are CUMULATIVE (BW20-2S = base + diff[1TX] + diff[2TX]); the TX-power trai
 compares as u32. Firmware: `array_mp_8812a_fw_nic`, 27030 B.
 
 **mainline RF-wedges on dual-band hopping; this port does not.** On a 2.4+5 GHz hop the
-mainline `chips/rtl8812au/` driver wedges RX at ~110 s ("RF synth lost lock during hopping, a
+mainline port wedges RX at ~110 s ("RF synth lost lock during hopping, a
 known rtw88 limitation, worst on 5 GHz") and stays dead; dkms climbs throughout a 240 s (and
 7 min) run with no wedge, and cold-boots to recover a chip mainline's warm-reattach can't.
 Matched-coverage throughput is tied — the earlier "mainline faster" gap was only mainline

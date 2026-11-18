@@ -51,10 +51,10 @@ from .constants import (
     PBF_SYS_CTRL,
     PBF_SYS_CTRL_READY,
     REGISTER_BUSY_COUNT,
+    REGISTER_BUSY_DELAY,
     REGISTER_TIMEOUT_FIRMWARE_MS,
-    USB_DEVICE_MODE,
+    REGISTER_USB_BUSY_COUNT,
     USB_MODE_FIRMWARE,
-    USB_VENDOR_REQUEST_OUT,
 )
 from .transport import RT3572Transport
 
@@ -143,13 +143,14 @@ def wait_csr_ready(t: RT3572Transport) -> bool:
 def _wait_for_mcu(t: RT3572Transport) -> bool:
     """Poll H2M_MAILBOX_CSR until the OWNER byte (top 8 bits) is 0
     (i.e. the MCU has consumed the previous request).  Returns True on
-    success, False if the MCU never released."""
+    success, False if the MCU never released (rt2x00usb.c:154-163)."""
     from .constants import H2M_MAILBOX_CSR_OWNER
-    for _ in range(REGISTER_BUSY_COUNT):
+    for _ in range(REGISTER_USB_BUSY_COUNT):
         reg = t.read32(H2M_MAILBOX_CSR)
         if not (reg & H2M_MAILBOX_CSR_OWNER):
             return True
-        time.sleep(0.001)
+        time.sleep(REGISTER_BUSY_DELAY / 1_000_000)   # udelay(us)
+    logger.error("Indirect register access failed: offset=0x%.08x, value=0x%.08x", H2M_MAILBOX_CSR, reg)
     return False
 
 
@@ -160,10 +161,11 @@ def mcu_request(
     arg0: int = 0,
     arg1: int = 0,
 ) -> None:
-    """Send a single MCU command via the H2M_MAILBOX_CSR doorbell."""
+    """Send a single MCU command via the H2M_MAILBOX_CSR doorbell.
+    A busy MCU drops the command; no caller sees it (rt2800lib.c:533-544)."""
     from .constants import HOST_CMD_CSR
     if not _wait_for_mcu(t):
-        raise IOError("MCU busy — H2M_MAILBOX_CSR_OWNER never cleared")
+        return
 
     reg = (
         (1 << 24)                            # OWNER = host
@@ -184,14 +186,8 @@ def kick_firmware_mode(t: RT3572Transport) -> None:
     Kernel uses REGISTER_TIMEOUT_FIRMWARE_MS (1000 ms) here because the
     chip may sit on the request while it initializes its 8051.
     """
-    t.dev.ctrl_transfer(
-        USB_VENDOR_REQUEST_OUT,
-        USB_DEVICE_MODE,
-        USB_MODE_FIRMWARE,                    # wValue
-        0,                                    # wIndex
-        b"",
-        REGISTER_TIMEOUT_FIRMWARE_MS,
-    )
+    if t.set_device_mode(0, USB_MODE_FIRMWARE, REGISTER_TIMEOUT_FIRMWARE_MS) is None:
+        raise IOError("Failed to write Firmware to device")   # rt2800usb.c:253-258
 
 
 # ----------------------------------------------------------------------

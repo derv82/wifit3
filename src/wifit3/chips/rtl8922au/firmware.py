@@ -6,12 +6,13 @@ as H2C/fwdl packets over bulk-OUT. Each packet is a 24-byte TX descriptor, and f
 8-byte H2C command header, in front of the firmware bytes. See RTL8922AU.md.
 """
 
+import logging
 import struct
 import time
 from pathlib import Path
 
 from .constants import (
-    FW_ASSET, RTW89_MFW_SIG, RTW89_FW_NORMAL,
+    FW_ASSET, RTW89_MFW_SIG, RTW89_FW_NORMAL, RTW89_FW_BBMCU0,
     H2C_DESC_SIZE, H2C_HEADER_LEN, RTW89_USB_MOD512_PADDING,
     BE_RXD_RPKT_LEN_MASK, BE_RXD_RPKT_TYPE_SHIFT, RTW89_CORE_RX_TYPE_H2C, RTW89_CORE_RX_TYPE_FWDL,
     H2C_HDR_CAT_MAC, H2C_CL_MAC_FWDL, H2C_HDR_CLASS_SHIFT, H2C_HDR_TOTAL_LEN_MASK,
@@ -28,7 +29,10 @@ from .constants import (
     B_BE_WLANCPU_FWDL_EN, B_BE_BBMCU0_FWDL_EN,
     RTW89_FW_ELEMENT_ID_BBMCU0, RTW89_FW_ELEMENT_ALIGN, FW_ELEMENT_HDR_SIZE,
     FW_ELEMENT_BBMCU_CV_OFFSET, RTW89_TXPWR_CONF_DFLT_RFE_TYPE,
-    PWR_POLL_ATTEMPTS,
+    FWDL_WAIT_CNT, RTW89_C2H_TIMEOUT_USB,
+    B_BE_WCPU_FWDL_STATUS_MASK, FWDL_STATUS_MAP, RTW89_FWDL_WCPU_FW_INIT_RDY,
+    RTW89_FWDL_CHECKSUM_FAIL, RTW89_FWDL_SECURITY_FAIL, RTW89_FWDL_CV_NOT_MATCH,
+    R_AX_BOOT_DBG, R_BE_WLCPU_PORT_PC, LINUX_EINVAL, LINUX_EBUSY, LINUX_ENOENT,
     R_BE_H2CREG_DATA0, R_BE_C2HREG_DATA0, R_BE_H2CREG_CTRL, B_BE_H2CREG_TRIGGER, R_BE_C2HREG_CTRL,
     R_BE_MAILBOX_COUNTER, B_MAILBOX_H2C_CNT_MASK, B_MAILBOX_C2H_CNT_MASK,
     RTW89_H2CREG_MAX, RTW89_C2HREG_MAX, RTW89_H2CREG_HDR_LEN, RTW89_C2HREG_HDR_LEN,
@@ -53,6 +57,17 @@ from .constants import (
     ADDR_CAM_W2_NET_TYPE, ADDR_CAM_W2_SMA_HASH, ADDR_CAM_W2_TMA_HASH, RTW89_NET_TYPE_NO_LINK,
     BSSID_CAM_ENT_SIZE, RTW89_ADDR_CAM_SEC_NORMAL, RTW89_BSSID_MATCH_ALL,
 )
+from .iopoll import read_poll_timeout, read_poll_timeout_atomic
+
+logger = logging.getLogger(__name__)
+
+
+class Rtw89Error(RuntimeError):
+    """An rtw89 error return other than a timeout; ret is the C's negative errno."""
+
+    def __init__(self, ret: int, message: str):
+        super().__init__(message)
+        self.ret = ret
 
 
 def _pb(mask: int, val: int) -> int:
@@ -82,7 +97,7 @@ def load_fw_suit(cv: int) -> bytes:
         if typ == RTW89_FW_NORMAL and c <= cv and not mp and (best is None or best[0] < c):
             best = (c, shift, size)
     if best is None:
-        raise RuntimeError("rtl8922au: no suitable NORMAL firmware in mfw file")
+        raise Rtw89Error(-LINUX_ENOENT, "rtl8922au: no suitable NORMAL firmware in mfw file")   # fw.c:545-549
     return data[best[1]:best[1] + best[2]]
 
 
@@ -105,7 +120,7 @@ def load_bbmcu_suit(cv: int) -> bytes:
             start = offset + FW_ELEMENT_HDR_SIZE
             return data[start:start + elm_size]
         offset = _align(offset + FW_ELEMENT_HDR_SIZE + elm_size, RTW89_FW_ELEMENT_ALIGN)
-    raise RuntimeError("rtl8922au: no suitable BBMCU0 firmware element")
+    raise Rtw89Error(-LINUX_ENOENT, "rtl8922au: no suitable BBMCU0 firmware element")   # fw.c:545-549
 
 
 def element_regs_with_idx(elem_id: int, hal_aid: int = 0) -> tuple:
@@ -218,7 +233,7 @@ def _parse_formatted_mssc(fw: bytes, content: int, length: int, dsp_checksum: bo
     [SRC] fw.c:282-362. Returns (mssc_len, ignore, secure_section_exist)."""
     mh = content + length
     if fw[mh:mh + len(MSS_SIGNATURE)] != MSS_SIGNATURE:
-        raise RuntimeError("rtl8922au: wrong MSS signature")
+        raise Rtw89Error(-LINUX_ENOENT, "rtl8922au: wrong MSS signature")   # fw.c:297-299
     defen = fw[mh + 16]
     mssdev_max = fw[mh + 21]
     keypair_num = struct.unpack_from("<H", fw, mh + 22)[0]
@@ -307,34 +322,59 @@ def build_body_packets(fw: bytes, info: dict) -> list:
     return packets
 
 
-def _poll(t, addr: int, cond) -> int:
-    for _ in range(PWR_POLL_ATTEMPTS):
-        val = t.read32(addr)
-        if cond(val):
-            return val
-    raise TimeoutError(f"rtl8922au: firmware poll timeout on 0x{addr:04x}")
+def _poll(t, addr: int, cond, sleep_us: int, timeout_us: int) -> None:
+    done, _ = read_poll_timeout_atomic(lambda: t.read32(addr), cond, sleep_us, timeout_us)
+    if not done:
+        raise TimeoutError(f"rtl8922au: firmware poll timeout on 0x{addr:04x}")
 
 
 def _fwdl_check_path_ready(t, h2c_or_fwdl: bool) -> None:
     """rtw89_fwdl_check_path_ready_be. [SRC] mac_be.c:757-766."""
     check = B_BE_H2C_PATH_RDY if h2c_or_fwdl else B_BE_DLFW_PATH_RDY
-    _poll(t, R_BE_WCPU_FW_CTRL, lambda v: v & check)
+    _poll(t, R_BE_WCPU_FW_CTRL, lambda v: v & check, 1, 1000000)     # mac_be.c:763
 
 
-def _fwdl_ready(v: int, done_mask: int) -> bool:
-    """fwdl_get_status_be reduced to "is the status firmware-init-ready?". The per-type download
-    -enable bit clearing (WLAN-CPU / BBMCU0) reports ready; for every check the raw status field
-    reading 3 also maps to init-ready (fwdl_status_map[3]). [SRC] mac_be.c:709-755."""
-    if done_mask and not (v & done_mask):
-        return True
-    return _gb(v, 26, 0xF) == 3          # fwdl_status_map[3] == RTW89_FWDL_WCPU_FW_INIT_RDY
+def _fwdl_get_status(t, done_mask: int) -> int:
+    """fwdl_get_status_be: firmware-init-ready once the suit's download-enable bit (done_mask; 0 for
+    the status-only FreeRTOS check) clears, else the status field through fwdl_status_map.
+    [SRC] mac_be.c:709-755."""
+    val32 = t.read32(R_BE_WCPU_FW_CTRL)
+    if done_mask and not (val32 & done_mask):
+        return RTW89_FWDL_WCPU_FW_INIT_RDY
+    st = (val32 & B_BE_WCPU_FWDL_STATUS_MASK) >> 26
+    if st < len(FWDL_STATUS_MAP):
+        return FWDL_STATUS_MAP[st]
+    return st
 
 
 def _fw_check_rdy(t, done_mask: int) -> None:
-    """rtw89_fw_check_rdy: poll WCPU_FW_CTRL until the status reads firmware-init-ready. done_mask
-    is the download-enable bit for the suit type (0 for the FreeRTOS-done check, which is
-    status-only). [SRC] fw.c:106-138, mac_be.c:730-745."""
-    _poll(t, R_BE_WCPU_FW_CTRL, lambda v: _fwdl_ready(v, done_mask))
+    """rtw89_fw_check_rdy: poll the download status until firmware-init-ready; on timeout, log the
+    last status as the C does and raise. [SRC] fw.c:106-138."""
+    done, st = read_poll_timeout_atomic(lambda: _fwdl_get_status(t, done_mask),
+                                        lambda s: s == RTW89_FWDL_WCPU_FW_INIT_RDY, 1, FWDL_WAIT_CNT)  # fw.c:112
+    if done:
+        return
+    if st == RTW89_FWDL_CHECKSUM_FAIL:
+        logger.error("fw checksum fail")
+        raise Rtw89Error(-LINUX_EINVAL, "rtl8922au: fw checksum fail")
+    elif st == RTW89_FWDL_SECURITY_FAIL:
+        logger.error("fw security fail")
+        raise Rtw89Error(-LINUX_EINVAL, "rtl8922au: fw security fail")
+    elif st == RTW89_FWDL_CV_NOT_MATCH:
+        logger.error("fw cv not match")
+        raise Rtw89Error(-LINUX_EINVAL, "rtl8922au: fw cv not match")
+    else:
+        logger.error("fw unexpected status %d", st)
+        raise Rtw89Error(-LINUX_EBUSY, f"rtl8922au: fw unexpected status {st}")
+
+
+def dl_fail_dump(t) -> None:
+    """rtw89_fw_dl_fail_dump + rtw89_fw_prog_cnt_dump (BE). [SRC] fw.c:1912-1946."""
+    logger.error("[ERR]fwdl 0x1E0 = 0x%x", t.read32(R_BE_WCPU_FW_CTRL))
+    logger.error("[ERR]fwdl 0x83F0 = 0x%x", t.read32(R_AX_BOOT_DBG))
+    for _ in range(15):
+        logger.error("[ERR]fw PC = 0x%x", t.read32(R_BE_WLCPU_PORT_PC))
+        time.sleep(0.00001)                                            # fsleep(10)
 
 
 def download_suit(t, h2c_ep: int, fw: bytes, info: dict, is_bbmcu: bool = False) -> None:
@@ -344,15 +384,30 @@ def download_suit(t, h2c_ep: int, fw: bytes, info: dict, is_bbmcu: bool = False)
     [SRC] fw.c:1948-1981, 1865-1908."""
     if not is_bbmcu:
         t.write32(R_BE_SECURE_BOOT_MALLOC_INFO, SECURE_BOOT_MALLOC_VALUE)   # fw.c:1963-1965
-    _fwdl_check_path_ready(t, True)
+    try:
+        _fwdl_check_path_ready(t, True)
+    except TimeoutError:
+        logger.error("[ERR]H2C path ready")                            # fw.c:1968
+        raise
     t.bulk_out(h2c_ep, build_hdr_packet(fw, info))
-    _fwdl_check_path_ready(t, False)
+    try:
+        _fwdl_check_path_ready(t, False)
+    except TimeoutError:
+        logger.error("[ERR]FWDL path ready")                           # fw.c:1797
+        raise
     t.write32(R_AX_HALT_H2C_CTRL, 0)
     t.write32(R_AX_HALT_C2H_CTRL, 0)
     for pkt in build_body_packets(fw, info):
         t.bulk_out(h2c_ep, pkt)
-    done_mask = B_BE_BBMCU0_FWDL_EN if is_bbmcu else B_BE_WLANCPU_FWDL_EN
-    _fw_check_rdy(t, done_mask)          # BB0-FWDL-DONE / WCPU-FWDL-DONE. [SRC] fw.c:1865-1900
+    if is_bbmcu:
+        done_mask, fw_type = B_BE_BBMCU0_FWDL_EN, RTW89_FW_BBMCU0
+    else:
+        done_mask, fw_type = B_BE_WLANCPU_FWDL_EN, RTW89_FW_NORMAL
+    try:
+        _fw_check_rdy(t, done_mask)      # BB0-FWDL-DONE / WCPU-FWDL-DONE. [SRC] fw.c:1865-1900
+    except Rtw89Error:
+        logger.warning("failed to download firmware type %u", fw_type)  # fw.c:1891
+        raise
 
 
 def download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
@@ -369,7 +424,11 @@ def download(t, h2c_ep: int, cv: int, include_bb: bool = False) -> None:
     t.h2c_counter = 0
     t.c2h_counter = 0
     time.sleep(0.005)                                 # mdelay(5). [SRC] fw.c:2019
-    _fw_check_rdy(t, 0)                               # RTW89_FWDL_CHECK_FREERTOS_DONE (status-only)
+    try:
+        _fw_check_rdy(t, 0)                           # RTW89_FWDL_CHECK_FREERTOS_DONE (status-only)
+    except Rtw89Error:
+        logger.warning("download firmware fail")                       # fw.c:2023
+        raise
 
 
 def h2c_command(t, h2c_ep: int, cat: int, cls: int, func: int, payload: bytes,
@@ -536,9 +595,10 @@ def h2c_default_dmac_tbl(t, h2c_ep: int, macid: int = 0) -> None:
 def _write_h2c_reg(t, h2c_id: int, content_len: int, w0: int) -> None:
     """rtw89_fw_write_h2c_reg: wait for the H2C mailbox free, write the 4 H2CREG dwords, bump the
     H2C counter, and trigger. [SRC] fw.c:8229-8260."""
-    for _ in range(PWR_POLL_ATTEMPTS):
-        if t.read8(R_BE_H2CREG_CTRL) == 0:
-            break
+    done, _ = read_poll_timeout(lambda: t.read8(R_BE_H2CREG_CTRL), lambda v: v == 0, 1000, 5000)  # fw.c:8238
+    if not done:
+        logger.warning("FW does not process h2c registers")       # fw.c:8241
+        raise TimeoutError("rtl8922au: rtw89_fw_write_h2c_reg poll timeout")
     length = (content_len + RTW89_H2CREG_HDR_LEN + 3) // 4     # DIV_ROUND_UP(., 4)
     w0 = (w0 & ~RTW89_H2CREG_HDR_FUNC_MASK) | (h2c_id & RTW89_H2CREG_HDR_FUNC_MASK)
     w0 = (w0 & ~RTW89_H2CREG_HDR_LEN_MASK) | ((length << 8) & RTW89_H2CREG_HDR_LEN_MASK)
@@ -553,9 +613,10 @@ def _write_h2c_reg(t, h2c_id: int, content_len: int, w0: int) -> None:
 def _read_c2h_reg(t) -> dict:
     """rtw89_fw_read_c2h_reg: wait for the C2H mailbox ready, read the 4 C2HREG dwords, ack, bump
     the C2H counter, and decode the header. [SRC] fw.c:8262-8305."""
-    for _ in range(PWR_POLL_ATTEMPTS):
-        if t.read8(R_BE_C2HREG_CTRL):
-            break
+    done, _ = read_poll_timeout_atomic(lambda: t.read8(R_BE_C2HREG_CTRL), bool, 1, RTW89_C2H_TIMEOUT_USB)  # fw.c:8282
+    if not done:
+        logger.warning("c2h reg timeout")                           # fw.c:8286
+        raise TimeoutError("rtl8922au: rtw89_fw_read_c2h_reg poll timeout")
     regs = [t.read32(R_BE_C2HREG_DATA0 + i * 4) for i in range(RTW89_C2HREG_MAX)]
     t.write8(R_BE_C2HREG_CTRL, 0)
     cid = regs[0] & RTW89_C2HREG_HDR_FUNC_MASK

@@ -168,9 +168,9 @@ async def main_async(args):
             events.append((time.time(), cmd))
             print(f"[*] {cmd}")
             t0 = time.monotonic()
-            ok = await driver.set_channel(ch)
+            await driver.set_channel(ch)
             elapsed = (time.monotonic() - t0) * 1000
-            print(f"    -> ok={ok}, set_channel took {elapsed:.0f}ms")
+            print(f"    -> set_channel took {elapsed:.0f}ms")
             # 1-second gap between hops, matching kernel main.log cadence.
             time.sleep(1.0)
 

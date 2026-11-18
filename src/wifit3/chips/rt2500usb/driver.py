@@ -28,6 +28,7 @@ Driver Protocol + manager registration. M5 = inject_frame (TX).
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import threading
 from typing import Callable, Optional
@@ -36,7 +37,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.dot11.parser import WlanFrameParser
 
 from . import monitor
@@ -259,6 +260,7 @@ class RT2500USBDriver(Driver):
 
             # Tune to the start channel (rt2x00mac_config CHANGE_CHANNEL): tunes
             # the synth and re-seeds the AGC (reset_tuner), warm or cold.
+            self.transport.device_started = True   # rt2x00lib_start, before mac80211's first config
             await self.set_channel(self.current_channel)
             prog(0.9, f"tuned to channel {self.current_channel}")
 
@@ -314,34 +316,25 @@ class RT2500USBDriver(Driver):
         return
 
     # ---- channel tune ---------------------------------------------------
-    def _tune(self, channel: int) -> bool:
+    def _tune(self, channel: int) -> None:
         # Executor thread; _hw_lock guarantees only one hardware op touches the
         # control endpoint at a time, even if a cancelled tune's thread is still
         # draining its tune_hop transfers.
         with self._hw_lock:
-            return monitor.tune_hop(
+            monitor.tune_hop(
                 self.transport, self.rf_type, channel,
                 self._eeprom, self._ant_tx, self._ant_rx,
             )
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         if channel not in self.SUPPORTED_CHANNELS:
-            logger.warning("rt2500usb: channel %d not supported", channel)
-            return False
-        try:
-            async with self._io_lock:
-                ok = await asyncio.get_event_loop().run_in_executor(
-                    None, self._tune, channel
-                )
-        except Exception as e:
-            logger.error("rt2500usb set_channel(%d) failed: %s", channel, e)
-            return False
-        if ok:
-            self.current_channel = channel
-        return ok
+            raise SetChannelError(f"rt2500usb: channel {channel} not supported")
+        async with self._io_lock:
+            await asyncio.get_event_loop().run_in_executor(None, self._tune, channel)
+        self.current_channel = channel
 
     # ---- TX -------------------------------------------------------------
-    def _do_inject(self, frame_bytes: bytes) -> int:
+    def _do_inject(self, frame_bytes: bytes) -> None:
         # The RT2570 is half-duplex: while its RX engine is receiving a strong
         # co-channel signal (a target AP on its own channel), the bulk-OUT write
         # DEFERS behind RX and routinely hits the 200 ms TX timeout, silently
@@ -353,13 +346,19 @@ class RT2500USBDriver(Driver):
         # ~1 ms, inside _hw_lock so it can't overlap a tune; the reader thread's
         # next bulk-IN read simply times out benignly and resumes on restore.
         with self._hw_lock:
+            if not self.transport.device_present:   # rt2x00mac.c:104-105
+                raise usb.core.USBError("device not present", errno=errno.ENODEV)
             stop_queue_rx(self.transport)
             try:
-                return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes)
+                _tx_inject(self.dev, self._bulk_out_ep, frame_bytes)
+            except usb.core.USBError as error:
+                if is_device_gone(error):            # rt2x00usb.c:330-333
+                    self.transport.device_present = False
+                raise
             finally:
                 start_queue_rx(self.transport)
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the 5x u32 TXD (HW retry limit 15, the rt2x00 aireplay value, in the 4-bit
         TXD_W0_RETRY_LIMIT field) and bulk-OUT [TXD][frame] once at 1 Mbps CCK. The RT2570
         retries up to that limit BLINDLY: the rt2x00 legacy MAC has no ACK-based early stop, so
@@ -370,15 +369,19 @@ class RT2500USBDriver(Driver):
         reached behind an explicit user action [[passive_by_default]]."""
         if self._bulk_out_ep is None:
             logger.error("rt2500usb: no bulk-OUT endpoint; cannot inject")
-            return False
+            return
         loop = asyncio.get_event_loop()
         try:
             async with self._io_lock:
-                sent = await loop.run_in_executor(None, self._do_inject, frame_bytes)
+                await loop.run_in_executor(None, self._do_inject, frame_bytes)
+        except usb.core.USBError as e:
+            if is_device_gone(e):
+                raise
+            logger.debug("rt2500usb inject_frame failed: %s", e)
+            return
         except Exception as e:
-            logger.error("rt2500usb inject_frame failed: %s", e)
-            return False
-        return sent > 0
+            logger.debug("rt2500usb inject_frame failed: %s", e)
+            return
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """The chip assigns the 802.11 sequence number (TXD_W0_NEW_SEQ=1 +

@@ -83,7 +83,7 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     sent: list[bytes] = []
     d.transport.bulk_out = lambda pkt: sent.append(pkt)
     frame = _mgmt_frame()
-    assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
+    await d.inject_frame(frame)   # base entry -> _stamp_tx_seq -> _inject_frame
     assert len(sent) == 1
     pkt = sent[0]
     assert (int.from_bytes(pkt[0x10:0x14], "little") >> 17) & 1 == 0   # RTY_LMT_EN clear -> HW global retry
@@ -96,6 +96,6 @@ async def test_inject_uses_6m_ofdm_on_5ghz():
     d._channel = 149
     sent: list[bytes] = []
     d.transport.bulk_out = lambda pkt: sent.append(pkt)
-    assert await d.inject_frame(_mgmt_frame()) is True
+    await d.inject_frame(_mgmt_frame())
     assert sent[0][16] & 0x7F == tx.DESC_RATE6M
     assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == tx.RATEID_IDX_G

@@ -172,7 +172,7 @@ async def _drive_firmware(dev: E.ReplayDevice, state: dict):
     t = _make_transport(dev, state["q"])
     loader = MT7925AUFirmwareLoader(t, ASSETS)
     loader._claim_vendor_interface = lambda *a, **k: 0
-    return await loader.load_firmware()
+    return await loader.power_on() and await loader.load_firmware()
 
 
 async def _drive_postboot(dev: E.ReplayDevice, state: dict):

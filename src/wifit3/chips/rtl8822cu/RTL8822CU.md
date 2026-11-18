@@ -23,7 +23,7 @@
 ## Python Port Details
 
 - Claimed in `constants.USB_IDS_RTL8822CU`: 0BDA:C82C, 0BDA:C82E, 0BDA:C812, 0BDA:D820, 0BDA:D82B (Realtek demoboard defaults), 2357:0137 (FAST / TP-Link), 2001:3329 (D-Link AC13U).
-- 13B1:0043 (Alpha) is commented out because rtl8822bu and rtl8822bu_dkms already declare it as the Linksys WUSB6400M.
+- 13B1:0043 (Alpha) is commented out because rtl8822bu_dkms already declares it as the Linksys WUSB6400M.
 - 2357:0137 is shared: `device/manager.py` `_VIDPID_FAMILIES` maps it to `VidPidFamily(default="mt76x2u", resolve=_resolve_2357_0137)`.
 - `_resolve_2357_0137` reads the live device descriptor: any interface exposing bulk IN endpoint 0x85 routes to `mt76x2u`, otherwise to `rtl8822cu`; `resolve_driver` then pulls that package's `Claim`.
 - `supported_ids()` skips a shared VID:PID for a package that is not the family default, so rtl8822cu never enters 2357:0137 into the static map.

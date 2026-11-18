@@ -1,6 +1,7 @@
 """RTL8814AU raw USB transport — Realtek vendor control + bulk OUT.
 
-All register access is a single vendor request (0x05): wValue = 16-bit register
+All register access is a vendor request (0x05), tried up to MAX_USBCTRL_VENDORREQ_TIMES
+times: wValue = 16-bit register
 offset, wIndex = 0, data stage 1/2/4 bytes little-endian. Firmware packets go out
 on bulk EP 0x02. [SRC] os_dep/.../usb_ops_linux.c usbctrl_vendorreq.
 
@@ -10,11 +11,16 @@ transport on hardware and the pcap-replay transport in the M1 verifier.
 """
 from __future__ import annotations
 
+import errno
+import logging
 import struct
 
 import usb.core
 import usb.util
 
+from wifit3.errors import is_device_gone
+
+from .rx import RXDESC_SIZE
 from .constants import (
     EP_BULK_OUT_FW,
     REALTEK_VENDOR_REQUEST,
@@ -22,7 +28,12 @@ from .constants import (
     REQ_TYPE_WRITE,
 )
 
-_CTRL_TIMEOUT_MS = 1000
+logger = logging.getLogger(__name__)
+
+_CTRL_TIMEOUT_MS = 500  # [SRC] include/usb_ops_linux.h:22
+MAX_USBCTRL_VENDORREQ_TIMES = 10  # [SRC] include/usb_ops_linux.h:29-31, autoconf.h:224-225
+MAX_CONTINUAL_IO_ERR = 4          # [SRC] include/rtw_io.h:265-266
+FW_START_ADDRESS = 0x1000         # [SRC] include/usb_ops_linux.h:19
 _BULK_TIMEOUT_MS = 1000
 # RX bulk-IN read: the buffer must hold a whole USB-aggregated transfer (the 8814A
 # RX-DMA buffer is ~24 KB), so read generously; a short timeout keeps the reader
@@ -35,20 +46,63 @@ class Rtl8814auTransport:
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
         self._in_ep = None  # bulk-IN endpoint address, probed lazily
+        self.continual_io_error = 0
+        self.surprise_removed = False
 
     # --- register access ---------------------------------------------------
+    def usbctrl_vendorreq(self, reqtype: int, addr: int, pdata: bytearray) -> None:
+        """[SRC] os_dep/linux/usb_ops_linux.c:26-215: up to 10 tries (one from 0x1000 up), each failure
+        logged. ENODEV or 5 failures in a row mark the device removed and raise."""
+        if self.surprise_removed:  # RTW_CANNOT_IO, :58-61
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
+        value = addr & 0xFFFF
+        is_read = reqtype == REQ_TYPE_READ
+        length = len(pdata)
+        for vendorreq_times in range(1, MAX_USBCTRL_VENDORREQ_TIMES + 1):
+            try:
+                result = self.dev.ctrl_transfer(reqtype, REALTEK_VENDOR_REQUEST, value, 0,
+                                                length if is_read else pdata, _CTRL_TIMEOUT_MS)
+            except usb.core.USBError as e:
+                status = -(e.errno or errno.EIO)
+                if is_device_gone(e):
+                    self.surprise_removed = True
+            else:
+                status = len(result) if is_read else result
+                if status == length:
+                    if is_read:
+                        pdata[:] = bytes(result)
+                    self.continual_io_error = 0
+                    return
+            if length in (1, 2, 4):
+                logger.info("reg 0x%x, usb %s %u fail, status:%d value=0x%x, vendorreq_times:%d",
+                            value, "read" if is_read else "write", length, status,
+                            int.from_bytes(pdata, "little"), vendorreq_times)
+            else:
+                logger.info("reg 0x%x, usb %s %u fail, status:%d, vendorreq_times:%d", value,
+                            "read" if is_read else "write", length, status, vendorreq_times)
+            if is_read and status > 0:
+                pdata[:] = bytes(result).ljust(length, b"\x00")
+            self.continual_io_error += 1
+            if self.continual_io_error > MAX_CONTINUAL_IO_ERR:
+                logger.info("[ERROR] continual_io_error:%d > %d", self.continual_io_error,
+                            MAX_CONTINUAL_IO_ERR)  # core/rtw_io.c:470
+                self.surprise_removed = True
+                break
+            if value >= FW_START_ADDRESS:
+                break
+        if self.surprise_removed:
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
+
     def _read(self, addr: int, length: int) -> bytes:
-        return bytes(self.dev.ctrl_transfer(
-            REQ_TYPE_READ, REALTEK_VENDOR_REQUEST, addr, 0, length, _CTRL_TIMEOUT_MS
-        ))
+        pdata = bytearray(length)
+        self.usbctrl_vendorreq(REQ_TYPE_READ, addr, pdata)
+        return bytes(pdata)
 
     def _write(self, addr: int, data: bytes) -> None:
-        self.dev.ctrl_transfer(
-            REQ_TYPE_WRITE, REALTEK_VENDOR_REQUEST, addr, 0, data, _CTRL_TIMEOUT_MS
-        )
+        self.usbctrl_vendorreq(REQ_TYPE_WRITE, addr, bytearray(data))
 
     def read8(self, addr: int) -> int:
-        return self._read(addr, 1)[0]
+        return int.from_bytes(self._read(addr, 1), "little")
 
     def read16(self, addr: int) -> int:
         return int.from_bytes(self._read(addr, 2), "little")
@@ -67,7 +121,17 @@ class Rtl8814auTransport:
 
     # --- bulk OUT (firmware packets) --------------------------------------
     def bulk_out(self, data: bytes) -> None:
-        self.dev.write(EP_BULK_OUT_FW, data, _BULK_TIMEOUT_MS)
+        """usb_write_port (TX and FW rsvd pages): a failed write drops the frame.
+        [SRC] os_dep/linux/usb_ops_linux.c:567-700, hal/rtl8814a/rtl8814a_hal_init.c:418-463."""
+        if self.surprise_removed:  # RTW_CANNOT_TX, :580-588
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
+        try:
+            self.dev.write(EP_BULK_OUT_FW, data, _BULK_TIMEOUT_MS)
+        except usb.core.USBError as e:
+            logger.info("usb_write_port, status=%d", -(e.errno or errno.EIO))  # :672
+            if is_device_gone(e):
+                self.surprise_removed = True
+                raise
 
     # --- bulk IN (RX) ------------------------------------------------------
     def _bulk_in_ep(self) -> int:
@@ -96,8 +160,10 @@ class Rtl8814auTransport:
         NOT contain the substring "timeout"), so a message check silently misses it and the
         reader counts benign timeouts as fatal errors.
         """
+        if self.surprise_removed:  # RTW_CANNOT_RX. usb_ops_linux.c:1011
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
         try:
-            return bytes(self.dev.read(self._bulk_in_ep(), size, timeout))
+            data = bytes(self.dev.read(self._bulk_in_ep(), size, timeout))
         except usb.core.USBTimeoutError:
             return None
         except usb.core.USBError as e:
@@ -107,6 +173,9 @@ class Rtl8814auTransport:
                     or "timed out" in str(e).lower() or "timeout" in str(e).lower()):
                 return None
             raise
+        if len(data) >= RXDESC_SIZE:  # usb_read_port_complete. usb_ops_linux.c:938-944
+            self.continual_io_error = 0
+        return data
 
     def reset_rx_pipe(self) -> None:
         """Clear a bulk-IN endpoint halt. The band switch re-enables RX (clock-gate on) while

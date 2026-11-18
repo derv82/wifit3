@@ -318,8 +318,15 @@ BB_MCU_INIT_REG = (                      # bb_mcu0_init_reg == bb_mcu1_init_reg.
     (0x6820, 0xFFFFFFFF),
 )
 
-# read_poll_timeout budget for the power-on polls (kernel timeout_us/sleep_us ~= 3000). [SRC] mac_be.c.
-PWR_POLL_ATTEMPTS = 3000
+TRXCFG_WAIT_CNT = 2000          # read_poll_timeout timeout_us. [SRC] mac.h:599
+FWDL_WAIT_CNT = 400000          # read_poll_timeout_atomic timeout_us. [SRC] fw.h:5279
+RTW89_C2H_TIMEOUT_USB = 4000    # read_poll_timeout_atomic timeout_us. [SRC] fw.h:122
+# ETIMEDOUT as the C logs a read_poll_timeout failure; Python's errno.ETIMEDOUT is 10060 on Windows.
+# [SRC] include/uapi/asm-generic/errno.h
+LINUX_ETIMEDOUT = 110
+LINUX_EINVAL = 22
+LINUX_EBUSY = 16
+LINUX_ENOENT = 2
 
 # Post-pwr-on tail of power_switch(on=True): efuse reads, scoreboard notify. [SRC] mac.c:1557-1568.
 # Physical efuse dump + state convert. [SRC] efuse_be.c, reg.h.
@@ -834,12 +841,28 @@ B_BE_DLFW_PATH_RDY = 1 << 0      # reg.h:4545
 R_AX_HALT_H2C_CTRL = 0x0160      # reg.h; same address as R_BE_HALT_H2C_CTRL
 R_AX_HALT_C2H_CTRL = 0x0164      # reg.h; same address as R_BE_HALT_C2H_CTRL
 B_BE_WCPU_FWDL_STATUS_MASK = 0x3C000000  # GENMASK(29, 26). reg.h
+RTW89_FWDL_INITIAL_STATE = 0     # enum rtw89_fwdl_status. fw.h:11
+RTW89_FWDL_FWDL_ONGOING = 1      # fw.h:12
+RTW89_FWDL_CHECKSUM_FAIL = 2     # fw.h:13
+RTW89_FWDL_SECURITY_FAIL = 3     # fw.h:14
+RTW89_FWDL_CV_NOT_MATCH = 4      # fw.h:15
+RTW89_FWDL_RSVD0 = 5             # fw.h:16
+RTW89_FWDL_WCPU_FWDL_RDY = 6     # fw.h:17
 RTW89_FWDL_WCPU_FW_INIT_RDY = 7  # fw.h:18
+# fwdl_status_map: WCPU_FWDL_STATUS field -> enum rtw89_fwdl_status. [SRC] mac_be.c:709-720
+FWDL_STATUS_MAP = (
+    RTW89_FWDL_INITIAL_STATE, RTW89_FWDL_FWDL_ONGOING, RTW89_FWDL_WCPU_FWDL_RDY,
+    RTW89_FWDL_WCPU_FW_INIT_RDY, RTW89_FWDL_CHECKSUM_FAIL, RTW89_FWDL_SECURITY_FAIL,
+    RTW89_FWDL_SECURITY_FAIL, RTW89_FWDL_CV_NOT_MATCH, RTW89_FWDL_RSVD0, RTW89_FWDL_RSVD0,
+)
+R_AX_BOOT_DBG = 0x83F0           # read by rtw89_fw_dl_fail_dump on BE too. reg.h:549
+R_BE_WLCPU_PORT_PC = 0x03FC      # reg.h:4697
 
 # Firmware file + H2C/fwdl packet build. [SRC] fw.c, fw.h, usb.c, txrx.h, rtw8922a.c/rtw8922au.c.
 FW_ASSET = "rtw8922a_fw-4.bin"   # multi-firmware file the capture loaded (fw_format 4)
 RTW89_MFW_SIG = 0xFF             # fw.h:4293
 RTW89_FW_NORMAL = 1             # enum rtw89_fw_type. fw.h
+RTW89_FW_BBMCU0 = 64            # enum rtw89_fw_type. core.h:5068
 RTW89_FW_ELEMENT_ID_BBMCU0 = 0   # enum rtw89_fw_element_id. fw.h:4328
 # General H2C command header (rtw89_h2c_pkt_set_hdr) + notify_dbcc. [SRC] fw.h:4600-4688, fw.c:1624.
 FWCMD_TYPE_H2C = 0               # fw.h:4609
@@ -965,6 +988,11 @@ ETH_ALEN = 6
 SEC_CTRL_EFUSE_SIZE = 4          # chip->sec_ctrl_efuse_size. rtw8922a.c:3241
 EFUSE_RF_BLOCK_OFFSET = 0x10000  # efuse_blocks[RF].offset. rtw8922a.c:436
 EFUSE_RF_BLOCK_SIZE = 0x240      # efuse_blocks[RF].size. rtw8922a.c:436
+EFUSE_HCI_DIG_USB_BLOCK_OFFSET = 0x30000  # efuse_blocks[HCI_DIG_USB].offset. rtw8922a.c:438
+EFUSE_HCI_DIG_USB_BLOCK_SIZE = 0x890      # efuse_blocks[HCI_DIG_USB].size. rtw8922a.c:438
+RTW89_EFUSE_BLOCK_RF = 1                  # core.h:3625
+RTW89_EFUSE_BLOCK_HCI_DIG_PCIE_SDIO = 2   # core.h:3626
+RTW89_EFUSE_BLOCK_HCI_DIG_USB = 3         # core.h:3627
 EFUSE_BLOCK_ID_MASK = 0xFFFF0000    # GENMASK(31, 16). efuse.h:10
 EFUSE_BLOCK_SIZE_MASK = 0x0000FFFF  # GENMASK(15, 0). efuse.h:11
 EFUSE_HDR_PAGE_MASK = 0x000E0000    # GENMASK(19, 17). efuse_be.c:196
@@ -1103,7 +1131,12 @@ B_MAC_AX_BTGS1_NOTIFY = 1 << 0   # reg.h:160
 MAC_AX_NOTIFY_TP_MAJOR = 0x81    # reg.h:161 (POWERON set)
 B_MAC_AX_SB_DRV_MASK = 0x00FFFFFF   # GENMASK(23, 0). reg.h
 BTC_WSCB_INIT = 0x00004003       # ACTIVE|ON|BTLOG = BIT0|BIT1|BIT14. coex.c:698-710
+BTC_WSCB_ACTIVE = 1 << 0         # coex.c:697
+BTC_WSCB_ON = 1 << 1             # coex.c:698
 BTC_WSCB_WLRFK = 1 << 11         # coex.c:707
+BTC_BSCB_RFK_RUN = 1 << 5        # coex.c:429
+BTC_BSCB_RFK_REQ = 1 << 6        # coex.c:430
+BTC_SCB_INV_VALUE = 0xFFFFFFFF   # GENMASK(31, 0). coex.c:6568
 
 # rtw89_phy_dm_init BB inits (pre-RFK). [SRC] phy.c:8236, phy_be.c, rtw8922a.c, reg.h.
 MASKDWORD = 0xFFFFFFFF
@@ -1542,7 +1575,6 @@ XTAL_SI_CV = 0x41                # mac.h:1666
 XTAL_SI_ACV_MASK = 0x0F          # GENMASK(3, 0). mac.h:1667
 XTAL_SI_CHIP_ID_L = 0xFD         # mac.h:1696
 XTAL_SI_CHIP_ID_H = 0xFE         # mac.h:1697
-XTAL_SI_POLL_ATTEMPTS = 1000     # read_poll_timeout(50us, 50ms). [SRC] mac.c:7221
 
 # mac80211 add-interface: rtw89_mac_port_update port-config registers (port 0, band 0).
 # The BE port base is rtw89_port_base_be. [SRC] mac_be.c:35, reg.h.

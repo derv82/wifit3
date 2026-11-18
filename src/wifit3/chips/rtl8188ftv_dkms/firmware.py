@@ -6,14 +6,18 @@ Ported from ``rtl8188f_FirmwareDownload`` + ``_FWDownloadEnable`` +
 (hal/rtl8188f/rtl8188f_hal_init.c:28-66,95-263,265-303,304-374,1081-1270).
 Only the ``#if 1`` IO-write path is on the graph; the ``#else`` TX-packet
 path compiles out. The fwdl test-fail triggers default to false
-(core/rtw_debug.c:288-309). Surprise-removal checks guard no wire ops:
-transport errors propagate instead.
+(core/rtw_debug.c:288-309). Surprise-removal checks guard no wire ops: a failed
+write returns False, a failed read returns zeros, and the transport raises ENODEV
+once the device is marked removed.
 """
 from __future__ import annotations
 
+import logging
 import time
 
 from . import constants as C
+
+logger = logging.getLogger(__name__)
 
 
 def BIT(n: int) -> int:
@@ -54,37 +58,45 @@ def download_enable(t, enable: bool) -> None:
         t.write8(C.REG_MCUFWDL, tmp & 0xFE)
 
 
-def block_write(t, buf: bytes) -> None:
+def block_write(t, buf: bytes) -> bool:
     size = len(buf)
     count_p1, remain_p1 = divmod(size, C.FW_BLOCK_P1)
     for i in range(count_p1):
         off = i * C.FW_BLOCK_P1
-        t.writeN(C.FW_8188F_START_ADDRESS + off, buf[off:off + C.FW_BLOCK_P1])
+        if not t.writeN(C.FW_8188F_START_ADDRESS + off, buf[off:off + C.FW_BLOCK_P1]):
+            logger.warning("_BlockWrite phase 1 i:%d", i)  # printk, :109-112
+            return False
     if remain_p1:
         off = count_p1 * C.FW_BLOCK_P1
         count_p2, remain_p2 = divmod(remain_p1, C.FW_BLOCK_P2)
         for i in range(count_p2):
             o = off + i * C.FW_BLOCK_P2
-            t.writeN(C.FW_8188F_START_ADDRESS + o, buf[o:o + C.FW_BLOCK_P2])
+            if not t.writeN(C.FW_8188F_START_ADDRESS + o, buf[o:o + C.FW_BLOCK_P2]):
+                return False
         if remain_p2:
             off = count_p1 * C.FW_BLOCK_P1 + count_p2 * C.FW_BLOCK_P2
             for i in range(remain_p2):
-                t.write8(C.FW_8188F_START_ADDRESS + off + i, buf[off + i])
+                if not t.write8(C.FW_8188F_START_ADDRESS + off + i, buf[off + i]):
+                    logger.warning("_BlockWrite phase 3 i:%d", i)  # printk, :170-173
+                    return False
+    return True
 
 
-def page_write(t, page: int, buf: bytes) -> None:
+def page_write(t, page: int, buf: bytes) -> bool:
     t.write8(C.REG_MCUFWDL + 2, (t.read8(C.REG_MCUFWDL + 2) & 0xF8) | (page & 0x07))
-    block_write(t, buf)
+    return block_write(t, buf)
 
 
-def write_fw(t, buf: bytes) -> None:
+def write_fw(t, buf: bytes) -> bool:
     pages, remain = divmod(len(buf), C.MAX_DLFW_PAGE_SIZE)
     for page in range(pages):
         off = page * C.MAX_DLFW_PAGE_SIZE
-        page_write(t, page, buf[off:off + C.MAX_DLFW_PAGE_SIZE])
+        if not page_write(t, page, buf[off:off + C.MAX_DLFW_PAGE_SIZE]):
+            return False
     if remain:
         off = pages * C.MAX_DLFW_PAGE_SIZE
-        page_write(t, pages, buf[off:])
+        return page_write(t, pages, buf[off:])
+    return True
 
 
 def polling_fwdl_chksum(t, min_cnt: int, timeout_ms: int) -> bool:
@@ -159,18 +171,16 @@ def download_firmware(t, blob: bytes) -> tuple[int, int, int]:
     download_enable(t, True)
     start = time.monotonic()
     write_fw_count = 0
-    success = False
     while write_fw_count < 3 or (time.monotonic() - start) < 0.5:
         write_fw_count += 1
         t.write8(C.REG_MCUFWDL, t.read8(C.REG_MCUFWDL) | C.FWDL_ChkSum_rpt)
-        write_fw(t, payload)
+        if not write_fw(t, payload):
+            continue
         if polling_fwdl_chksum(t, 5, 50):
-            success = True
             break
     download_enable(t, False)
     try:
-        if success:
-            success = fw_free_to_go(t, 10, 200)
+        success = fw_free_to_go(t, 10, 200)  # :1253, whatever the checksum poll said
         if not success:
             value8 = t.read8(C.REG_MCUFWDL)
             t.write8(C.REG_MCUFWDL, value8 & ~BIT(0) & ~BIT(1))

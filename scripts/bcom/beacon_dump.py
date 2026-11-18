@@ -77,10 +77,7 @@ async def run(args) -> int:
             found.set_result(pkt)
 
     iface.register_rx_callback(on_rx)
-    if not await iface.set_channel(args.channel):
-        print(f"[-] set_channel({args.channel}) failed.", file=sys.stderr)
-        await wlan_close(ifaces)
-        return 1
+    await iface.set_channel(args.channel)
     print(f"[*] Listening on CH{args.channel} for {target}...", file=sys.stderr)
     try:
         dump_beacon(await found)

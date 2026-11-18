@@ -244,3 +244,38 @@ full-suite runs, Kali, 3.14).
 Fix: a unique temp file per write (`tempfile.mkstemp`), plus a lock around read-merge-write. Callers
 that read the `.meta` before `update_meta` need the lock too, or `update_meta` takes a merge function.
 11 write call sites.
+
+## ar9271_v2 reopen without a power cycle fails at HTC/WMI init
+
+**Problem.** A firmware download into a chip that wasn't power-cycled fails at HTC/WMI init
+(`HTC ready: credits=33`, then a WMI timeout); a fresh plug works. 3 failures on 2 cards (Alfa x2,
+TP-Link x1). Porting the C's reboot-on-close (`hif_usb.c:1411`) made every reopen fail on Windows,
+so it was reverted.
+
+**Direction.** Capture `rmmod ath9k_htc; modprobe ath9k_htc` and compare it with our failing reopen.
+
+## MT7612U warm bring-up wedges until a replug
+
+**Problem.** After several warm bring-ups, `connect()` fails with `BringUpError(mcu-load-cr): LOAD_CR
+(BBP table) failed after a power cycle + cold reset` (`MCU CMD cmd=2 seq=1 response timeout`), and
+every later bring-up fails until the card is replugged. 1 card, 2 runs: the first failure came on
+warm bring-up #12 and #7.
+
+## RTL8192FU reopen in the same process is denied
+
+**Problem.** `scripts/bringup.py --chipset 8192 -n 10` brings the card up once; cycles 2-10 fail
+with `BringUpError: [Errno 13] Access denied`. A new process opens it fine. 1 card, 2 runs, Windows.
+
+## MAC filter and ACK delivery differ across drivers
+
+**Problem.** Some drivers pass ACK frames up by default, others filter them; `enable_rx_acks`
+counts only ACKs addressed to us. Whether active monitor (auto-ACK, retry-until-ACK) works per
+driver may depend on the same MAC filter bits. Not surveyed.
+
+**Direction.** Per driver: does RX deliver every ACK on the air, with and without `enable_rx_acks`.
+
+## WEP campaigns keep sending after the device is gone
+
+**Problem.** Once a driver reports the device gone (ENODEV), ARP replay retries a burst every
+2 s until the user leaves Focus (`arp_replay.py:294` catches and logs), and Focus shows nothing.
+Seen once, RTL8814AU on a loose cable, Windows: 9 failed bursts over 18 s; RX kept working.

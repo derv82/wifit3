@@ -135,10 +135,6 @@ No card ACKs a MAC it has only transmitted from, outside active monitor, whether
   Its ACK emission is coupled to the RX address filter (TXRX_CSR2 `DROP_NOT_TO_ME`), which monitor mode
   must clear to receive foreign frames, so the responder never fires.
 
-Scope: the mainline (non-DKMS) Realtek variants (rtl8188eus, rtl8812au, rtl8821au, rtl8822bu) and
-rtw88_8814au stay `UNIMPLEMENTED` by choice: active monitor was never ported for them, so they are out
-of scope for this sweep, not regressions. The bench targets the DKMS drivers we ship.
-
 `enter_active_monitor`'s `bssid` is read only by rtl8922au, mt7921au and mt7925au. On all three,
 injected unicast is auto-ACKed identically with and without it (2026-10-07, ACKs counted on a second
 card, controls at 0). Whether a live AP's frames differ is untested: sniffing for ACKs to our forged

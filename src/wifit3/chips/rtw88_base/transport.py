@@ -1,24 +1,18 @@
-"""Synchronous USB transport for any rtw88-family USB chip.
+"""Synchronous USB register I/O for rtw88-family chips: read8/16/32, write8/16/32 and the
+read-modify-write helpers. RTL8822CUTransport, the only subclass, overrides `_read`/`_write`.
 
-Mirrors `rtw_usb_read/write` from `driver_sources/rtw88-source-v6.18/usb.c` —
-every register access is a single vendor control transfer:
+Every register access is a single vendor control transfer:
 
     bRequest      = 0x05    (RTW_USB_CMD_REQ)
     bmRequestType = 0x40    (vendor OUT, write)
                   | 0xC0    (vendor IN,  read)
     wValue        = register address (16-bit)
     wIndex        = 0x00    (RTW_USB_VENQT_CMD_IDX)
-
-Used for register reads/writes and (on the *legacy* MCUFWDL path only) for
-firmware-page upload. The modern iDDMA FW upload path used by 8822b/c and
-8814a goes out via the TX bulk-OUT data path — see each chip's
-`firmware.py` for that.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Sequence
 
 import usb.core
 
@@ -79,13 +73,6 @@ class Rtw88Transport:
                 (val >> 24) & 0xFF,
             ],
         )
-
-    def write_block(self, addr: int, data: bytes | Sequence[int]) -> None:
-        """Multi-byte payload to a 16-bit register address.
-
-        Used for legacy-MCUFWDL firmware-page chunks (8821a/8812a/8723d).
-        """
-        self._write(addr, data)
 
     def _write(self, addr: int, payload) -> None:
         sent = self.dev.ctrl_transfer(

@@ -235,6 +235,23 @@ def test_tune_hop_reseeds_agc():
     assert _bbp_writes(t)[17] == 0x3B
 
 
+def test_tune_hop_restarts_rx_when_the_tune_raises(monkeypatch):
+    """rt2x00mac_config always turns RX back on (rt2x00mac.c:349)."""
+    import pytest
+    import usb.core
+    from wifit3.chips.rt2500usb import chan as chan_mod
+    from wifit3.chips.rt2500usb.constants import TXRX_CSR2_DISABLE_RX
+
+    def failing_config_ant(*_a, **_kw):
+        raise usb.core.USBError("timeout")
+
+    monkeypatch.setattr(chan_mod, "config_ant", failing_config_ant)
+    t = FakeTransport()
+    with pytest.raises(usb.core.USBError):
+        monitor.tune_hop(t, RF2525E, 1, _calibrated_eeprom(), ANTENNA_A, ANTENNA_A)
+    assert not t.regs[TXRX_CSR2] & TXRX_CSR2_DISABLE_RX
+
+
 def test_enable_monitor_led_and_filter():
     t = FakeTransport()
     monitor.enable_monitor(t, RF2525E, _calibrated_eeprom(), ANTENNA_A, ANTENNA_A)
@@ -328,7 +345,7 @@ def test_rf_write_encoding():
 
 def test_config_channel_2525e_halfband_first():
     t = FakeTransport()
-    assert config_channel(t, RF2525E, 1, txpower=24) is True
+    config_channel(t, RF2525E, 1, txpower=24)
     # The first RF write must be the half-band RF[2] = 0x000008aa.
     first_phy9 = next(v for (a, v) in t.writes if a == PHY_CSR9)
     assert first_phy9 == 0x08AA
@@ -386,14 +403,14 @@ def test_rf_vals_match_kernel_literals():
 def test_config_channel_rf2522_plain_no_halfband_no_rf4():
     # RF2522: plain rf1/rf2/rf3 writes, no half-band pre-tune, no RF[4].
     t = FakeTransport()
-    assert config_channel(t, RF2522, 1, txpower=DEFAULT_TXPOWER) is True
+    config_channel(t, RF2522, 1, txpower=DEFAULT_TXPOWER)
     assert _rf_write_values(t) == _expected_rf(RF_VALS_2522, 1, DEFAULT_TXPOWER)
 
 
 def test_config_channel_rf5222_no_halfband_with_rf4():
     # RF5222: four writes (rf1..rf4), no half-band (that is RF2525E-only).
     t = FakeTransport()
-    assert config_channel(t, RF5222, 6, txpower=DEFAULT_TXPOWER) is True
+    config_channel(t, RF5222, 6, txpower=DEFAULT_TXPOWER)
     vals = _rf_write_values(t)
     assert vals == _expected_rf(RF_VALS_5222, 6, DEFAULT_TXPOWER)
     assert len(vals) == 4                       # RF2525E ch would be 6 (half-band pair)
@@ -403,7 +420,7 @@ def test_config_channel_unknown_rf_gives_it_a_shot():
     # An RF value the kernel doesn't know must NOT raise — it falls back to the
     # RF2525 table (plain writes) and tunes anyway.
     t = FakeTransport()
-    assert config_channel(t, 0x07, 1, txpower=DEFAULT_TXPOWER) is True
+    config_channel(t, 0x07, 1, txpower=DEFAULT_TXPOWER)
     assert _rf_write_values(t) == _expected_rf(RF_VALS_2525, 1, DEFAULT_TXPOWER)
 
 
@@ -527,8 +544,7 @@ async def test_driver_inject_frame_path():
     drv._bulk_out_ep = 0x01
     frame = _synthetic_beacon()
 
-    sent_ok = await drv.inject_frame(frame)
-    assert sent_ok is True
+    await drv.inject_frame(frame)
 
     ep, buf = drv.dev.last_write
     assert ep == 0x01

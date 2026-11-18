@@ -179,12 +179,11 @@ class Lab:
         self.next_n = 0
         self.row: dict[str, str] = {}
 
-    async def send(self, frame: bytes) -> bool:
+    async def send(self, frame: bytes) -> None:
         try:
-            return await self.test.send_no_wait(frame)
+            await self.test.send_no_wait(frame)
         except Exception as e:                    # noqa: BLE001
             print(f"[-] send_no_wait raised: {e!r}")
-            return False
 
     def copies_of(self, dst: bytes, ns) -> dict[int, list[Copy]]:
         return {n: self.tap.copies[(dst, n)] for n in ns if (dst, n) in self.tap.copies}
@@ -197,21 +196,21 @@ class Lab:
         print(f"[#] {rate:.1f} beacons/s heard (the AP sends 9.8/s)")
         self.row["ref b/s"] = f"{rate:.1f}"
 
-    async def paced(self, dst: bytes) -> tuple[dict[int, float], int]:
-        calls, false = {}, 0
+    async def paced(self, dst: bytes) -> dict[int, float]:
+        calls = {}
         for n in range(self.next_n, self.next_n + COUNT):
             calls[n] = time.perf_counter()
-            false += not await self.send(marker_frame(dst, n))
+            await self.send(marker_frame(dst, n))
             await asyncio.sleep(INTERVAL)
         self.next_n += COUNT
         await asyncio.sleep(SETTLE)
-        return calls, false
+        return calls
 
     async def retries_and_latency(self) -> None:
         print(f"[*] retries: {COUNT} broadcast, then {COUNT} unicast to an address nobody ACKs")
-        bcast_calls, bcast_false = await self.paced(BROADCAST)
+        bcast_calls = await self.paced(BROADCAST)
         bogus = mac_bytes(BOGUS)
-        uni_calls, uni_false = await self.paced(bogus)
+        uni_calls = await self.paced(bogus)
         bcast = self.copies_of(BROADCAST, bcast_calls)
         uni = self.copies_of(bogus, uni_calls)
         bcast_copies = [len(c) for c in bcast.values()]
@@ -220,8 +219,6 @@ class Lab:
         steps = [bcast[n + 1][0].seq - bcast[n][0].seq for n in bcast if n + 1 in bcast]
         plus_one = sum(s % 4096 == 1 for s in steps)
         uni_median = f"{statistics.median(uni_copies):g}" if uni_copies else "-"
-        if bcast_false or uni_false:
-            print(f"[-] send_no_wait returned False {bcast_false + uni_false}x")
         print(f"[#] broadcast: {len(bcast)}/{COUNT} landed, most copies of one frame "
               f"{max(bcast_copies, default=0)} (expect 1), retry bit on {retry_bits} copies")
         print(f"[#] broadcast: sequence number +1 between consecutive frames {plus_one}/{len(steps)}")
@@ -290,9 +287,9 @@ class Lab:
         calls: list[float] = []
         send_no_wait = self.test.send_no_wait
 
-        async def timed_send_no_wait(frame: bytes) -> bool:
+        async def timed_send_no_wait(frame: bytes) -> None:
             calls.append(time.perf_counter())
-            return await send_no_wait(frame)
+            await send_no_wait(frame)
 
         self.test.send_no_wait = timed_send_no_wait
         fake = FakeAP(self.test, mac_bytes(TWIN_BSSID), LAB_SSID, self.channel, lab_beacon(self.channel))

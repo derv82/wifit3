@@ -18,7 +18,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -510,10 +510,9 @@ class MT76x2UDriver(Driver):
         if ra is not None:
             self.record_ack(b"\x00\x00\x00\x00" + ra)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         if channel not in self.SUPPORTED_CHANNELS:
-            logger.error("MT7612U: channel %d not in SUPPORTED_CHANNELS", channel)
-            return False
+            raise SetChannelError(f"MT7612U: channel {channel} not in SUPPORTED_CHANNELS")
         rate_power = read_rate_power(self.transport, band_2g=channel < 36)
         power_info = read_power_info(
             self.transport, channel, band_2g=channel < 36,
@@ -540,8 +539,7 @@ class MT76x2UDriver(Driver):
                 set_txpower_enabled=self._set_txpower_enabled,
                 scan=scan,
             ):
-                logger.error("MT7612U: set_channel(%d) failed", channel)
-                return False
+                raise SetChannelError(f"MT7612U: set_channel({channel}) failed")
             # `mac_cc_reset` follows phy_set_channel in the kernel.
             # [SRC] mt76x2/usb_main.c:44.
             mac_cc_reset(self.transport)
@@ -551,7 +549,6 @@ class MT76x2UDriver(Driver):
             # A fresh tune invalidates the heavy per-channel cal; the periodic
             # task re-runs it once we've settled (scan=False). [SRC] usb_phy.c:90.
             self._cal.channel_cal_done = False
-        return True
 
     def _ext_pa_for(self, channel: int) -> bool:
         """External-PA enable for ``channel`` band, derived from EEPROM.
@@ -669,15 +666,15 @@ class MT76x2UDriver(Driver):
         async with self._cal_lock:
             self._set_ack_admit(False)
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the mt76x02 TXINFO + TXWI for ``frame_bytes`` and bulk-OUT it once over EP 0x07
         (AC_VO). A unicast addr1 requests ACK, so the chip's own HW retry (limit set globally in
         TX_RTY_CFG at connect) retransmits it un-ACKed. The tuned channel selects the TXWI
         rate band (OFDM on 5 GHz, CCK on 2.4 GHz). The sequence number is already stamped by
         ``_stamp_tx_seq`` (the base calls it before this)."""
-        return await tx_inject_frame(self.transport, frame_bytes,
-                                     ack=not frame_bytes[4] & 0x01,
-                                     channel=self.current_channel)
+        await tx_inject_frame(self.transport, frame_bytes,
+                              ack=not frame_bytes[4] & 0x01,
+                              channel=self.current_channel)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Software-stamp an incrementing 802.11 sequence number into seq_ctrl. The 20-byte txwi
