@@ -1585,6 +1585,8 @@ def hop_channel(t: RT5572Transport, silicon_id: int, channel: int,
     rt2800lib.c:5691 rt2800_config (update_survey then config_channel)."""
     from .mac import toggle_rx, update_survey
     toggle_rx(t, False)                                   # stop_queue(RX)
-    update_survey(t)                                      # bank outgoing channel's survey
-    reconfig_channel(t, silicon_id, channel, **sc_kwargs)
-    toggle_rx(t, True)                                    # start_queue(RX)
+    try:
+        update_survey(t)                                  # bank outgoing channel's survey
+        reconfig_channel(t, silicon_id, channel, **sc_kwargs)
+    finally:
+        toggle_rx(t, True)                                # start_queue(RX)
