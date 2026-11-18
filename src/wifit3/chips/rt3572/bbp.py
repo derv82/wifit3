@@ -36,6 +36,8 @@ from .constants import (
     H2M_MAILBOX_CSR,
     MCU_BOOT_SIGNAL,
     REGISTER_BUSY_COUNT,
+    REGISTER_BUSY_DELAY,
+    REGISTER_USB_BUSY_COUNT,
     RT_RT3572,
     RT_RT5390,
     RT_RT5392,
@@ -53,12 +55,12 @@ def _wait_for_bbp(t: RT3572Transport) -> int:
     """Poll BBP_CSR_CFG until BUSY clears.  Returns the final register
     value (caller may read VALUE field from it).  Returns 0xFFFFFFFF on
     timeout — matches the kernel "we couldn't get the BBP" pattern."""
-    for _ in range(REGISTER_BUSY_COUNT):
+    for _ in range(REGISTER_USB_BUSY_COUNT):
         reg = t.read32(BBP_CSR_CFG)
         if not (reg & BBP_CSR_CFG_BUSY):
             return reg
-        time.sleep(0.000_05)  # 50µs; kernel uses udelay loop
-    logger.warning("BBP_CSR_CFG.BUSY never cleared")
+        time.sleep(REGISTER_BUSY_DELAY / 1_000_000)   # udelay(us)
+    logger.error("Indirect register access failed: offset=0x%.08x, value=0x%.08x", BBP_CSR_CFG, reg)
     return 0xFFFFFFFF
 
 

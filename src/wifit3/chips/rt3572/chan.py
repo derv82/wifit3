@@ -118,6 +118,7 @@ from .eeprom import (
     IqCalibration,
     txpower_to_dev,
 )
+from .mac import toggle_rx, update_survey
 from .rfcsr import RfFilterCal, freq_cal_mode1_usb, rfcsr_read, rfcsr_write
 from .transport import RT3572Transport
 
@@ -1558,3 +1559,14 @@ def set_channel(
         raise NotImplementedError(
             f"set_channel for silicon 0x{silicon_id:04x} not yet validated"
         )
+
+
+def hop_channel(t: RT3572Transport, silicon_id: int, channel: int, **sc_kwargs) -> None:
+    """rt2x00mac_config for a channel change: stop RX, update_survey, set_channel, start RX.
+    [SRC] rt2x00mac.c:326-349, rt2800lib.c:5691-5694."""
+    toggle_rx(t, False)
+    try:
+        update_survey(t)
+        set_channel(t, silicon_id, channel, **sc_kwargs)
+    finally:
+        toggle_rx(t, True)

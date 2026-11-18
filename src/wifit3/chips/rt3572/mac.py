@@ -26,12 +26,9 @@ from .constants import (
     MAC_SYS_CTRL_RESET_CSR,
     PBF_SYS_CTRL,
     PBF_SYS_CTRL_READY,
-    REGISTER_TIMEOUT_MS,
     RT_NAMES,
     RT_SUPPORTED,
-    USB_DEVICE_MODE,
     USB_MODE_RESET,
-    USB_VENDOR_REQUEST_OUT,
 )
 from .transport import RT3572Transport
 
@@ -171,14 +168,7 @@ def usb_init_registers(t: RT3572Transport) -> None:
 
     # USB endpoint reset (vendor request: bRequest=USB_DEVICE_MODE,
     # wValue=USB_MODE_RESET, wIndex=0).
-    t.dev.ctrl_transfer(
-        USB_VENDOR_REQUEST_OUT,
-        USB_DEVICE_MODE,
-        USB_MODE_RESET,
-        0,
-        b"",
-        REGISTER_TIMEOUT_MS,
-    )
+    t.set_device_mode(0, USB_MODE_RESET)
 
     # Release MAC reset.
     t.write32(MAC_SYS_CTRL, 0)
