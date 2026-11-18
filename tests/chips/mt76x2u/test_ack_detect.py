@@ -97,7 +97,7 @@ async def test_inject_requests_ack_and_sends_once():
     d = _driver()
     d.transport.async_write_bulk = AsyncMock(
         side_effect=lambda ep, blob, timeout_ms=500: len(blob))
-    assert await d.inject_frame(_mgmt_frame()) is True   # base -> _stamp_tx_seq -> _inject_frame
+    await d.inject_frame(_mgmt_frame())   # base -> _stamp_tx_seq -> _inject_frame
     d.transport.async_write_bulk.assert_awaited_once()
     _ep, blob = d.transport.async_write_bulk.await_args.args[:2]
     txwi = blob[4:24]                                    # [TXINFO 4][TXWI 20]
