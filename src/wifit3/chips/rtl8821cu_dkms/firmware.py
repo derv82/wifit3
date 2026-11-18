@@ -23,9 +23,13 @@ Register addrs/bits pasted from halmac_reg2.h / halmac_bit_8821c.h.
 """
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 
 from . import mac, tx
+
+logger = logging.getLogger(__name__)
 
 # --- registers [SRC] halmac_reg2.h -----------------------------------------
 REG_SYS_FUNC_EN = 0x0002
@@ -333,18 +337,25 @@ def download_fw(t, info, full: bool = False, rsvd_boundary: int = 0) -> None:
     t.last_hme_box = 0                              # rtw_halmac_dlfw reset [SRC] hal_halmac.c:3405
 
 
-def send_h2c_by_reg(t, h2c: bytes) -> None:
+def send_h2c_by_reg(t, h2c: bytes) -> bool:
     """rtw_halmac_send_h2c [SRC] hal_halmac.c:4103 — push an (up to 8-byte) H2C through the next
     HMEBOX (hal->LastHMEBoxNum, rotated mod 4 and reset to 0 after each FW download): poll the
     box free in HMETFR, write the ext box (bytes 4-7) then the main box (bytes 0-3, the write
-    that triggers the FW read), and advance the box index."""
+    that triggers the FW read), and advance the box index. A box still busy skips the H2C."""
     box = t.last_hme_box
-    if t.read8(REG_HMETFR) & (1 << box):            # _is_fw_read_cmd_down: box must be free
-        raise RuntimeError(f"RTL8821CU: H2C box{box} not free")
+    for _ in range(100 + 1):  # _is_fw_read_cmd_down :4070-4088: retry_cnts = 100, do-while, 1 ms
+        if not t.read8(REG_HMETFR) & (1 << box):
+            break
+        time.sleep(0.001)
+    else:
+        logger.warning("_is_fw_read_cmd_down, reg_1cc(%x), msg_box(%d)...", t.read8(REG_HMETFR), box)
+        logger.warning(" fw read cmd failed...")  # :4131
+        return False
     h2c = bytes(h2c).ljust(8, b"\x00")
     t.write32(REG_HMEBOX_E0 + box * 4, int.from_bytes(h2c[4:8], "little"))
     t.write32(REG_HMEBOX0 + box * 4, int.from_bytes(h2c[0:4], "little"))
     t.last_hme_box = (box + 1) % 4
+    return True
 
 
 def _h2c_header(buf: bytearray, sub_cmd: int, content_size: int, seq: int) -> None:
@@ -379,7 +390,7 @@ def _h2c_dump_poll(t) -> None:
     t.write8(REG_RCR + 2, tmp8)
 
 
-def _send_general_info_by_reg(t, info) -> None:
+def _send_general_info_by_reg(t, info) -> bool:
     """_send_general_info_by_reg [SRC] hal_halmac.c:3035 -> rtw_halmac_send_h2c HMEBOX box0:
     an 8-byte general-info-reg H2C (drv rf_type 0 for 1T1R, cut = chip_ver) written to the box."""
     h2c = bytearray(8)
@@ -390,7 +401,7 @@ def _send_general_info_by_reg(t, info) -> None:
     _set_field(h2c, 0, 24, 8, info.chip_ver)        # CUT_VERSION (phydm)
     _set_field(h2c, 4, 0, 4, _BB_PATH_A)            # RX_ANT_STATUS
     _set_field(h2c, 4, 4, 4, _BB_PATH_A)            # TX_ANT_STATUS
-    send_h2c_by_reg(t, bytes(h2c))
+    return send_h2c_by_reg(t, bytes(h2c))
 
 
 def send_general_info(t, info) -> None:
@@ -414,7 +425,8 @@ def send_general_info(t, info) -> None:
     _send_h2c_pkt(t, bytes(phy))
 
     _h2c_dump_poll(t)
-    _send_general_info_by_reg(t, info)
+    if not _send_general_info_by_reg(t, info):  # [SRC] hal_halmac.c:3116-3121
+        raise RuntimeError("RTL8821CU: Fail to send general info by register!")
 
 
 def fw_dl(t, info, already_on: bool, power_on_fn) -> None:
