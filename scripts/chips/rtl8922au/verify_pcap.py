@@ -524,6 +524,7 @@ def run(cap: str | None = None, verbose: bool = False) -> int:
     driver.switch_usb_mode = True
     # verify drives _bringup() (not connect()), so the PyUSB interface claim is never called.
     driver._h2c_ep = next((o["ep"] for o in ops if o["kind"] == "bulk"), None)
+    driver.transport.bulk_out_max_packet_size = {driver._h2c_ep: 512}
     replay.driver = driver            # the real handlers the async-injector calls
 
     diverged = None
