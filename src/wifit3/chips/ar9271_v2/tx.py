@@ -14,12 +14,18 @@ ride the mgmt service endpoint with ``tx_mgmt_hdr`` (8 B); data frames ride a da
 else mgmt path [SRC] htc_drv_txrx.c:381 (ath9k_htc_tx_start) / :214 (mgmt) / :260 (data).
 
 ``driver.inject_frame`` builds these from the bare 802.11 frame mac80211 hands it (which already
-carries its own sequence number); only the wrapper — and the per-frame TX-slot cookie — is ours.
+carries its own sequence number); only the wrapper — and the TX slot in its cookie field — is ours.
 """
 from __future__ import annotations
 
+import errno
+import logging
 import struct
 import threading
+import time
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 HIF_TX_STREAM_TAG = 0x697e          # [WIRE] le16 stream-mode tag on every bulk-OUT TX frame
 HTC_FRAME_HDR_LEN = 8               # [SRC] htc_hst.h struct htc_frame_hdr
@@ -44,6 +50,12 @@ TX_FRAME_HDR_LEN = 12               # [SRC] htc.h:73 struct tx_frame_hdr
 
 MAX_TX_BUF_NUM = 256                # [SRC] hif_usb.h:55 (priv->tx.tx_slot bitmap width)
 WMI_TXSTATUS_EVENTID = 0x1007       # [SRC] wmi.h:118-126 enum wmi_event_id
+HTC_MAX_TX_STATUS = 12              # [SRC] wmi.h:49
+ATH9K_HTC_TXSTAT_EPID = 0xf0        # [SRC] wmi.h:67-68
+ATH9K_HTC_TXSTAT_EPID_S = 4
+ATH9K_HTC_TX_CLEANUP_INTERVAL = 50  # [SRC] htc.h:287-290 (ms)
+ATH9K_HTC_TX_TIMEOUT_INTERVAL = 3000  # (ms)
+ATH9K_HTC_TX_TIMEOUT_COUNT = 40
 
 # 802.11 frame_control type field (FTYPE mask, bits 2-3) [SRC] linux/ieee80211.h
 _FTYPE_MASK = 0x000c
@@ -74,53 +86,124 @@ def is_data_frame(dot11: bytes) -> bool:
     return (fc & _FTYPE_MASK) == _FTYPE_DATA
 
 
-def build_mgmt_tx(epid: int, dot11: bytes, cookie: int) -> bytes:
-    """ath9k_htc_tx_mgmt [SRC] htc_drv_txrx.c:214 — prepend tx_mgmt_hdr (8 B) and wrap. For the
-    monitor self-station node_idx/vif_idx/tidno/flags are 0; key_type CLEAR -> keyix INVALID."""
+def build_mgmt_tx(epid: int, dot11: bytes, slot: int) -> bytes:
+    """ath9k_htc_tx_mgmt: prepend tx_mgmt_hdr (``cookie = slot``) and the HIF/HTC headers."""
+    # node_idx, vif_idx, tidno, flags fixed at 0: the monitor vif and its self-station.
     hdr = struct.pack(">BBBBBBBB", 0, 0, 0, 0, ATH9K_KEY_TYPE_CLEAR, ATH9K_TXKEYIX_INVALID,
-                      cookie & 0xff, 0)
+                      slot & 0xff, 0)
     return hif_htc_wrap(epid, hdr + dot11)
 
 
-def build_data_tx(epid: int, dot11: bytes, cookie: int) -> bytes:
-    """ath9k_htc_tx_data [SRC] htc_drv_txrx.c:260 — prepend tx_frame_hdr (12 B) and wrap.
-    data_type NORMAL, flags be32 0 (no RTS/CTS protection on the monitor self-station)."""
+def build_data_tx(epid: int, dot11: bytes, slot: int) -> bytes:
+    """ath9k_htc_tx_data: prepend tx_frame_hdr (``cookie = slot``) and the HIF/HTC headers."""
+    # node_idx, vif_idx, tidno, flags fixed at 0: the monitor vif and its self-station.
     hdr = struct.pack(">BBBBIBBBB", ATH9K_HTC_NORMAL, 0, 0, 0, 0, ATH9K_KEY_TYPE_CLEAR,
-                      ATH9K_TXKEYIX_INVALID, cookie & 0xff, 0)
+                      ATH9K_TXKEYIX_INVALID, slot & 0xff, 0)
     return hif_htc_wrap(epid, hdr + dot11)
 
 
-def txstatus_cookies(event_body: bytes) -> list[int]:
-    """Decode a WMI_TXSTATUS event body (wmi_event_txstatus: u8 cnt, then cnt x [cookie, ts_rate,
-    ts_flags]) into its freed cookies — ath9k_htc_txstatus [SRC] htc_drv_txrx.c:647, wmi.h:70-79."""
-    if not event_body:
-        return []
-    cnt = event_body[0]
-    return [event_body[1 + i * 3] for i in range(cnt) if 1 + i * 3 < len(event_body)]
+@dataclass
+class TxQueued:
+    """A sent frame in its endpoint queue after ath9k_htc_txep, waiting for its TX status."""
+    cookie: int
+    timestamp: float
 
 
-class TxSlots:
-    """``priv->tx.tx_slot`` [SRC] htc.h:306 — the TX cookie bitmap. ``get`` is
-    ath9k_htc_tx_get_slot [SRC] htc_drv_txrx.c:79 (find_first_zero_bit + set); ``clear`` is
-    ath9k_htc_tx_clear_slot [SRC] :95, driven by the WMI_TXSTATUS completion [SRC] :514. The
-    kernel gates the clear on the frame's skb being queued by the bulk-OUT URB completion
-    (else the event waits in pending_tx_events for the 50 ms cleanup timer); on the wire the
-    status always trails its own URB, so the queued check holds and the clear is immediate —
-    verified equivalent against all three pcaps."""
+@dataclass
+class TxEvent:
+    """struct ath9k_htc_tx_event: a TX status with no matching frame yet."""
+    cookie: int
+    epid: int
+    count: int = 0
 
-    def __init__(self) -> None:
-        self._slot = bytearray(MAX_TX_BUF_NUM)
-        self._lock = threading.Lock()
 
-    def get(self) -> int:
-        with self._lock:
-            slot = next((i for i in range(MAX_TX_BUF_NUM) if not self._slot[i]), -1)
+class Ath9kHtcTx:
+    """priv->tx (struct ath9k_htc_tx) plus wmi->pending_tx_events."""
+
+    def __init__(self, epids: list[int]) -> None:
+        self.tx_slot = bytearray(MAX_TX_BUF_NUM)
+        self.epid_queues: dict[int, list[TxQueued]] = {epid: [] for epid in epids}
+        self.pending_tx_events: list[TxEvent] = []
+        self.tx_lock = threading.Lock()
+        self.txstatus_cnt_warned = False
+
+    def get_slot(self) -> int:
+        """ath9k_htc_tx_get_slot: take the lowest free slot, or return -ENOBUFS."""
+        with self.tx_lock:
+            slot = next((i for i in range(MAX_TX_BUF_NUM) if not self.tx_slot[i]), -1)
             if slot < 0:
-                raise RuntimeError("ar9271: no free TX slot (ENOBUFS)")
-            self._slot[slot] = 1
+                return -errno.ENOBUFS
+            self.tx_slot[slot] = 1
             return slot
 
-    def clear(self, slot: int) -> None:
-        with self._lock:
+    def clear_slot(self, slot: int) -> None:
+        """ath9k_htc_tx_clear_slot."""
+        with self.tx_lock:
             if 0 <= slot < MAX_TX_BUF_NUM:
-                self._slot[slot] = 0
+                self.tx_slot[slot] = 0
+
+    def txep(self, epid: int, cookie: int) -> None:
+        """ath9k_htc_txep for a sent frame: queue it on its endpoint with the time it went out."""
+        with self.tx_lock:
+            self.epid_queues[epid].append(TxQueued(cookie, time.monotonic()))
+
+    def _get_packet(self, cookie: int, epid: int) -> TxQueued | None:
+        """ath9k_htc_tx_get_packet; called with tx_lock held."""
+        queue = self.epid_queues.get(epid)
+        if queue is None:
+            logger.error("Invalid EPID: %d", epid)          # get_htc_epid_queue
+            return None
+        for queued in queue:
+            if queued.cookie == cookie:
+                queue.remove(queued)
+                return queued
+        logger.debug("No matching packet for cookie: %d, epid: %d", cookie, epid)
+        return None
+
+    def txstatus(self, event: bytes) -> None:
+        """ath9k_htc_txstatus: free the slot of each frame with a status; keep unmatched statuses."""
+        cnt = event[0] if event else 0
+        if cnt > HTC_MAX_TX_STATUS:
+            if not self.txstatus_cnt_warned:
+                self.txstatus_cnt_warned = True
+                logger.warning("txstatus cnt %d > HTC_MAX_TX_STATUS", cnt)   # WARN_ON_ONCE. htc_drv_txrx.c:655
+            return
+        event = event.ljust(1 + 3 * cnt, b"\x00")          # the C reads inside its 64-byte REG_IN skb
+        with self.tx_lock:
+            for i in range(cnt):
+                cookie, ts_rate = event[1 + i * 3], event[2 + i * 3]
+                epid = (ts_rate & ATH9K_HTC_TXSTAT_EPID) >> ATH9K_HTC_TXSTAT_EPID_S
+                if self._get_packet(cookie, epid) is None:
+                    self.pending_tx_events.append(TxEvent(cookie, epid))
+                    continue
+                self.tx_slot[cookie] = 0                   # ath9k_htc_tx_process
+
+    def cleanup_timer(self) -> None:
+        """ath9k_htc_tx_cleanup_timer: match pending statuses, drop them after 40 ticks, and free
+        the slot of any frame with no status after 3 s."""
+        now = time.monotonic()
+        with self.tx_lock:
+            for event in list(self.pending_tx_events):
+                if self._get_packet(event.cookie, event.epid) is not None:
+                    logger.debug("Found packet for cookie: %d, epid: %d", event.cookie, event.epid)
+                    self.pending_tx_events.remove(event)
+                    self.tx_slot[event.cookie] = 0
+                    continue
+                event.count += 1
+                if event.count >= ATH9K_HTC_TX_TIMEOUT_COUNT:
+                    self.pending_tx_events.remove(event)
+            for queue in self.epid_queues.values():
+                for queued in list(queue):
+                    if now > queued.timestamp + ATH9K_HTC_TX_TIMEOUT_INTERVAL / 1000:
+                        logger.debug("Dropping a packet due to TX timeout")
+                        queue.remove(queued)
+                        self.tx_slot[queued.cookie] = 0
+
+    def tx_drain(self) -> None:
+        """ath9k_htc_tx_drain after htc_stop: free every queued frame's slot, drop pending statuses."""
+        with self.tx_lock:
+            for queue in self.epid_queues.values():
+                for queued in queue:
+                    self.tx_slot[queued.cookie] = 0
+                queue.clear()
+            self.pending_tx_events.clear()
