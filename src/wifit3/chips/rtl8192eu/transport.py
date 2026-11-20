@@ -81,12 +81,9 @@ class RTL8192EUTransport:
     def write32(self, address: int, value: int) -> int | None:
         return self._write(address, value.to_bytes(4, "little"))
 
-    def write_block(self, address: int, data: bytes) -> None:
-        """One rtl8xxxu_writeN block, sent from the caller's buffer: a failed or short block aborts the
-        firmware download (core.c:840-842, :2074-2078)."""
-        written = self._usb_control_msg(C.REALTEK_USB_WRITE, address, bytes(data))
-        if written != len(data):
-            raise IOError(f"register block write at {address:#06x} failed: {written}/{len(data)}")
+    def write_block(self, address: int, data: bytes) -> int | None:
+        """One rtl8xxxu_writeN block (core.c:836-852): bytes written, or None on a failed transfer."""
+        return self._usb_control_msg(C.REALTEK_USB_WRITE, address, bytes(data))
 
     def bulk_write(self, endpoint: int, data: bytes) -> None:
         """One TX URB: a failed submit or completion drops the frame (core.c:5553-5562, :5113-5138).

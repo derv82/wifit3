@@ -22,7 +22,14 @@ _NAME = re.compile(r"\b[A-Z][A-Z0-9_]+\b")
 def _defines(source: Path) -> dict[str, str]:
     found: dict[str, str] = {}
     for header in HEADERS:
+        in_if0 = False   # rtl8xxxu.h:468-472 keeps a dead #if 0 TXDESC_OWN BIT(31)
         for line in (source / header).read_text().splitlines():
+            if line.strip() == "#if 0":
+                in_if0 = True
+            elif in_if0 and line.strip().startswith(("#else", "#endif")):
+                in_if0 = False
+            if in_if0:
+                continue
             match = _DEFINE.match(line.strip())
             if match is None or "(" in match.group(1):
                 continue

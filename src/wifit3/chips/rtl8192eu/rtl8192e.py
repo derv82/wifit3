@@ -1,10 +1,11 @@
-"""RTL8192EU chip-specific fops functions (rtl8xxxu_8192e.c v6.6).
+"""RTL8192EU chip-specific fops functions (8192e.c v6.19.14).
 
-Holds the rtl8192eu_*/rtl8192e_* members of rtl8192eu_fops (8192e.c:1737). The shared gen2 members
+Holds the rtl8192eu_*/rtl8192e_* members of rtl8192eu_fops (8192e.c:1721). The shared gen2 members
 and the register helpers live in core.py; IQ calibration in iqk.py.
 """
 from __future__ import annotations
 
+import logging
 import time
 
 from . import constants as C
@@ -12,6 +13,8 @@ from . import tables as T
 from .core import (
     RF_A,
     RF_B,
+    RTL8191E,
+    RTL8192E,
     Rtl8xxxuFileops,
     Rtl8xxxuPriv,
     _ffs,
@@ -31,7 +34,7 @@ from .core import (
     rtl8xxxu_gen2_usb_quirks,
     rtl8xxxu_identify_vendor_2bits,
     rtl8xxxu_init_phy_regs,
-    rtl8xxxu_init_rf_regs,
+    rtl8xxxu_init_phy_rf,
     rtl8xxxu_read8,
     rtl8xxxu_read16,
     rtl8xxxu_read32,
@@ -45,8 +48,10 @@ from .iqk import rtl8192eu_phy_iq_calibrate
 from .rx import rtl8192e_cck_rssi, rtl8723au_rx_parse_phystats, rtl8xxxu_parse_rxdesc24
 from .tx import rtl8xxxu_fill_txdesc_v2
 
+logger = logging.getLogger(__name__)
+
 RTL8723B_TX_COUNT = 4  # rtl8xxxu.h
-_EFUSE_RTL_ID = 0x8129  # rtl8192eu_parse_efuse rejects any other id (8192e.c:1540)
+_EFUSE_RTL_ID = 0x8129  # rtl8192eu_parse_efuse rejects any other id (8192e.c:593)
 
 # struct rtl8192eu_efuse byte offsets (rtl8xxxu.h)
 _OFF_RTL_ID = 0x00
@@ -72,12 +77,12 @@ def _u32_get_bits(value: int, mask: int) -> int:
 
 
 def rtl8192eu_load_firmware(priv: Rtl8xxxuPriv) -> str:
-    """8192e.c:1727. The firmware asset the driver uploads (rtlwifi/rtl8192eu_nic.bin)."""
+    """8192e.c:640. The firmware asset the driver uploads (rtlwifi/rtl8192eu_nic.bin)."""
     return "rtl8192eu_nic.bin"
 
 
 def rtl8192eu_identify_chip(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1509. Raises for an unsupported test chip."""
+    """8192e.c:465. Raises for an unsupported test chip."""
     sys_cfg = rtl8xxxu_read32(priv, C.REG_SYS_CFG)
     priv.chip_cut = _u32_get_bits(sys_cfg, C.SYS_CFG_CHIP_VERSION_MASK)
     if sys_cfg & C.SYS_CFG_TRP_VAUX_EN:
@@ -87,9 +92,11 @@ def rtl8192eu_identify_chip(priv: Rtl8xxxuPriv) -> None:
     if bonding == C.HPON_FSM_BONDING_1T2R:
         priv.chip_name = "8191EU"
         priv.tx_paths = 1
+        priv.rtl_chip = RTL8191E
     else:
         priv.chip_name = "8192EU"
         priv.tx_paths = 2
+        priv.rtl_chip = RTL8192E
     priv.rf_paths = 2
     priv.rx_paths = 2
     priv.has_wifi = True
@@ -105,7 +112,7 @@ def rtl8192eu_identify_chip(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8192eu_parse_efuse(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1536. Decode struct rtl8192eu_efuse from the 512-byte efuse map. Raises on a bad id."""
+    """8192e.c:588. Decode struct rtl8192eu_efuse from the 512-byte efuse map. Raises on a bad id."""
     efuse = priv.efuse_wifi
     if int.from_bytes(efuse[_OFF_RTL_ID:_OFF_RTL_ID + 2], "little") != _EFUSE_RTL_ID:
         raise ValueError("RTL8192EU efuse: unexpected rtl_id")
@@ -121,7 +128,7 @@ def rtl8192eu_parse_efuse(priv: Rtl8xxxuPriv) -> None:
     ofdm = [(0, 0)] * RTL8723B_TX_COUNT
     ht20 = [(0, 0)] * RTL8723B_TX_COUNT
     ht40 = [(0, 0)] * RTL8723B_TX_COUNT
-    # index 0: ht20 diff comes from ht20_ofdm_1s_diff.b; ht40[0] stays 0 (8192e.c:1561)
+    # index 0: ht20 diff comes from ht20_ofdm_1s_diff.b; ht40[0] stays 0 (8192e.c:615)
     ht20[0] = (_s4(efuse[a + _TP_HT20_OFDM_1S_DIFF] >> 4), _s4(efuse[b + _TP_HT20_OFDM_1S_DIFF] >> 4))
     for i in range(1, RTL8723B_TX_COUNT):
         a_lo, a_hi = efuse[a + _TP_PWR_DIFF + (i - 1) * 2], efuse[a + _TP_PWR_DIFF + (i - 1) * 2 + 1]
@@ -140,7 +147,7 @@ def rtl8192eu_parse_efuse(priv: Rtl8xxxuPriv) -> None:
 # ---- Power sequencing (8192e.c) --------------------------------------------
 
 def rtl8192e_crystal_afe_adjust(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1119. 40 MHz crystal source + 92e AFE PLL KVCO selection."""
+    """8192e.c:1330. 40 MHz crystal source + 92e AFE PLL KVCO selection."""
     val8 = rtl8xxxu_read8(priv, C.REG_AFE_PLL_CTRL) & 0xfb
     rtl8xxxu_write8(priv, C.REG_AFE_PLL_CTRL, val8)
     val32 = rtl8xxxu_read32(priv, C.REG_AFE_CTRL4) & 0xfffffc7f
@@ -152,13 +159,13 @@ def rtl8192e_crystal_afe_adjust(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8192e_disabled_to_emu(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1156. Clear suspend-enable and power-down-enable."""
+    """8192e.c:1362. Clear suspend-enable and power-down-enable."""
     val8 = rtl8xxxu_read8(priv, C.REG_APS_FSMCO + 1) & ~(C.BIT(3) | C.BIT(4))
     rtl8xxxu_write8(priv, C.REG_APS_FSMCO + 1, val8)
 
 
 def rtl8192e_emu_to_active(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1167. Bring the power state from emulation to active. Raises on timeout."""
+    """8192e.c:1372. Bring the power state from emulation to active. Raises on timeout."""
     val8 = rtl8xxxu_read8(priv, C.REG_APS_FSMCO + 1) & ~C.BIT(7)   # disable HWPDN
     rtl8xxxu_write8(priv, C.REG_APS_FSMCO + 1, val8)
     val8 = rtl8xxxu_read8(priv, C.REG_APS_FSMCO + 1) & ~C.BIT(2)   # disable SW LPS
@@ -187,7 +194,7 @@ def rtl8192e_emu_to_active(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8192eu_power_on(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1332. LDO/AFE bring-up, emu->active, then enable the MAC DMA/WMAC/SEC blocks."""
+    """8192e.c:1547. LDO/AFE bring-up, emu->active, then enable the MAC DMA/WMAC/SEC blocks."""
     val32 = rtl8xxxu_read32(priv, C.REG_SYS_CFG)
     if val32 & C.SYS_CFG_SPS_LDO_SEL:
         rtl8xxxu_write8(priv, C.REG_LDO_SW_CTRL, 0xc3)
@@ -213,11 +220,21 @@ def rtl8192eu_power_on(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8192eu_active_to_lps(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1211. Pause TX, wait the scheduler idle, reset BB + MAC TRX."""
+    """8192e.c:1437. Pause TX, wait the scheduler idle, reset BB + MAC TRX."""
     rtl8xxxu_write8(priv, C.REG_TXPAUSE, 0xff)
-    for _ in range(101):   # poll REG_SCH_TX_CMD for no pending TX
+    # do { } while (retry--): 101 polls; idle on the last one leaves retry == 0, which the C reports
+    # as a failed flush.
+    retry = 100
+    while True:
         if not rtl8xxxu_read32(priv, C.REG_SCH_TX_CMD):
             break
+        if retry == 0:
+            retry = -1
+            break
+        retry -= 1
+    if not retry:
+        logger.warning("Failed to flush TX queue")
+        return
 
     val8 = rtl8xxxu_read8(priv, C.REG_SYS_FUNC) & ~C.SYS_FUNC_BBRSTB
     rtl8xxxu_write8(priv, C.REG_SYS_FUNC, val8)
@@ -236,7 +253,7 @@ def rtl8192eu_active_to_lps(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8192eu_active_to_emu(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1264. Turn off RF, DPDT select, disable the MAC via the HW state machine."""
+    """8192e.c:1496. Turn off RF, DPDT select, disable the MAC via the HW state machine."""
     val8 = rtl8xxxu_read8(priv, C.REG_RF_CTRL) & ~C.RF_ENABLE
     rtl8xxxu_write8(priv, C.REG_RF_CTRL, val8)
     val8 = rtl8xxxu_read8(priv, C.REG_LEDCFG2) & ~C.LEDCFG2_DPDT_SELECT
@@ -248,18 +265,18 @@ def rtl8192eu_active_to_emu(priv: Rtl8xxxuPriv) -> None:
             break
         time.sleep(10e-6)
     else:
-        raise ValueError("RTL8192EU active_to_emu: disabling MAC timed out")
+        logger.warning("rtl8192eu_active_to_emu: Disabling MAC timed out")   # power_off carries on
 
 
 def rtl8192eu_emu_to_disabled(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1305. Enable WL suspend."""
+    """8192e.c:1534. Enable WL suspend."""
     val8 = rtl8xxxu_read8(priv, C.REG_APS_FSMCO + 1) & ~(C.BIT(3) | C.BIT(4))
     val8 |= C.BIT(3)
     rtl8xxxu_write8(priv, C.REG_APS_FSMCO + 1, val8)
 
 
 def rtl8192eu_power_off(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1370. Teardown: flush FIFO, RF off, LPS, reset firmware/MCU, back to disabled."""
+    """8192e.c:1595. Teardown: flush FIFO, RF off, LPS, reset firmware/MCU, back to disabled."""
     rtl8xxxu_flush_fifo(priv)
 
     val8 = rtl8xxxu_read8(priv, C.REG_TX_REPORT_CTRL) & ~C.TX_REPORT_CTRL_TIMER_ENABLE
@@ -283,7 +300,7 @@ def rtl8192eu_power_off(priv: Rtl8xxxuPriv) -> None:
 # ---- PHY / RF table init (8192e.c) -----------------------------------------
 
 def rtl8192eu_init_phy_bb(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:674. Enable BB/RF, then run the PHY and AGC tables."""
+    """8192e.c:652. Enable BB/RF, then run the PHY and AGC tables."""
     val16 = rtl8xxxu_read16(priv, C.REG_SYS_FUNC)
     val16 |= C.SYS_FUNC_BB_GLB_RSTN | C.SYS_FUNC_BBRSTB | C.SYS_FUNC_DIO_RF
     rtl8xxxu_write16(priv, C.REG_SYS_FUNC, val16)
@@ -305,9 +322,9 @@ def rtl8192eu_init_phy_bb(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8192eu_init_phy_rf(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:710. Run the radio A and radio B init tables."""
-    rtl8xxxu_init_rf_regs(priv, T.RTL8192EU_RADIOA_INIT_TABLE, RF_A)
-    rtl8xxxu_init_rf_regs(priv, T.RTL8192EU_RADIOB_INIT_TABLE, RF_B)
+    """8192e.c:679. Run the radio A and radio B init tables."""
+    rtl8xxxu_init_phy_rf(priv, T.RTL8192EU_RADIOA_INIT_TABLE, RF_A)
+    rtl8xxxu_init_phy_rf(priv, T.RTL8192EU_RADIOB_INIT_TABLE, RF_B)
 
 
 # ---- RF enable + LED (8192e.c) ---------------------------------------------
@@ -317,7 +334,7 @@ LED_ON = 1
 
 
 def rtl8192e_enable_rf(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1442. RFE/antenna/PTA setup; clears TXPAUSE to fix 8192e TX."""
+    """8192e.c:1629. RFE/antenna/PTA setup; clears TXPAUSE to fix 8192e TX."""
     val32 = rtl8xxxu_read32(priv, C.REG_RX_WAIT_CCA) | (C.BIT(22) | C.BIT(23))
     rtl8xxxu_write32(priv, C.REG_RX_WAIT_CCA, val32)
 
@@ -346,7 +363,7 @@ def rtl8192e_enable_rf(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8192e_set_tx_power(priv: Rtl8xxxuPriv, channel: int, ht40: bool) -> None:
-    """8192e.c:764. Program per-group CCK/OFDM/MCS TX power from the efuse indices."""
+    """8192e.c:513. Program per-group CCK/OFDM/MCS TX power from the efuse indices."""
     tx_idx = 0
     group = rtl8xxxu_gen2_channel_to_group(channel)
 
@@ -399,7 +416,7 @@ def rtl8192e_set_tx_power(priv: Rtl8xxxuPriv, channel: int, ht40: bool) -> None:
 
 
 def rtl8192eu_led_brightness_set(priv: Rtl8xxxuPriv, brightness: int) -> None:
-    """8192e.c:1486. LED_OFF, LED_ON, or RTL8XXXU_HW_LED_CONTROL via REG_LEDCFG1."""
+    """8192e.c:1698. LED_OFF, LED_ON, or RTL8XXXU_HW_LED_CONTROL via REG_LEDCFG1."""
     ledcfg = rtl8xxxu_read8(priv, C.REG_LEDCFG1)
     if brightness == LED_OFF:
         ledcfg &= ~C.LEDCFG1_HW_LED_CONTROL
@@ -412,7 +429,7 @@ def rtl8192eu_led_brightness_set(priv: Rtl8xxxuPriv, brightness: int) -> None:
     rtl8xxxu_write8(priv, C.REG_LEDCFG1, ledcfg)
 
 
-# struct rtl8xxxu_fileops rtl8192eu_fops (8192e.c:1737)
+# struct rtl8xxxu_fileops rtl8192eu_fops (8192e.c:1721)
 rtl8192eu_fops = Rtl8xxxuFileops(
     identify_chip=rtl8192eu_identify_chip,
     parse_efuse=rtl8192eu_parse_efuse,

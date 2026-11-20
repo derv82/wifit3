@@ -161,8 +161,6 @@ class RTL8192EUDriver(Driver):
             raise SetChannelError(f"RTL8192EU: channel {channel} not supported")
         if not self._started:
             raise BringUpError("RTL8192EU channel", "driver is not connected")
-        if channel == self.current_channel:
-            return
         async with self._io_lock:
             self.current_channel = None
             await asyncio.get_running_loop().run_in_executor(None, rtl8xxxu_config, self.priv, channel)

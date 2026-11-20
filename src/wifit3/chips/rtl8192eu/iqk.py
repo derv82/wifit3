@@ -23,7 +23,7 @@ from .core import (
 MAX_TOLERANCE = 5  # core.c:2874
 
 # adda_regs[RTL8XXXU_ADDA_REGS], iqk_mac_regs[RTL8XXXU_MAC_REGS], iqk_bb_regs[RTL8XXXU_BB_REGS]
-# in rtl8192eu_phy_iqcalibrate order (8192e.c:1072).
+# in rtl8192eu_phy_iqcalibrate order (8192e.c:1057).
 ADDA_REGS = (
     C.REG_FPGA0_XCD_SWITCH_CTRL, C.REG_BLUETOOTH, C.REG_RX_WAIT_CCA, C.REG_TX_CCK_RFON,
     C.REG_TX_CCK_BBON, C.REG_TX_OFDM_RFON, C.REG_TX_OFDM_BBON, C.REG_TX_TO_RX,
@@ -36,7 +36,7 @@ IQK_BB_REGS = (
     C.REG_CONFIG_ANT_A, C.REG_CONFIG_ANT_B, C.REG_FPGA0_XAB_RF_SW_CTRL,
     C.REG_FPGA0_XA_RF_INT_OE, C.REG_FPGA0_XB_RF_INT_OE, C.REG_CCK0_AFE_SETTING,
 )
-# rtl8xxxu_iqk_phy_iq_bb_reg[RTL8XXXU_BB_REGS], core.c:642
+# rtl8xxxu_iqk_phy_iq_bb_reg[RTL8XXXU_BB_REGS], core.c:599
 IQK_PHY_IQ_BB_REG = (
     C.REG_OFDM0_XA_RX_IQ_IMBALANCE, C.REG_OFDM0_XB_RX_IQ_IMBALANCE, C.REG_OFDM0_ENERGY_CCA_THRES,
     C.REG_OFDM0_AGC_RSSI_TABLE, C.REG_OFDM0_XA_TX_IQ_IMBALANCE, C.REG_OFDM0_XB_TX_IQ_IMBALANCE,
@@ -55,7 +55,7 @@ def _sign_extend_10(value: int) -> int:
 
 def rtl8xxxu_fill_iqk_matrix_a(priv: Rtl8xxxuPriv, iqk_ok: bool, result: list[list[int]],
                                candidate: int, tx_only: bool) -> None:
-    """core.c:2707."""
+    """core.c:2716."""
     if not iqk_ok:
         return
 
@@ -190,7 +190,7 @@ def rtl8xxxu_fill_iqk_matrix_b(priv: Rtl8xxxuPriv, iqk_ok: bool, result: list[li
 
 
 def rtl8xxxu_gen2_simularity_compare(priv: Rtl8xxxuPriv, result: list[list[int]], c1: int, c2: int) -> bool:
-    """core.c:2890."""
+    """core.c:2930."""
     candidate = [-1, -1]
     retval = True
     bound = 8 if priv.tx_paths > 1 else 4
@@ -241,7 +241,7 @@ def rtl8xxxu_gen2_simularity_compare(priv: Rtl8xxxuPriv, result: list[list[int]]
 
 
 def rtl8xxxu_save_mac_regs(priv: Rtl8xxxuPriv, reg: tuple[int, ...], backup: list[int]) -> None:
-    """core.c:2652."""
+    """core.c:3016."""
     backup.clear()
     for i in range(C.RTL8XXXU_MAC_REGS - 1):
         backup.append(rtl8xxxu_read8(priv, reg[i]))
@@ -249,27 +249,27 @@ def rtl8xxxu_save_mac_regs(priv: Rtl8xxxuPriv, reg: tuple[int, ...], backup: lis
 
 
 def rtl8xxxu_restore_mac_regs(priv: Rtl8xxxuPriv, reg: tuple[int, ...], backup: list[int]) -> None:
-    """core.c:2665."""
+    """core.c:3026."""
     for i in range(C.RTL8XXXU_MAC_REGS - 1):
         rtl8xxxu_write8(priv, reg[i], backup[i])
     rtl8xxxu_write32(priv, reg[C.RTL8XXXU_MAC_REGS - 1], backup[C.RTL8XXXU_MAC_REGS - 1])
 
 
 def rtl8xxxu_save_regs(priv: Rtl8xxxuPriv, regs: tuple[int, ...], backup: list[int], count: int) -> None:
-    """core.c:2637."""
+    """core.c:3037."""
     backup.clear()
     for i in range(count):
         backup.append(rtl8xxxu_read32(priv, regs[i]))
 
 
 def rtl8xxxu_restore_regs(priv: Rtl8xxxuPriv, regs: tuple[int, ...], backup: list[int], count: int) -> None:
-    """core.c:2646."""
+    """core.c:3046."""
     for i in range(count):
         rtl8xxxu_write32(priv, regs[i], backup[i])
 
 
 def rtl8xxxu_path_adda_on(priv: Rtl8xxxuPriv, regs: tuple[int, ...], path_a_on: bool) -> None:
-    """core.c:2676."""
+    """core.c:3056."""
     if priv.tx_paths == 1:
         path_on = priv.fops.adda_1t_path_on
         rtl8xxxu_write32(priv, regs[0], priv.fops.adda_1t_init)
@@ -282,7 +282,7 @@ def rtl8xxxu_path_adda_on(priv: Rtl8xxxuPriv, regs: tuple[int, ...], path_a_on: 
 
 
 def rtl8xxxu_mac_calibration(priv: Rtl8xxxuPriv, regs: tuple[int, ...], backup: list[int]) -> None:
-    """core.c:2694."""
+    """core.c:3076."""
     rtl8xxxu_write8(priv, regs[0], 0x3f)
     for i in range(1, C.RTL8XXXU_MAC_REGS - 1):
         rtl8xxxu_write8(priv, regs[i], backup[i] & ~C.BIT(3))
@@ -290,7 +290,7 @@ def rtl8xxxu_mac_calibration(priv: Rtl8xxxuPriv, regs: tuple[int, ...], backup: 
 
 
 def rtl8192eu_iqk_path_a(priv: Rtl8xxxuPriv) -> int:
-    """8192e.c:709. TX IQK path A; PA/PAD controlled by 0x0."""
+    """8192e.c:693. TX IQK path A; PA/PAD controlled by 0x0."""
     rtl8xxxu_write32(priv, C.REG_FPGA0_IQK, 0x00000000)
     rtl8xxxu_write_rfreg(priv, RF_A, C.RF6052_REG_GAIN_CCA, 0x00180)
 
@@ -328,7 +328,7 @@ def rtl8192eu_iqk_path_a(priv: Rtl8xxxuPriv) -> int:
 
 
 def rtl8192eu_rx_iqk_path_a(priv: Rtl8xxxuPriv) -> int:
-    """8192e.c:759. RX IQK path A."""
+    """8192e.c:743. RX IQK path A."""
     rtl8xxxu_write32(priv, C.REG_FPGA0_IQK, 0x00)
 
     rtl8xxxu_write_rfreg(priv, RF_A, C.RF6052_REG_WE_LUT, 0x800a0)
@@ -427,7 +427,7 @@ def rtl8192eu_rx_iqk_path_a(priv: Rtl8xxxuPriv) -> int:
 
 
 def rtl8192eu_iqk_path_b(priv: Rtl8xxxuPriv) -> int:
-    """8192e.c:886. TX IQK path B."""
+    """8192e.c:870. TX IQK path B."""
     rtl8xxxu_write32(priv, C.REG_FPGA0_IQK, 0x00000000)
     rtl8xxxu_write_rfreg(priv, RF_B, C.RF6052_REG_GAIN_CCA, 0x00180)
 
@@ -465,7 +465,7 @@ def rtl8192eu_iqk_path_b(priv: Rtl8xxxuPriv) -> int:
 
 
 def rtl8192eu_rx_iqk_path_b(priv: Rtl8xxxuPriv) -> int:
-    """8192e.c:935. RX IQK path B."""
+    """8192e.c:919. RX IQK path B."""
     rtl8xxxu_write32(priv, C.REG_FPGA0_IQK, 0x00000000)
 
     rtl8xxxu_write_rfreg(priv, RF_B, C.RF6052_REG_WE_LUT, 0x800a0)
@@ -566,7 +566,7 @@ def rtl8192eu_rx_iqk_path_b(priv: Rtl8xxxuPriv) -> int:
 
 
 def rtl8192eu_phy_iqcalibrate(priv: Rtl8xxxuPriv, result: list[list[int]], t: int) -> None:
-    """8192e.c:1066."""
+    """8192e.c:1050."""
     retry = 2
     xa_agc = rtl8xxxu_read32(priv, C.REG_OFDM0_XA_AGC_CORE1) & 0xff
     xb_agc = rtl8xxxu_read32(priv, C.REG_OFDM0_XB_AGC_CORE1) & 0xff
@@ -665,7 +665,7 @@ def rtl8192eu_phy_iqcalibrate(priv: Rtl8xxxuPriv, result: list[list[int]], t: in
 
 
 def rtl8192eu_phy_iq_calibrate(priv: Rtl8xxxuPriv) -> None:
-    """8192e.c:1252. Three passes, pick the best, apply with fill_iqk_matrix_{a,b}."""
+    """8192e.c:1236. Three passes, pick the best, apply with fill_iqk_matrix_{a,b}."""
     result = [[0] * 8 for _ in range(4)]
     candidate = -1
     path_a_ok = False

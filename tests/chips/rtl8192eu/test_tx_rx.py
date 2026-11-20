@@ -27,8 +27,8 @@ def test_tx_desc_header_and_8192e_txdw0():
     assert body == frame
     assert int.from_bytes(tx_desc[0:2], "little") == len(frame)
     assert tx_desc[2] == _TXDESC
-    # txdw0 (u8 at offset 3): OWN BIT(31) truncates off, leaving FIRST|LAST; unicast DA -> no bcast bit.
-    assert tx_desc[3] == ((C.TXDESC_OWN | C.TXDESC_FIRST_SEGMENT | C.TXDESC_LAST_SEGMENT) & 0xFF)
+    # txdw0 (u8 at offset 3): OWN BIT(7) | FIRST BIT(3) | LAST BIT(2); unicast DA -> no bcast bit.
+    assert tx_desc[3] == 0x8c
     # Non-QoS data maps to the BE queue.
     assert (_get32(tx_desc, 4) >> C.TXDESC_QUEUE_SHIFT) == C.TXDESC_QUEUE_BE
 
@@ -93,6 +93,15 @@ def test_rx_cck_frame_uses_cck_rssi():
     urb = _rx_desc(len(frame), drvinfo_units=3, phy_stats=True, rate=0x00) + bytes(phy) + frame
     _got_frame, signal = next(rtl8xxxu_parse_rxdesc24(_priv(), urb))
     assert signal == (-44) - (2 * 3)  # lna_gain_table_0[7] - 2*vga_idx
+
+
+def test_rx_phy_stats_without_drvinfo_reads_the_frame_bytes():
+    # core.c:6437: phy_stats is skb->data after the descriptor, even with drvinfo_sz 0.
+    frame = _mac_hdr(0x80, bytes(6))
+    urb = _rx_desc(len(frame), drvinfo_units=0, phy_stats=True, rate=C.DESC_RATE_6M) + frame
+    got_frame, signal = next(rtl8xxxu_parse_rxdesc24(_priv(), urb))
+    assert got_frame == frame
+    assert signal == (frame[4] >> 1) - 110
 
 
 def test_rx_crc_frame_dropped_and_c2h_routed():

@@ -1,7 +1,7 @@
-"""Port of the rtl8xxxu core.c TX path (v6.6) for the RTL8192EU: rtl8xxxu_tx + fill_txdesc_v2.
+"""Port of the rtl8xxxu core.c TX path (v6.19.14) for the RTL8192EU: rtl8xxxu_tx + fill_txdesc_v2.
 
 RTL8192E uses the txdesc40 format with txdw0 OWN/FIRST/LAST set, and does not invert the csum
-(core.c:5554 ``rtl_chip != RTL8192F``; :5628 csum invert only on RTL8710B/RTL8192F).
+(core.c:5468 ``rtl_chip != RTL8192F``; :5547 csum invert only on RTL8710B/RTL8192F).
 """
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ _TXDW1, _TXDW2, _TXDW3, _TXDW4, _TXDW5, _CSUM, _TXDW9 = 4, 8, 12, 16, 20, 28, 36
 
 def rtl8xxxu_fill_txdesc_v2(tx_desc40: bytearray, frame: bytes, short_preamble: bool,
                             ampdu_enable: bool, use_rts: bool, rts_rate: int, macid: int) -> None:
-    """core.c:5348. IEEE80211_TX_CTL_ASSIGN_SEQ is never set on a monitor vif, so TXDESC40_HW_SEQ_ENABLE
+    """core.c:5259. IEEE80211_TX_CTL_ASSIGN_SEQ is never set on a monitor vif, so TXDESC40_HW_SEQ_ENABLE
     is not applied and the driver stamps seq_ctrl itself (_stamp_tx_seq)."""
     rate = 0
     _put32(tx_desc40, _TXDW1, _get32(tx_desc40, _TXDW1) | macid << C.TXDESC40_MACID_SHIFT)
@@ -121,7 +121,7 @@ def rtl8xxxu_fill_txdesc_v2(tx_desc40: bytearray, frame: bytes, short_preamble: 
 
 
 def rtl8xxxu_calc_tx_desc_csum(tx_desc: bytearray) -> None:
-    """core.c:5136. The csum spans the first 32 bytes (rtl8xxxu_txdesc32) in 16-bit words."""
+    """core.c:5037. The csum spans the first 32 bytes (rtl8xxxu_txdesc32) in 16-bit words."""
     tx_desc[_CSUM:_CSUM + 2] = b"\x00\x00"
     csum = 0
     for i in range(0, RTL8XXXU_TXDESC32_SIZE, 2):
@@ -130,7 +130,7 @@ def rtl8xxxu_calc_tx_desc_csum(tx_desc: bytearray) -> None:
 
 
 def rtl8xxxu_tx(priv: Rtl8xxxuPriv, frame: bytes) -> tuple[int, bytes]:
-    """core.c:5501. (bulk-OUT endpoint, URB payload) for a monitor-injected frame: no sta, no vif,
+    """core.c:5412. (bulk-OUT endpoint, URB payload) for a monitor-injected frame: no sta, no vif,
     no hw_key, ampdu disabled."""
     tx_desc_size = RTL8XXXU_TXDESC40_SIZE
     if len(frame) > 65535 - tx_desc_size:
@@ -141,12 +141,10 @@ def rtl8xxxu_tx(priv: Rtl8xxxuPriv, frame: bytes) -> tuple[int, bytes]:
     tx_desc = bytearray(tx_desc_size)
     tx_desc[0:2] = len(frame).to_bytes(2, "little")   # pkt_size (txdesc40 offset 0)
     tx_desc[2] = tx_desc_size                          # pkt_offset (offset 2)
-    # txdw0 is a u8 (rtl8xxxu.h:454); RTL8192E assigns OWN | FIRST_SEGMENT | LAST_SEGMENT
-    # (core.c:5554, rtl_chip != RTL8192F). OWN is BIT(31) and truncates off this byte on USB,
-    # leaving FIRST | LAST; BROADMULTICAST (BIT(0)) is OR'd for a group-addressed DA.
-    tx_desc[3] = (C.TXDESC_OWN | C.TXDESC_FIRST_SEGMENT | C.TXDESC_LAST_SEGMENT) & 0xFF
+    # txdw0 is a u8 (rtl8xxxu.h:417); core.c:5470 (rtl_chip != RTL8192F).
+    tx_desc[3] = C.TXDESC_OWN | C.TXDESC_FIRST_SEGMENT | C.TXDESC_LAST_SEGMENT
     if ieee80211_get_DA(frame)[0] & 0x01:
-        tx_desc[3] |= C.TXDESC_BROADMULTICAST & 0xFF
+        tx_desc[3] |= C.TXDESC_BROADMULTICAST
 
     _put32(tx_desc, _TXDW1, queue << C.TXDESC_QUEUE_SHIFT)
     macid = 0
@@ -159,6 +157,6 @@ def rtl8xxxu_tx(priv: Rtl8xxxuPriv, frame: bytes) -> tuple[int, bytes]:
     rtl8xxxu_fill_txdesc_v2(tx_desc, frame, short_preamble, ampdu_enable, use_rts, rts_rate, macid)
 
     rtl8xxxu_calc_tx_desc_csum(tx_desc)
-    # RTL8192E does not invert the csum (core.c:5628 inverts only on RTL8710B / RTL8192F).
+    # RTL8192E does not invert the csum (core.c:5547 inverts only on RTL8710B / RTL8192F).
 
     return priv.pipe_out[queue], bytes(tx_desc) + frame

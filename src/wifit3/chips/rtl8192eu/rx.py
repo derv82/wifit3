@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-only
-"""RTL8192EU RX path (rtl8xxxu core.c v6.6): rxdesc24 + rtl8723au PHY status.
+"""RTL8192EU RX path (rtl8xxxu core.c v6.19.14): rxdesc24 + rtl8723au PHY status.
 
 RXDesc24/extract_mpdu decode a single descriptor/frame offline; rtl8xxxu_parse_rxdesc24 is the
 runtime reader the driver feeds bulk-IN URBs. 8192eu's fops wires parse_phystats =
@@ -72,7 +72,7 @@ def extract_mpdu(urb: bytes) -> tuple[RXDesc24, bytes]:
 
 
 def rtl8192e_cck_rssi(priv: Rtl8xxxuPriv, phy_stats: bytes) -> int:
-    """8192e.c:1688, on struct rtl8723au_phy_stats (cck_agc_rpt_ofdm_cfosho_a at byte 5)."""
+    """8192e.c:1675, on struct rtl8723au_phy_stats (cck_agc_rpt_ofdm_cfosho_a at byte 5)."""
     lna_gain_table_0 = (15, 9, -10, -21, -23, -27, -43, -44)
     lna_gain_table_1 = (24, 18, 13, -4, -11, -18, -31, -36)
     cck_agc_rpt = phy_stats[5]
@@ -83,7 +83,7 @@ def rtl8192e_cck_rssi(priv: Rtl8xxxuPriv, phy_stats: bytes) -> int:
 
 
 def rtl8723au_rx_parse_phystats(priv: Rtl8xxxuPriv, phy_stats: bytes, rxmcs: int) -> int:
-    """core.c:1588; rx_status->signal only. parse_cfo needs an associated STA vif, never true in
+    """core.c:5640; rx_status->signal only. parse_cfo needs an associated STA vif, never true in
     monitor, so it is omitted. cck_sig_qual_ofdm_pwdb_all is byte 4 of rtl8723au_phy_stats."""
     if rxmcs < C.DESC_RATE_6M:
         return priv.fops.cck_rssi(priv, phy_stats)
@@ -91,7 +91,7 @@ def rtl8723au_rx_parse_phystats(priv: Rtl8xxxuPriv, phy_stats: bytes, rxmcs: int
 
 
 def rtl8xxxu_parse_rxdesc24(priv: Rtl8xxxuPriv, skb: bytes) -> Iterator[tuple[bytes, int | None]]:
-    """core.c:6230. (frame, signal dBm or None for RX_FLAG_NO_SIGNAL_VAL); rpt_sel packets go to
+    """core.c:6392. (frame, signal dBm or None for RX_FLAG_NO_SIGNAL_VAL); rpt_sel packets go to
     priv.c2hcmd_queue. crc32 frames are not yielded: mac80211 drops RX_FLAG_FAILED_FCS_CRC on a
     monitor without MONITOR_FLAG_FCSFAIL (net/mac80211/rx.c ieee80211_rx_monitor).
     """
@@ -115,7 +115,8 @@ def rtl8xxxu_parse_rxdesc24(priv: Rtl8xxxuPriv, skb: bytes) -> Iterator[tuple[by
         else:
             signal: int | None = None
             if rx_desc.phy_stats:
-                signal = rtl8723au_rx_parse_phystats(priv, skb[phy_stats_start:frame_start], rx_desc.rate)
+                # phy_stats points at skb->data after the descriptor (core.c:6438), whatever drvinfo_sz is
+                signal = rtl8723au_rx_parse_phystats(priv, skb[phy_stats_start:], rx_desc.rate)
             if not rx_desc.crc_error:
                 yield frame, signal
 
@@ -128,7 +129,7 @@ def rtl8xxxu_parse_rxdesc24(priv: Rtl8xxxuPriv, skb: bytes) -> Iterator[tuple[by
 
 
 def rtl8xxxu_c2hcmd_callback(priv: Rtl8xxxuPriv) -> None:
-    """core.c:6162 c2hcmd_work. BT_INFO is unreachable (8192eu has no Bluetooth); RA_REPORT only
+    """core.c:6065 c2hcmd_work. BT_INFO is unreachable (8192eu has no Bluetooth); RA_REPORT only
     feeds the cosmetic ra_report that nothing reads in monitor mode. Drain the queue so it cannot
     grow. TODO: verify, untested here — RA_REPORT stats need an associated vif, which wifit3 never has.
     """

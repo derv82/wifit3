@@ -1,7 +1,8 @@
-"""Port of rtl8xxxu core.c (v6.6): the functions on the RTL8192EU call graph, RTL8192E paths only.
+"""Port of rtl8xxxu core.c (v6.19.14): the functions on the RTL8192EU call graph, RTL8192E paths only.
 
-The gen2 shared paths follow rtl8xxxu_core.c; the ``priv->rtl_chip == RTL8192E`` branches are kept and
-the others dropped. Chip-specific fops live in rtl8192e.py; IQ calibration in iqk.py.
+The gen2 shared paths follow core.c; branches on ``priv->rtl_chip`` keep RTL8192E and RTL8191E
+(8192e.c identifies both) and drop the other chips. Chip-specific fops live in rtl8192e.py; IQ
+calibration in iqk.py.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ class Rtl8xxxuTransport(Protocol):
     def write8(self, address: int, value: int) -> int | None: ...
     def write16(self, address: int, value: int) -> int | None: ...
     def write32(self, address: int, value: int) -> int | None: ...
-    def write_block(self, address: int, data: bytes) -> None: ...
+    def write_block(self, address: int, data: bytes) -> int | None: ...
     def bulk_write(self, endpoint: int, data: bytes) -> None: ...
 
 
@@ -35,6 +36,16 @@ class Rtl8xxxuRfpath(IntEnum):
 
 RF_A = Rtl8xxxuRfpath.RF_A
 RF_B = Rtl8xxxuRfpath.RF_B
+
+
+class Rtl8xxxuRtlChip(IntEnum):
+    """rtl8xxxu.h enum rtl8xxxu_rtl_chip: the two values 8192e.c identifies."""
+    RTL8192E = 0x8192e
+    RTL8191E = 0x8191e
+
+
+RTL8192E = Rtl8xxxuRtlChip.RTL8192E
+RTL8191E = Rtl8xxxuRtlChip.RTL8191E
 
 
 class Nl80211Iftype(IntEnum):
@@ -60,7 +71,7 @@ class Ieee80211FilterFlags(IntFlag):
 
 @dataclass
 class Rtl8xxxuCfoTracking:
-    adjust: bool = True
+    adjust: bool = False
     atc_status: bool = False
     crystal_cap: int = 0
     packet_count: int = 0
@@ -69,7 +80,7 @@ class Rtl8xxxuCfoTracking:
 
 @dataclass(frozen=True)
 class Rtl8xxxuFileops:
-    """struct rtl8xxxu_fileops, holding exactly the members rtl8192eu_fops sets (8192e.c:1737)."""
+    """struct rtl8xxxu_fileops, holding exactly the members rtl8192eu_fops sets (8192e.c:1721)."""
     identify_chip: Callable[["Rtl8xxxuPriv"], None]
     parse_efuse: Callable[["Rtl8xxxuPriv"], None]
     load_firmware: Callable[["Rtl8xxxuPriv"], str]   # the firmware asset filename
@@ -123,6 +134,7 @@ class Rtl8xxxuPriv:
     fops: Rtl8xxxuFileops
     chip_name: str = ""
     chip_vendor: str = ""
+    rtl_chip: Rtl8xxxuRtlChip = RTL8192E
     rf_paths: int = 0
     rx_paths: int = 0
     tx_paths: int = 0
@@ -234,10 +246,14 @@ def rtl8xxxu_write32_mask(priv: Rtl8xxxuPriv, addr: int, mask: int, val: int) ->
     rtl8xxxu_write32(priv, addr, (orig & ~mask) | ((val << _ffs(mask)) & mask))
 
 
-def rtl8xxxu_writeN(priv: Rtl8xxxuPriv, addr: int, buf: bytes) -> None:
+def rtl8xxxu_writeN(priv: Rtl8xxxuPriv, addr: int, buf: bytes) -> int:
+    """core.c:827. len(buf), or -EAGAIN at the first failed or short block."""
     blocksize = priv.fops.writeN_block_size
     for offset in range(0, len(buf), blocksize):
-        priv.transport.write_block(addr + offset, buf[offset:offset + blocksize])
+        block = buf[offset:offset + blocksize]
+        if priv.transport.write_block(addr + offset, block) != len(block):
+            return -errno.EAGAIN
+    return len(buf)
 
 
 @dataclass(frozen=True)
@@ -259,7 +275,7 @@ rtl8xxxu_rfregs = (
 
 
 def rtl8xxxu_read_rfreg(priv: Rtl8xxxuPriv, path: int, reg: int) -> int:
-    """core.c:874. RF register read over the FPGA0 HSSI serial interface."""
+    """core.c:867. RF register read over the FPGA0 HSSI serial interface."""
     hssia = rtl8xxxu_read32(priv, C.REG_FPGA0_XA_HSSI_PARM2)
     val32 = hssia if path == RF_A else rtl8xxxu_read32(priv, rtl8xxxu_rfregs[path].hssiparm2)
 
@@ -286,11 +302,20 @@ def rtl8xxxu_read_rfreg(priv: Rtl8xxxuPriv, path: int, reg: int) -> int:
 
 
 def rtl8xxxu_write_rfreg(priv: Rtl8xxxuPriv, path: int, reg: int, data: int) -> int:
-    """core.c:915. RF register write over the FPGA0 LSSI serial interface."""
+    """core.c:912. RF register write over the FPGA0 LSSI serial interface."""
     data &= C.FPGA0_LSSI_PARM_DATA_MASK
     dataaddr = (reg << C.FPGA0_LSSI_PARM_ADDR_SHIFT) | data
+
+    if priv.rtl_chip == RTL8192E:
+        val32 = rtl8xxxu_read32(priv, C.REG_FPGA0_POWER_SAVE) & ~0x20000
+        rtl8xxxu_write32(priv, C.REG_FPGA0_POWER_SAVE, val32)
+
     ret = rtl8xxxu_write32(priv, rtl8xxxu_rfregs[path].lssiparm, dataaddr)
     time.sleep(1e-6)
+
+    if priv.rtl_chip == RTL8192E:
+        val32 = rtl8xxxu_read32(priv, C.REG_FPGA0_POWER_SAVE) | 0x20000
+        rtl8xxxu_write32(priv, C.REG_FPGA0_POWER_SAVE, val32)
     return 0 if ret == 4 else -errno.EIO          # core.c:932-936
 
 
@@ -325,7 +350,7 @@ def rtl8xxxu_gen2_h2c_cmd(priv: Rtl8xxxuPriv, h2c: bytes) -> bool:
 
 
 def rtl8xxxu_gen2_config_channel(priv: Rtl8xxxuPriv, channel: int) -> None:
-    """core.c:1736, the 20 MHz (NL80211_CHAN_WIDTH_20) path only: wifit3 tunes 20 MHz."""
+    """core.c:1328, the NL80211_CHAN_WIDTH_20_NOHT path only: wifit3 tunes 20 MHz."""
     rf_mode_bw = rtl8xxxu_read16(priv, C.REG_WMAC_TRXPTCL_CTL)
     rf_mode_bw &= ~C.WMAC_TRXPTCL_CTL_BW_MASK
     rf_mode_bw |= C.WMAC_TRXPTCL_CTL_BW_20
@@ -352,7 +377,7 @@ def rtl8xxxu_gen2_config_channel(priv: Rtl8xxxuPriv, channel: int) -> None:
     rtl8xxxu_write16(priv, C.REG_WMAC_TRXPTCL_CTL, rf_mode_bw)
     rtl8xxxu_write8(priv, C.REG_DATA_SUBCHANNEL, subchannel)
 
-    val8 = 0x0e  # ht path (20 MHz, not 20_NOHT)
+    val8 = 0x0a  # !ht: NL80211_CHAN_WIDTH_20_NOHT
     rtl8xxxu_write8(priv, C.REG_SIFS_CCK + 1, val8)
     rtl8xxxu_write8(priv, C.REG_SIFS_OFDM + 1, val8)
     rtl8xxxu_write16(priv, C.REG_R2T_SIFS, 0x0808)
@@ -365,12 +390,12 @@ def rtl8xxxu_gen2_config_channel(priv: Rtl8xxxuPriv, channel: int) -> None:
         rtl8xxxu_write_rfreg(priv, i, C.RF6052_REG_MODE_AG, val32)
 
 
-_XTAL1 = C.GENMASK(23, 18)   # 8723a.c:405
-_XTAL0 = C.GENMASK(17, 12)   # 8723a.c:406
+_XTAL1 = C.GENMASK(23, 18)   # 8723a.c:527
+_XTAL0 = C.GENMASK(17, 12)   # 8723a.c:528
 
 
 def rtl8723a_set_crystal_cap(priv: Rtl8xxxuPriv, crystal_cap: int) -> None:
-    """8723a.c:134. Program the crystal capacitance (XTAL0/XTAL1 in REG_MAC_PHY_CTRL)."""
+    """8723a.c:530. Program the crystal capacitance (XTAL0/XTAL1 in REG_MAC_PHY_CTRL)."""
     cfo = priv.cfo_tracking
     if crystal_cap == cfo.crystal_cap:
         return
@@ -382,7 +407,7 @@ def rtl8723a_set_crystal_cap(priv: Rtl8xxxuPriv, crystal_cap: int) -> None:
 
 
 def rtl8723a_phy_lc_calibrate(priv: Rtl8xxxuPriv) -> None:
-    """core.c:3394. LC calibration; has_s0s1 is False for 8192eu, tx_paths>1 covers path B."""
+    """core.c:3498. LC calibration; has_s0s1 is False for 8192eu, tx_paths>1 covers path B."""
     lstf = rtl8xxxu_read32(priv, C.REG_OFDM1_LSTF)
     rf_amode = rf_bmode = 0
     if lstf & C.OFDM_LSTF_MASK:
@@ -409,13 +434,13 @@ def rtl8723a_phy_lc_calibrate(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_set_mac(priv: Rtl8xxxuPriv) -> None:
-    """core.c:3760. Program priv.mac_addr into REG_MACID."""
+    """core.c:3558. Program priv.mac_addr into REG_MACID."""
     for i in range(6):
         rtl8xxxu_write8(priv, C.REG_MACID + i, priv.mac_addr[i])
 
 
 def rtl8xxxu_set_linktype(priv: Rtl8xxxuPriv, linktype: Nl80211Iftype) -> None:
-    """core.c:3774. Set the MSR link type."""
+    """core.c:1589. Set the MSR link type."""
     val8 = rtl8xxxu_read8(priv, C.REG_MSR) & ~C.MSR_LINKTYPE_MASK
     if linktype == Nl80211Iftype.NL80211_IFTYPE_UNSPECIFIED:
         val8 |= C.MSR_LINKTYPE_NONE
@@ -431,27 +456,27 @@ def rtl8xxxu_set_linktype(priv: Rtl8xxxuPriv, linktype: Nl80211Iftype) -> None:
 
 
 def rtl8xxxu_set_bssid(priv: Rtl8xxxuPriv, bssid: bytes) -> None:
-    """core.c:3804. Program bssid into REG_BSSID."""
+    """core.c:3581. Program bssid into REG_BSSID."""
     for i in range(6):
         rtl8xxxu_write8(priv, C.REG_BSSID + i, bssid[i])
 
 
 def rtl8xxxu_set_spec_sifs(priv: Rtl8xxxuPriv, cck: int, ofdm: int) -> None:
-    """core.c:3820."""
+    """core.c:1641."""
     val16 = ((cck << C.SPEC_SIFS_CCK_SHIFT) & C.SPEC_SIFS_CCK_MASK) | \
             ((ofdm << C.SPEC_SIFS_OFDM_SHIFT) & C.SPEC_SIFS_OFDM_MASK)
     rtl8xxxu_write16(priv, C.REG_SPEC_SIFS, val16)
 
 
 def rtl8xxxu_set_retry(priv: Rtl8xxxuPriv, short_retry: int, long_retry: int) -> None:
-    """core.c:3831."""
+    """core.c:1628."""
     val16 = ((short_retry << C.RETRY_LIMIT_SHORT_SHIFT) & C.RETRY_LIMIT_SHORT_MASK) | \
             ((long_retry << C.RETRY_LIMIT_LONG_SHIFT) & C.RETRY_LIMIT_LONG_MASK)
     rtl8xxxu_write16(priv, C.REG_RETRY_LIMIT, val16)
 
 
 def rtl8xxxu_gen2_channel_to_group(channel: int) -> int:
-    """core.c:1575. 2.4 GHz channel -> power-index group (0-4)."""
+    """core.c:1188. 2.4 GHz channel -> power-index group (0-4)."""
     if channel < 3:
         return 0
     if channel < 6:
@@ -464,35 +489,35 @@ def rtl8xxxu_gen2_channel_to_group(channel: int) -> int:
 
 
 def rtl8xxxu_gen2_usb_quirks(priv: Rtl8xxxuPriv) -> None:
-    """core.c:4557."""
+    """core.c:3782."""
     val32 = rtl8xxxu_read32(priv, C.REG_TXDMA_OFFSET_CHK) | C.TXDMA_OFFSET_DROP_DATA_EN
     rtl8xxxu_write32(priv, C.REG_TXDMA_OFFSET_CHK, val32)
 
 
 def rtl8xxxu_gen2_disable_rf(priv: Rtl8xxxuPriv) -> None:
-    """core.c:4571."""
+    """core.c:3806."""
     val32 = rtl8xxxu_read32(priv, C.REG_RX_WAIT_CCA) & ~(C.BIT(22) | C.BIT(23))
     rtl8xxxu_write32(priv, C.REG_RX_WAIT_CCA, val32)
 
 
 def rtl8xxxu_gen2_update_rate_mask(priv: Rtl8xxxuPriv, *args: object) -> None:
-    """core.c:5863. Rate-adaptation H2C; reached only for an associated station, which wifit3
+    """core.c:4515. Rate-adaptation H2C; reached only for an associated station, which wifit3
     never has. Ported as a no-op. TODO: verify, untested here, needs an associated vif."""
     return
 
 
 def rtl8xxxu_gen2_report_connect(priv: Rtl8xxxuPriv, *args: object) -> None:
-    """core.c:5920. Media-status H2C on (dis)association; wifit3 never associates. No-op."""
+    """core.c:4564. Media-status H2C on (dis)association; wifit3 never associates. No-op."""
     return
 
 
 def rtl8xxxu_gen2_report_rssi(priv: Rtl8xxxuPriv, *args: object) -> None:
-    """core.c:5887. RSSI H2C for an associated station; wifit3 never associates. No-op."""
+    """core.c:4601. RSSI H2C for an associated station; wifit3 never associates. No-op."""
     return
 
 
 def rtl8xxxu_identify_vendor_2bits(priv: Rtl8xxxuPriv, vendor: int) -> None:
-    """core.c:1393."""
+    """core.c:1676."""
     if vendor == C.SYS_CFG_VENDOR_ID_TSMC:
         priv.chip_vendor = "TSMC"
     elif vendor == C.SYS_CFG_VENDOR_ID_SMIC:
@@ -506,7 +531,7 @@ def rtl8xxxu_identify_vendor_2bits(priv: Rtl8xxxuPriv, vendor: int) -> None:
 
 
 def rtl8xxxu_config_endpoints_sie(priv: Rtl8xxxuPriv) -> None:
-    """core.c:1497."""
+    """core.c:1695."""
     val16 = rtl8xxxu_read16(priv, C.REG_NORMAL_SIE_EP_TX)
     if val16 & C.NORMAL_SIE_EP_TX_HIGH_MASK:
         priv.ep_tx_high_queue = True
@@ -520,7 +545,7 @@ def rtl8xxxu_config_endpoints_sie(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_config_endpoints_no_sie(priv: Rtl8xxxuPriv) -> None:
-    """core.c:1521. Raises for an unsupported endpoint count."""
+    """core.c:1717. Raises for an unsupported endpoint count."""
     if priv.nr_out_eps >= 3:
         priv.ep_tx_low_queue = True
         priv.ep_tx_count += 1
@@ -539,7 +564,7 @@ _FW_SIGNATURES = (0x92e0, 0x92c0, 0x88e0, 0x88c0, 0x5300, 0x2300, 0x88f0, 0x10b0
 
 
 def rtl8xxxu_reset_8051(priv: Rtl8xxxuPriv) -> None:
-    """core.c:3634."""
+    """core.c:1923."""
     val8 = rtl8xxxu_read8(priv, C.REG_RSV_CTRL + 1)
     val8 &= ~C.BIT(0)
     rtl8xxxu_write8(priv, C.REG_RSV_CTRL + 1, val8)
@@ -557,7 +582,7 @@ def rtl8xxxu_reset_8051(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_load_firmware(priv: Rtl8xxxuPriv, fw_bytes: bytes) -> None:
-    """core.c:2101. Validate the firmware header signature and store the blob + payload size."""
+    """core.c:2106. Validate the firmware header signature and store the blob + payload size."""
     if len(fw_bytes) < FIRMWARE_HEADER_SIZE:
         raise ValueError("RTL8192EU firmware too short")
     priv.fw_data = bytes(fw_bytes)
@@ -567,8 +592,8 @@ def rtl8xxxu_load_firmware(priv: Rtl8xxxuPriv, fw_bytes: bytes) -> None:
         raise ValueError(f"Invalid firmware signature: {signature:#06x}")
 
 
-def rtl8xxxu_download_firmware(priv: Rtl8xxxuPriv) -> None:
-    """core.c:2030. Page the 8051 RAM image to REG_FW_START_ADDRESS. Raises on a short block."""
+def rtl8xxxu_download_firmware(priv: Rtl8xxxuPriv) -> int:
+    """core.c:2004. Page the 8051 RAM image to REG_FW_START_ADDRESS: 0, or -EAGAIN on a short block."""
     reg_fw_start_address = C.REG_FW_START_ADDRESS
     reg_mcu_fw_dl = C.REG_MCU_FW_DL
 
@@ -595,23 +620,28 @@ def rtl8xxxu_download_firmware(priv: Rtl8xxxuPriv) -> None:
 
     data = priv.fw_data[FIRMWARE_HEADER_SIZE:]
     pages, remainder = divmod(priv.fw_size, C.RTL_FW_PAGE_SIZE)
-    try:
-        for i in range(pages):
-            val8 = (rtl8xxxu_read8(priv, reg_mcu_fw_dl + 2) & 0xF8) | i
-            rtl8xxxu_write8(priv, reg_mcu_fw_dl + 2, val8)
-            rtl8xxxu_writeN(priv, reg_fw_start_address,
-                            data[i * C.RTL_FW_PAGE_SIZE:(i + 1) * C.RTL_FW_PAGE_SIZE])
-        if remainder:
-            val8 = (rtl8xxxu_read8(priv, reg_mcu_fw_dl + 2) & 0xF8) | pages
-            rtl8xxxu_write8(priv, reg_mcu_fw_dl + 2, val8)
-            rtl8xxxu_writeN(priv, reg_fw_start_address, data[pages * C.RTL_FW_PAGE_SIZE:])
-    finally:
-        val16 = rtl8xxxu_read16(priv, reg_mcu_fw_dl) & ~C.MCU_FW_DL_ENABLE
-        rtl8xxxu_write16(priv, reg_mcu_fw_dl, val16)
+    ret = 0
+    for i in range(pages):
+        val8 = (rtl8xxxu_read8(priv, reg_mcu_fw_dl + 2) & 0xF8) | i
+        rtl8xxxu_write8(priv, reg_mcu_fw_dl + 2, val8)
+        page = data[i * C.RTL_FW_PAGE_SIZE:(i + 1) * C.RTL_FW_PAGE_SIZE]
+        if rtl8xxxu_writeN(priv, reg_fw_start_address, page) != C.RTL_FW_PAGE_SIZE:
+            ret = -errno.EAGAIN
+            break
+    if not ret and remainder:
+        val8 = (rtl8xxxu_read8(priv, reg_mcu_fw_dl + 2) & 0xF8) | pages
+        rtl8xxxu_write8(priv, reg_mcu_fw_dl + 2, val8)
+        if rtl8xxxu_writeN(priv, reg_fw_start_address, data[pages * C.RTL_FW_PAGE_SIZE:]) != remainder:
+            ret = -errno.EAGAIN
+
+    # fw_abort
+    val16 = rtl8xxxu_read16(priv, reg_mcu_fw_dl) & ~C.MCU_FW_DL_ENABLE
+    rtl8xxxu_write16(priv, reg_mcu_fw_dl, val16)
+    return ret
 
 
 def rtl8xxxu_start_firmware(priv: Rtl8xxxuPriv) -> None:
-    """core.c:1967. Poll the download checksum, ready the MCU, reset the 8051 (required on 8192eu),
+    """core.c:1944. Poll the download checksum, ready the MCU, reset the 8051 (required on 8192eu),
     then poll for firmware init-ready. Raises on timeout."""
     reg_mcu_fw_dl = C.REG_MCU_FW_DL
 
@@ -626,7 +656,7 @@ def rtl8xxxu_start_firmware(priv: Rtl8xxxuPriv) -> None:
     val32 &= ~C.MCU_WINT_INIT_READY
     rtl8xxxu_write32(priv, reg_mcu_fw_dl, val32)
 
-    priv.fops.reset_8051(priv)   # otherwise the firmware won't come up on the 8192eu (core.c:1993)
+    priv.fops.reset_8051(priv)   # otherwise the firmware won't come up on the 8192eu (core.c:1976)
 
     for _ in range(C.RTL8XXXU_FIRMWARE_POLL_MAX):
         if rtl8xxxu_read32(priv, reg_mcu_fw_dl) & C.MCU_WINT_INIT_READY:
@@ -637,7 +667,7 @@ def rtl8xxxu_start_firmware(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_flush_fifo(priv: Rtl8xxxuPriv) -> None:
-    """core.c:3942. Best-effort TX pause + RXDMA drain before power-off."""
+    """core.c:3714. Best-effort TX pause + RXDMA drain before power-off."""
     rtl8xxxu_write8(priv, C.REG_TXPAUSE, 0xff)
     val32 = rtl8xxxu_read32(priv, C.REG_RXPKT_NUM) | C.RXPKT_NUM_RW_RELEASE_EN
     rtl8xxxu_write32(priv, C.REG_RXPKT_NUM, val32)
@@ -650,7 +680,7 @@ def rtl8xxxu_flush_fifo(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_firmware_self_reset(priv: Rtl8xxxuPriv) -> None:
-    """core.c:2170. Ask the 8051 to self-reset, forcing CPU disable on timeout."""
+    """core.c:2159. Ask the 8051 to self-reset, forcing CPU disable on timeout."""
     rtl8xxxu_write8(priv, C.REG_HMTFR + 3, 0x20)
     for _ in range(100):
         if not rtl8xxxu_read16(priv, C.REG_SYS_FUNC) & C.SYS_FUNC_CPU_ENABLE:
@@ -661,7 +691,7 @@ def rtl8xxxu_firmware_self_reset(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_auto_llt_table(priv: Rtl8xxxuPriv) -> None:
-    """core.c:3889. Trigger the automatic LLT (link list table) init and poll for completion."""
+    """core.c:2558. Trigger the automatic LLT (link list table) init and poll for completion."""
     val32 = rtl8xxxu_read32(priv, C.REG_AUTO_LLT) | C.AUTO_LLT_INIT_LLT
     rtl8xxxu_write32(priv, C.REG_AUTO_LLT, val32)
     for _ in range(500):
@@ -673,15 +703,16 @@ def rtl8xxxu_auto_llt_table(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_init_mac(priv: Rtl8xxxuPriv) -> None:
-    """core.c:2203. Run the chip's MAC init table (RTL8192E takes the switch default: no extra write)."""
+    """core.c:2187. Run the chip's MAC init table (RTL8192E takes the switch default: no extra write)."""
     for reg, val in priv.fops.mactable:
         if reg == 0xffff and val == 0xff:
             break
-        rtl8xxxu_write8(priv, reg, val)
+        if rtl8xxxu_write8(priv, reg, val) != 1:
+            raise IOError(f"Failed to initialize MAC (reg: {reg:04x}, val {val:02x})")
 
 
 def rtl8xxxu_init_phy_regs(priv: Rtl8xxxuPriv, array: tuple[tuple[int, int], ...]) -> None:
-    """core.c:2245. Run a reg32val BB table, udelay(1) per write."""
+    """core.c:2228. Run a reg32val BB table, udelay(1) per write."""
     for reg, val in array:
         if reg == 0xffff and val == 0xffffffff:
             break
@@ -690,7 +721,7 @@ def rtl8xxxu_init_phy_regs(priv: Rtl8xxxuPriv, array: tuple[tuple[int, int], ...
 
 
 def rtl8xxxu_init_rf_regs(priv: Rtl8xxxuPriv, array: tuple[tuple[int, int], ...], path: int) -> None:
-    """core.c:2404. Run an rfregval RF table; reg 0xfe..0xf9 are delay markers, 0xff the sentinel."""
+    """core.c:2385. Run an rfregval RF table; reg 0xfe..0xf9 are delay markers, 0xff the sentinel."""
     delays = {0xfe: 50e-3, 0xfd: 5e-3, 0xfc: 1e-3, 0xfb: 50e-6, 0xfa: 5e-6, 0xf9: 1e-6}
     for reg, val in array:
         if reg == 0xff and val == 0xffffffff:
@@ -702,8 +733,43 @@ def rtl8xxxu_init_rf_regs(priv: Rtl8xxxuPriv, array: tuple[tuple[int, int], ...]
         time.sleep(1e-6)
 
 
+def rtl8xxxu_init_phy_rf(priv: Rtl8xxxuPriv, array: tuple[tuple[int, int], ...], path: int) -> None:
+    """core.c:2433. Open the path's 3-wire interface, run its RF table, restore RFENV."""
+    if path == RF_A:
+        reg_sw_ctrl = C.REG_FPGA0_XA_RF_SW_CTRL
+        reg_int_oe = C.REG_FPGA0_XA_RF_INT_OE
+        reg_hssi_parm2 = C.REG_FPGA0_XA_HSSI_PARM2
+    else:
+        reg_sw_ctrl = C.REG_FPGA0_XB_RF_SW_CTRL
+        reg_int_oe = C.REG_FPGA0_XB_RF_INT_OE
+        reg_hssi_parm2 = C.REG_FPGA0_XB_HSSI_PARM2
+
+    rfsi_rfenv = rtl8xxxu_read16(priv, reg_sw_ctrl) & C.FPGA0_RF_RFENV
+
+    val32 = rtl8xxxu_read32(priv, reg_int_oe) | C.BIT(20)
+    rtl8xxxu_write32(priv, reg_int_oe, val32)
+    time.sleep(1e-6)
+
+    val32 = rtl8xxxu_read32(priv, reg_int_oe) | C.BIT(4)
+    rtl8xxxu_write32(priv, reg_int_oe, val32)
+    time.sleep(1e-6)
+
+    val32 = rtl8xxxu_read32(priv, reg_hssi_parm2) & ~C.FPGA0_HSSI_3WIRE_ADDR_LEN
+    rtl8xxxu_write32(priv, reg_hssi_parm2, val32)
+    time.sleep(1e-6)
+
+    val32 = rtl8xxxu_read32(priv, reg_hssi_parm2) & ~C.FPGA0_HSSI_3WIRE_DATA_LEN
+    rtl8xxxu_write32(priv, reg_hssi_parm2, val32)
+    time.sleep(1e-6)
+
+    rtl8xxxu_init_rf_regs(priv, array, path)
+
+    val16 = rtl8xxxu_read16(priv, reg_sw_ctrl) & ~C.FPGA0_RF_RFENV
+    rtl8xxxu_write16(priv, reg_sw_ctrl, val16 | rfsi_rfenv)
+
+
 def rtl8xxxu_init_phy_bb(priv: Rtl8xxxuPriv) -> None:
-    """core.c:2327. Chip BB init, the 1T2R (8191EU) path-B patch, crystal cap, RTL8192E XTAL write."""
+    """core.c:2310. Chip BB init, the 1T2R (8191EU) path-B patch, crystal cap, RTL8192E XTAL write."""
     priv.fops.init_phy_bb(priv)
 
     if priv.tx_paths == 1 and priv.rx_paths == 2:   # 8191EU 1T2R boards use path B for TX
@@ -744,11 +810,12 @@ def rtl8xxxu_init_phy_bb(priv: Rtl8xxxuPriv) -> None:
     if priv.fops.set_crystal_cap is not None:
         priv.fops.set_crystal_cap(priv, priv.default_crystal_cap)
 
-    rtl8xxxu_write32(priv, C.REG_AFE_XTAL_CTRL, 0x000f81fb)   # RTL8192E
+    if priv.rtl_chip == RTL8192E:
+        rtl8xxxu_write32(priv, C.REG_AFE_XTAL_CTRL, 0x000f81fb)
 
 
 def rtl8xxxu_init_queue_reserved_page(priv: Rtl8xxxuPriv) -> None:
-    """core.c:3996. Reserved-page / public-queue allocation across the TX queues."""
+    """core.c:3815. Reserved-page / public-queue allocation across the TX queues."""
     fops = priv.fops
     hq = fops.page_num_hi if priv.ep_tx_high_queue else 0
     lq = fops.page_num_lo if priv.ep_tx_low_queue else 0
@@ -767,7 +834,7 @@ def rtl8xxxu_init_queue_reserved_page(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_init_queue_priority(priv: Rtl8xxxuPriv) -> None:
-    """core.c:2600. Map the AC queues to TRXDMA queues and the out endpoints (RTL8192E path).
+    """core.c:2583. Map the AC queues to TRXDMA queues and the out endpoints (RTL8192E path).
     Raises on an unsupported endpoint layout."""
     hiq = mgq = bkq = beq = viq = voq = 0
     hip = mgp = bkp = bep = vip = vop = 0
@@ -825,7 +892,7 @@ LED_OFF = 0   # enum led_brightness
 
 
 def rtl8xxxu_read_efuse8(priv: Rtl8xxxuPriv, offset: int) -> int:
-    """core.c:1731. Read one EFUSE byte at ``offset``. Raises on a read timeout."""
+    """core.c:1746. Read one EFUSE byte at ``offset``. Raises on a read timeout."""
     rtl8xxxu_write8(priv, C.REG_EFUSE_CTRL + 1, offset & 0xff)
     val8 = rtl8xxxu_read8(priv, C.REG_EFUSE_CTRL + 2) & 0xfc
     val8 |= (offset >> 8) & 0x03
@@ -834,6 +901,7 @@ def rtl8xxxu_read_efuse8(priv: Rtl8xxxuPriv, offset: int) -> int:
     val8 = rtl8xxxu_read8(priv, C.REG_EFUSE_CTRL + 3)
     rtl8xxxu_write8(priv, C.REG_EFUSE_CTRL + 3, val8 & 0x7f)
 
+    rtl8xxxu_read32(priv, C.REG_EFUSE_CTRL)
     for _ in range(C.RTL8XXXU_MAX_REG_POLL):
         if rtl8xxxu_read32(priv, C.REG_EFUSE_CTRL) & C.BIT(31):
             break
@@ -889,10 +957,11 @@ def rtl8xxxu_read_efuse(priv: Rtl8xxxuPriv) -> None:
                 if word_mask & C.BIT(i):
                     map_addr += 2
                     continue
+                val8 = rtl8xxxu_read_efuse8(priv, efuse_addr)
+                efuse_addr += 1
                 if map_addr >= C.EFUSE_MAP_LEN - 1:
                     raise ValueError("RTL8192EU efuse corrupt: illegal map_addr")
-                priv.efuse_wifi[map_addr] = rtl8xxxu_read_efuse8(priv, efuse_addr)
-                efuse_addr += 1
+                priv.efuse_wifi[map_addr] = val8
                 map_addr += 1
                 priv.efuse_wifi[map_addr] = rtl8xxxu_read_efuse8(priv, efuse_addr)
                 efuse_addr += 1
@@ -902,7 +971,7 @@ def rtl8xxxu_read_efuse(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
-    """core.c:4044, the RTL8192E path. needs_full_init forces the cold (macpower=False) path."""
+    """core.c:3918, the RTL8192E path. needs_full_init forces the cold (macpower=False) path."""
     fops = priv.fops
     rtl8xxxu_read8(priv, C.REG_CR)         # macpower probe, but needs_full_init forces the
     rtl8xxxu_read16(priv, C.REG_SYS_CLKR)  # cold path, so every !macpower branch below runs
@@ -913,35 +982,50 @@ def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
     rtl8xxxu_init_queue_priority(priv)
     rtl8xxxu_write16(priv, C.REG_TRXFF_BNDY + 2, fops.trxff_boundary)
 
-    rtl8xxxu_download_firmware(priv)
+    for retry in range(5, -1, -1):
+        ret = rtl8xxxu_download_firmware(priv)
+        if ret != -errno.EAGAIN:
+            break
+        if retry:
+            logger.debug("retry firmware download")
+    if ret:
+        raise IOError("RTL8192EU firmware download failed")
     rtl8xxxu_start_firmware(priv)
 
     rtl8xxxu_init_mac(priv)
     rtl8xxxu_init_phy_bb(priv)
     fops.init_phy_rf(priv)
 
+    if priv.rtl_chip != RTL8192E:
+        rtl8xxxu_write32(priv, C.REG_FPGA0_TX_INFO, 0x00000003)
+
     val32 = (C.FPGA0_RF_TRSW | C.FPGA0_RF_TRSWB | C.FPGA0_RF_ANTSW | C.FPGA0_RF_ANTSWB |
              ((C.FPGA0_RF_ANTSW | C.FPGA0_RF_ANTSWB) << C.FPGA0_RF_BD_CTRL_SHIFT))
     val32 |= (C.FPGA0_RF_PAPE | (C.FPGA0_RF_PAPE << C.FPGA0_RF_BD_CTRL_SHIFT))   # no_pape is False
     rtl8xxxu_write32(priv, C.REG_FPGA0_XAB_RF_SW_CTRL, val32)
+
+    if priv.rtl_chip != RTL8192E:
+        rtl8xxxu_write32(priv, C.REG_FPGA0_XA_RF_INT_OE, 0x66f60210)
 
     # TX buffer boundary
     val8 = fops.total_page_num + 1
     for reg in (C.REG_TXPKTBUF_BCNQ_BDNY, C.REG_TXPKTBUF_MGQ_BDNY, C.REG_TXPKTBUF_WMAC_LBK_BF_HD,
                 C.REG_TRXFF_BNDY, C.REG_TDECTRL + 1):
         rtl8xxxu_write8(priv, reg, val8)
-    # RTL8192E does not write REG_PBP.
+    if priv.rtl_chip != RTL8192E:
+        rtl8xxxu_write8(priv, C.REG_PBP, 0x00)   # rtl8192eu_fops leaves pbp_rx/pbp_tx at 0
 
     fops.llt_init(priv)
     fops.usb_quirks(priv)
     # has_tx_report is False for 8192eu.
 
     rtl8xxxu_write8(priv, C.REG_RX_DRVINFO_SZ, 4)
-    rtl8xxxu_write32(priv, C.REG_HIMR0, 0x00)   # RTL8192E
-    rtl8xxxu_write32(priv, C.REG_HIMR1, 0x00)
-
-    rtl8xxxu_set_mac(priv)
-    rtl8xxxu_set_linktype(priv, Nl80211Iftype.NL80211_IFTYPE_STATION)
+    if priv.rtl_chip == RTL8192E:
+        rtl8xxxu_write32(priv, C.REG_HIMR0, 0x00)
+        rtl8xxxu_write32(priv, C.REG_HIMR1, 0x00)
+    else:
+        rtl8xxxu_write32(priv, C.REG_HISR, 0xffffffff)
+        rtl8xxxu_write32(priv, C.REG_HIMR, 0xffffffff)
 
     val32 = (C.RCR_ACCEPT_PHYS_MATCH | C.RCR_ACCEPT_MCAST | C.RCR_ACCEPT_BCAST |
              C.RCR_ACCEPT_MGMT_FRAME | C.RCR_HTC_LOC_CTRL |
@@ -993,14 +1077,18 @@ def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
 
     fops.set_tx_power(priv, 1, False)   # default channel 6, 20 MHz
 
+    if priv.rtl_chip != RTL8192E:   # let the 8051 take control of antenna setting
+        val8 = rtl8xxxu_read8(priv, C.REG_LEDCFG2) | C.LEDCFG2_DPDT_SELECT
+        rtl8xxxu_write8(priv, C.REG_LEDCFG2, val8)
+
     rtl8xxxu_write8(priv, C.REG_HWSEQ_CTRL, 0xff)
     rtl8xxxu_write32(priv, C.REG_BAR_MODE_CTRL, 0x0201ffff)
     rtl8xxxu_write16(priv, C.REG_FAST_EDCA_CTRL, 0)   # 8192E not excluded
 
-    # RTL8192E: RTS BW, reset USB mode switch
-    val8 = rtl8xxxu_read8(priv, C.REG_QUEUE_CTRL) & ~C.BIT(3)
-    rtl8xxxu_write8(priv, C.REG_QUEUE_CTRL, val8)
-    rtl8xxxu_write8(priv, C.REG_ACLK_MON, 0x00)
+    if priv.rtl_chip == RTL8192E:   # RTS BW, reset USB mode switch
+        val8 = rtl8xxxu_read8(priv, C.REG_QUEUE_CTRL) & ~C.BIT(3)
+        rtl8xxxu_write8(priv, C.REG_QUEUE_CTRL, val8)
+        rtl8xxxu_write8(priv, C.REG_ACLK_MON, 0x00)
 
     fops.phy_lc_calibrate(priv)
     fops.phy_iq_calibrate(priv)
@@ -1010,36 +1098,37 @@ def rtl8xxxu_init_device(priv: Rtl8xxxuPriv) -> None:
 
     rtl8xxxu_write8(priv, C.REG_NAV_UPPER, (30000 + NAV_UPPER_UNIT - 1) // NAV_UPPER_UNIT)
 
-    rtl8xxxu_write8(priv, C.REG_USB_HRPWM, 0x00)   # RTL8192E
+    if priv.rtl_chip == RTL8192E:
+        rtl8xxxu_write8(priv, C.REG_USB_HRPWM, 0x00)
 
     val32 = rtl8xxxu_read32(priv, C.REG_FWHW_TXQ_CTRL) | C.FWHW_TXQ_CTRL_XMIT_MGMT_ACK
     rtl8xxxu_write32(priv, C.REG_FWHW_TXQ_CTRL, val32)
 
-    # RTL8192E: fix LDPC rx hang
-    val32 = rtl8xxxu_read32(priv, C.REG_AFE_MISC)
-    rtl8xxxu_write8(priv, C.REG_8192E_LDOV12_CTRL, 0x75)
-    val32 &= 0xfff00fff
-    val32 |= 0x0007e000
-    rtl8xxxu_write32(priv, C.REG_AFE_MISC, val32)
+    if priv.rtl_chip == RTL8192E:   # fix LDPC rx hang
+        val32 = rtl8xxxu_read32(priv, C.REG_AFE_MISC)
+        rtl8xxxu_write8(priv, C.REG_8192E_LDOV12_CTRL, 0x75)
+        val32 &= 0xfff00fff
+        val32 |= 0x0007e000
+        rtl8xxxu_write32(priv, C.REG_AFE_MISC, val32)
 
-    # cck_agc_report_type must match between path A and B or CCK RSSI is wrong
-    val32 = rtl8xxxu_read32(priv, C.REG_FPGA0_XA_HSSI_PARM2)
-    priv.cck_agc_report_type = (val32 & C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR) >> _ffs(C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR)
-    val32 = rtl8xxxu_read32(priv, C.REG_FPGA0_XB_HSSI_PARM2)
-    if priv.cck_agc_report_type != ((val32 & C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR) >>
-                                    _ffs(C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR)):
+        # cck_agc_report_type must match between path A and B or CCK RSSI is wrong
+        val32 = rtl8xxxu_read32(priv, C.REG_FPGA0_XA_HSSI_PARM2)
+        priv.cck_agc_report_type = (val32 & C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR) >> _ffs(C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR)
+        val32 = rtl8xxxu_read32(priv, C.REG_FPGA0_XB_HSSI_PARM2)
+        if priv.cck_agc_report_type != ((val32 & C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR) >>
+                                        _ffs(C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR)):
+            if priv.cck_agc_report_type:
+                val32 |= C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR
+            else:
+                val32 &= ~C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR
+            rtl8xxxu_write32(priv, C.REG_FPGA0_XB_HSSI_PARM2, val32)
+
+        val32 = rtl8xxxu_read32(priv, C.REG_AGC_RPT)
         if priv.cck_agc_report_type:
-            val32 |= C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR
+            val32 |= C.AGC_RPT_CCK
         else:
-            val32 &= ~C.FPGA0_HSSI_PARM2_CCK_HIGH_PWR
-        rtl8xxxu_write32(priv, C.REG_FPGA0_XB_HSSI_PARM2, val32)
-
-    val32 = rtl8xxxu_read32(priv, C.REG_AGC_RPT)
-    if priv.cck_agc_report_type:
-        val32 |= C.AGC_RPT_CCK
-    else:
-        val32 &= ~C.AGC_RPT_CCK
-    rtl8xxxu_write32(priv, C.REG_AGC_RPT, val32)
+            val32 &= ~C.AGC_RPT_CCK
+        rtl8xxxu_write32(priv, C.REG_AGC_RPT, val32)
 
     priv.cck_new_agc = bool(rtl8xxxu_read32(priv, 0xa9c) & C.BIT(17))
 
@@ -1057,7 +1146,7 @@ def rtl8xxxu_config(priv: Rtl8xxxuPriv, channel: int) -> None:
 
 
 def rtl8xxxu_configure_filter(priv: Rtl8xxxuPriv, total_flags: Ieee80211FilterFlags) -> None:
-    """core.c:6860. Translate mac80211 filter flags into REG_RCR."""
+    """core.c:6853. Translate mac80211 filter flags into REG_RCR."""
     rcr = priv.regrcr
     rcr = rcr | C.RCR_ACCEPT_CRC32 if total_flags & Ieee80211FilterFlags.FIF_FCSFAIL \
         else rcr & ~C.RCR_ACCEPT_CRC32
@@ -1082,7 +1171,7 @@ def rtl8xxxu_configure_filter(priv: Rtl8xxxuPriv, total_flags: Ieee80211FilterFl
 
 
 def rtl8xxxu_start(priv: Rtl8xxxuPriv) -> None:
-    """core.c:6797 register side; the caller starts the RX reader and the 2 s watchdog."""
+    """core.c:7361 register side; the caller starts the RX reader and the 2 s watchdog."""
     priv.fops.enable_rf(priv)
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP2, 0xFFFF)
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP0, 0xFFFF)
@@ -1090,7 +1179,7 @@ def rtl8xxxu_start(priv: Rtl8xxxuPriv) -> None:
 
 
 def rtl8xxxu_stop(priv: Rtl8xxxuPriv) -> None:
-    """core.c:6815 register side; the caller stops the RX reader and the watchdog."""
+    """core.c:7450 register side; the caller stops the RX reader and the watchdog."""
     rtl8xxxu_write8(priv, C.REG_TXPAUSE, 0xFF)
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP0, 0x0000)
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP2, 0x0000)
@@ -1112,7 +1201,7 @@ def rtl8xxxu_set_atc_status(priv: Rtl8xxxuPriv, atc_status: bool) -> None:
 
 
 def rtl8xxxu_track_cfo(priv: Rtl8xxxuPriv) -> None:
-    """core.c:7225, the unassociated branch only; wifit3 never associates."""
+    """core.c:7231, the unassociated branch only; wifit3 never associates."""
     cfo = priv.cfo_tracking
     cfo.adjust = True
     if cfo.crystal_cap > priv.default_crystal_cap:
@@ -1146,7 +1235,7 @@ MONITOR_FILTER_FLAGS = (
 
 def rtl8xxxu_probe(priv: Rtl8xxxuPriv, fw_data: bytes,
                    progress: Callable[[float, str], None] = lambda _v, _m: None) -> None:
-    """Register I/O of rtl8xxxu_probe (core.c:7787), after rtl8xxxu_parse_usb."""
+    """Register I/O of rtl8xxxu_probe (core.c:7691), after rtl8xxxu_parse_usb."""
     progress(0.10, "Identify chip")
     priv.fops.identify_chip(priv)
     progress(0.15, "Read EFUSE")

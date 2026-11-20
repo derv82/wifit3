@@ -1,7 +1,7 @@
 """RTL8192EU mainline rtl8xxxu port. See RTL8192EU.md.
 
 VID:PIDs from rtl8xxxu core.c's device table (``.driver_info = &rtl8192eu_fops``).
-Ported from v6.6 source; see RTL8192EU.md for the hardware-verification status.
+Ported from v6.19.14 source; see RTL8192EU.md for the hardware-verification status.
 """
 from wifit3.chips.products import DLink, TPLink
 from wifit3.models.device_id import DeviceID
