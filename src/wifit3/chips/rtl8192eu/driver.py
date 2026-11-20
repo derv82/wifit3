@@ -85,20 +85,7 @@ class RTL8192EUDriver(Driver):
         try:
             progress(0.00, "Claiming USB interface")
             await loop.run_in_executor(None, self.transport.claim)
-
-            def from_worker(value: float, message: str) -> None:
-                loop.call_soon_threadsafe(progress, value, message)
-
-            await loop.run_in_executor(None, self._probe, from_worker)
-            progress(0.90, "Starting monitor interface")
-            self._rx_reader = RxReaderThread(
-                loop, self._read_once, self._dispatch, name="rtl8192eu-rx", on_fatal=self._on_rx_fatal,
-            )
-            await loop.run_in_executor(None, start_monitor_interface, self.priv)
-            self._started = True
-            self._rx_reader.start()
-            self._watchdog_task = loop.create_task(self._watchdog())
-            self.current_channel = 1
+            await self._bringup(progress)
         except Exception as error:
             await self._stop_tasks()
             self.transport.release()
@@ -108,6 +95,23 @@ class RTL8192EUDriver(Driver):
         self.is_warm = True
         progress(1.0, "RTL8192EU online")
         return True
+
+    async def _bringup(self, progress: ProgressCallback) -> None:
+        loop = asyncio.get_running_loop()
+
+        def from_worker(value: float, message: str) -> None:
+            loop.call_soon_threadsafe(progress, value, message)
+
+        await loop.run_in_executor(None, self._probe, from_worker)
+        progress(0.90, "Starting monitor interface")
+        self._rx_reader = RxReaderThread(
+            loop, self._read_once, self._dispatch, name="rtl8192eu-rx", on_fatal=self._on_rx_fatal,
+        )
+        await loop.run_in_executor(None, start_monitor_interface, self.priv)
+        self._started = True
+        self._rx_reader.start()
+        self._watchdog_task = loop.create_task(self._watchdog())
+        self.current_channel = 1
 
     async def _watchdog(self) -> None:
         loop = asyncio.get_running_loop()
