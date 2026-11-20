@@ -112,10 +112,14 @@ Per `docs/porting/FINAL-CHECKLIST.md`. Hardware results are from a generic RTL81
 (`0bda:818b`) via usbipd → WSL2 Kali (kernel 6.6.123), 2026-11-20, against the operator's own
 network only.
 
-1. **Verify gate** — NOT RUN. No `usbmon` capture of the mainline driver was taken, so
-   `verify_pcap.py` is not written. The port was built from the pinned v6.6 C source (tables
-   byte-identical to torvalds v6.6) and validated live instead (items 3–4). This is the main
-   outstanding gate.
+1. **Verify gate** — NOT RUN (attempted). No `usbmon` capture of the mainline driver could be
+   taken: under WSL2 the kernel `rtl8xxxu` driver will not bring the card up over usbipd/vhci_hcd —
+   its probe deadlocks on the firmware-download control transfers that the USB/IP forward can't
+   service (our userland libusb driver issues those transfers differently and works). So
+   `verify_pcap.py` is not written; the gate needs a native Linux host with the card physically
+   attached (`scripts/porting/verify_pcap.py` + a chip `verify_pcap.py` modelled on
+   `scripts/chips/rtl8192fu/verify_pcap.py`). The port was built from the pinned v6.6 C source
+   (tables byte-identical to torvalds v6.6) and validated live instead (items 3–4).
 2. **Driver vs C** — EFUSE/identify branches follow the C for values the test card never takes,
    behind their real runtime checks: 8191EU 1T2R (bonding), `hi_pa` high-PA AGC table, external-PA
    PHY table. No card value is hard-coded where the C reads it from the chip. No module-level
