@@ -40,7 +40,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
 | [RTL8192CU](#rtl8192cu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| [RTL8192EU](#rtl8192eu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| [RTL8192EU](#rtl8192eu) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -147,24 +147,20 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 ### RTL8192EU
 
-*Generic RTL8192EU dongle (`0bda:818b`) · 2.4 GHz*
+*TP-Link TL-WN821N v5/v6 (`2357:0107`), TL-WN823N v2/v3 (`2357:0109`) · 2.4 GHz*
 
-> Ported from the mainline Linux `rtl8xxxu` driver (`rtl8xxxu_8192e.c` + the gen2 `rtl8xxxu_core.c`
-> paths), pinned v6.6. Register tables and constants are script-extracted from source.
+> Ported from the mainline Linux `rtl8xxxu` driver (`8192e.c` / `core.c`), Linux v6.19.14.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **ungraded** | 2026-11-20 | No Linux baseline, soak or ACK lab run; RX/TX live-checked but not scored. |
-| RX | ✅ | 2026-11-20 | ~2159 frames/15 s on ch 1 (27 SSIDs); ch 6/11 retune confirmed; RSSI −96..−60 dBm. |
-| TX | ✅ | 2026-11-20 | 30 broadcast Probe Requests drew 51 Probe Responses to our MAC (baseline 0). |
-| Port | ⬜ | | No Linux baseline; `verify_pcap` gate not built (no mainline capture). |
-| ACKs | ⬜ | | `FAKE_MAC = UNIMPLEMENTED`; active monitor not ported. |
-| Stress | ⬜ | | No channel-hopping soak run. |
+| **Grade** | **ungraded** | 2026-11-20 | No Linux RX baseline or soak yet. |
+| RX | ✅ | 2026-11-20 | Ref AP 6.6–8.7 beacons/s (AP sends 9.8/s), 30 s runs, ch 1. |
+| Port | ⬜ | | `verify_pcap` PASS on 6 v6.19.14 captures (2 cards), 99.92% byte-match; no Linux RX baseline. |
+| TX | ✅ | 2026-11-20 | tx_lab: broadcast 100/100, unicast 7 copies (HW retry limit), FakeAP beacons 265/283 heard. |
+| ACKs | ✅ | 2026-11-20 | Auto-ACK spoofed MAC via active monitor (on: ACKed, off: 0/100) & silicon. |
+| Stress | ⬜ | | No soak run. hop_errors: 0 errors, ~80 tunes/s. |
 
-> ACK lab and RX baselines need a second wifit3 card the operator does not have; see
-> `chips/rtl8192eu/RTL8192EU.md` → *Final checklist*.
-
-→ [RTL8192CU.md](../src/wifit3/chips/rtl8192cu/RTL8192CU.md)
+→ [RTL8192EU.md](../src/wifit3/chips/rtl8192eu/RTL8192EU.md)
 
 ### RTL8192FU
 <img align="right" width="140" src="../assets/cardart/card-dlink-an3u-n300.png" alt="D-Link AN3U rev. A1">

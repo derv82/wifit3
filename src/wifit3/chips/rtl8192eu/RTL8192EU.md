@@ -2,36 +2,44 @@
 
 2.4 GHz, Wi-Fi 4, 2T2R (8192EU) or 1T2R (8191EU), USB 2.0. Mainline `rtl8xxxu`, `rtl8192eu_fops`.
 
-**Status: fully ported and hardware-validated (RX + TX).** The whole bring-up is ported, the chip is
-registered (`SUPPORTED_IDS`), and every register sequence runs end-to-end both in an offline
-mock-transport smoke test (`tests/.../test_bringup.py`) and **on a real card**.
+**Status: ported from v6.19.14, RX + TX + active monitor on hardware; ungraded.**
 
-Hardware run (card `0bda:818b` via usbipd → WSL2 Kali, kernel 6.6.123):
-- **Bring-up + RX** (`scripts/.../test_hw.py`): cold-boot (power-on, firmware download, MAC/PHY/RF
-  table init, IQ + LC calibration, monitor start) completes and decodes live traffic — ~2159 frames
-  in 15 s on ch 1 (27 SSIDs); `set_channel` retunes (ch 6: 24 SSIDs, ch 11: 33 SSIDs, distinct AP
-  sets). RSSI reads a plausible −96..−60 dBm.
-- **TX** (`scripts/.../test_tx_probe.py`): injecting 30 broadcast Probe Requests drew 51 Probe
-  Responses addressed to our MAC (baseline 0) — the frames left the radio and APs answered.
+`verify_pcap` passes against 6 mainline v6.19.14 `usbmon` captures (2 cards, 3 each) as of `60c9d6a2`:
+99.92% of driver ops byte-matched; the 7 unmatched ops are mac80211 `configure_filter` re-writes of
+REG_RCR.
 
-Still open: the rigorous `verify_pcap` replay against a mainline `usbmon` capture, an A/B RX baseline
-vs the Linux driver, and active monitor (`FAKE_MAC` is `UNIMPLEMENTED`). Note: our teardown
-`power_off` re-enumerates the USB device, so under usbipd the card must be re-`attach`ed between runs.
+| Commit | Change |
+|---|---|
+| `43e2683f` | `scripts/chips/rtl8192eu/verify_pcap.py`; `_bringup()` split out of `connect()` |
+| `c2d9c27d` | v6.19.14 port. The divergences verify_pcap found, in order: REG_EFUSE_CTRL read before the EFUSE poll; RF init tables through `rtl8xxxu_init_phy_rf`; REG_FPGA0_POWER_SAVE toggle around RF writes; no set_mac/set_linktype in init_device; 20_NOHT SIFS; re-tune on the current channel; `TXDESC_OWN` BIT(7). Plus paths no capture reaches: firmware retry, MAC-table abort, RTL8191E, power_off, EFUSE check order, RX phy_stats. |
+| `60c9d6a2` | active monitor (SPOOFABLE), beacons on MGNT, RX reader in C order |
+
+Hardware (TL-WN821N `2357:0107`, Windows, ref AP on ch 1, 7925 as prober/sniffer):
+- RX: ref AP 6.6–8.7 beacons/s (AP sends 9.8/s), 30 s runs, PR and this port alike.
+- TX (tx_lab): broadcast 100/100 landed, unicast 7 copies (HW retry limit), FakeAP beacons 265/283.
+- ACKs (rx_autoack): spoofed MAC ACKed with active monitor on, 0/100 off; bogus MAC 0/100.
+- hop_errors: 0 errors, ~80 tunes/s; 6 open/close cycles clean.
+
+Still open: an RX baseline vs the Linux driver, the soak, grading.
+Note: our teardown `power_off` re-enumerates the USB device, so under usbipd the card must be
+re-`attach`ed between runs.
 
 ## Linux Driver Source
 
 - Upstream: mainline `rtl8xxxu` (not DKMS), `drivers/net/wireless/realtek/rtl8xxxu/`.
-- Pinned: **v6.6** (`rtl8xxxu_8192e.c`, `rtl8xxxu_core.c`, `rtl8xxxu.h`, `rtl8xxxu_regs.h`). The register
-  tables in `tables.py` were extracted from a WSL 6.6 `rtl8xxxu_8192e.c` and verified **byte-identical**
-  to torvalds `v6.6`.
-- `C` line references in the port cite v6.6.
+- Pinned: **v6.19.14** (`driver_sources/rtl8xxxu-source-v6.19.14/`: `8192e.c`, `core.c`, `rtl8xxxu.h`,
+  `regs.h`). The port was first written against v6.6; `tables.py` and `constants.py` are still
+  generated from v6.6 and are identical to v6.19.14 for everything the port uses.
+- `C` line references in the port cite v6.19.14.
+- v6.19.14 differences the port follows: `init_device` no longer programs REG_MACID / MSR (only
+  `add_interface` does, which a monitor vif never calls).
 
 ## VID:PIDs (`rtl8192eu_fops`, core.c device table)
 
 Tested (outside `CONFIG_RTL8XXXU_UNTESTED`): `0bda:818b`, `2357:0108` (TP-Link TL-WN822N v4),
 `2001:3319` (D-Link DWA-131 rev E1), `2357:0109`. Untested-guarded: `2357:0107`, `2019:ab33`, `0bda:818c`.
 
-## fops map (8192e.c:1737)
+## fops map (8192e.c:1721)
 
 | fops member | Function | Where | Ported |
 | --- | --- | --- | --- |
@@ -75,11 +83,17 @@ Data constants in the fops are recorded on `Rtl8xxxuFileops`: `writeN_block_size
 
 ### Non-obvious in the port
 
-- **txdw0 (TX)** is a `u8` (rtl8xxxu.h); RTL8192E assigns `OWN | FIRST | LAST`, but `OWN` is `BIT(31)`
-  and truncates off the byte on USB, leaving `FIRST | LAST = 0x0C`. RTL8192E (unlike RTL8192F / RTL8710B)
-  does **not** invert the TX checksum (core.c:5554, :5628). Both are the opposite of the RTL8192FU port.
-- **`TXDESC_OWN`** has two `#define`s (`BIT(31)` little-endian word, `BIT(7)` big-endian byte); the
-  extractor keeps the first (`BIT(31)`), matching the `u8` truncation above.
+- **txdw0 (TX)** is a `u8` (rtl8xxxu.h:417); RTL8192E assigns `OWN | FIRST | LAST = 0x8C`
+  (core.c:5470). RTL8192E (unlike RTL8192F / RTL8710B) does **not** invert the TX checksum. Both are
+  the opposite of the RTL8192FU port.
+- **`TXDESC_OWN`** is `BIT(7)`. rtl8xxxu.h:468-472 also has a dead `#if 0` `BIT(31)`; the constants
+  extractor skips `#if 0` blocks.
+- **`rtl_chip`**: 8192e.c identifies RTL8191E (1T2R bonding) or RTL8192E, and core.c branches on it at
+  11 sites; both sides are ported. Only RTL8192E is tested on hardware.
+- **Beacons** go on the MGNT queue, not TXDESC_QUEUE_BEACON as in core.c:5018: an injected frame on
+  the beacon queue never airs (0/283 heard).
+- **RX reader** starts where `rtl8xxxu_start` submits its RX URBs and pauses where `rtl8xxxu_stop`
+  kills them.
 - RX signal uses the 8723au phystats layout with `rtl8192e_cck_rssi` for CCK; OFDM is
   `(cck_sig_qual_ofdm_pwdb_all >> 1) - 110`. CFO tracking needs an associated STA vif and is omitted.
 - C2H: 8192eu has no Bluetooth, so BT_INFO is unreachable; RA_REPORT only feeds cosmetic stats, so
@@ -87,19 +101,16 @@ Data constants in the fops are recorded on `Rtl8xxxuFileops`: `writeN_block_size
 
 ## What is not ported (deliberately)
 
-- **Active monitor** (`enter_active_monitor`): `FAKE_MAC = UNIMPLEMENTED`. Forging a MAC for hardware
-  ACKs needs careful `REG_MACID` programming best added with the card in hand.
 - **Associated-station paths**: `update_rate_mask`, `report_connect`, `report_rssi` are no-ops, and
   `rtl8xxxu_track_cfo` only ports its unassociated branch. wifit3 never associates.
 - **40/80 MHz tuning**: only the 20 MHz `config_channel` path (wifit3 tunes 20 MHz).
 
-## Hardware verification (METHODOLOGY.md Steps 1 & 3), to be done by the user
+## Hardware verification
 
-1. On Linux with the card: `sudo python src/wifit3/scripts/capture.py` to record the mainline driver's
-   `usbmon` cold-boot + monitor + channel sweep + injection.
-2. Add `scripts/chips/rtl8192eu/verify_pcap.py` and replay the port against the capture.
-3. `scripts/chips/rtl8192eu/test_hw.py`: RX smoke test, then RX baseline vs the Linux driver.
-4. Run FINAL-CHECKLIST.md before registering the chip as supported.
+- Captures: Kali, kernel 6.19.14, mainline `rtl8xxxu`, `capture.py`. TP-Link TL-WN823N (`2357:0109`,
+  stock module) and TL-WN821N (`2357:0107`, same source rebuilt with `CONFIG_RTL8XXXU_UNTESTED`), 3 each.
+- `uv run python scripts/porting/verify_pcap.py rtl8192eu <capture>`: all 6 PASS (see Status).
+- Still to do: RX baseline vs the Linux driver, soak, FINAL-CHECKLIST.md.
 
 ## Firmware
 
@@ -108,33 +119,25 @@ sha256 `b15bc955fba2fc3abc093affe62c9f7284a0b84d4f13f8ce55366488dc9aad8b`. See `
 
 ## Final checklist
 
-Per `docs/porting/FINAL-CHECKLIST.md`. Hardware results are from a generic RTL8192EU dongle
-(`0bda:818b`) via usbipd → WSL2 Kali (kernel 6.6.123), 2026-11-20, against the operator's own
-network only.
+Per `docs/porting/FINAL-CHECKLIST.md`. Hardware results: TL-WN821N (`2357:0107`) on Windows, MT7925AU
+as prober/sniffer, 2026-11-20, against the operator's own network only.
 
-1. **Verify gate** — NOT RUN (attempted). No `usbmon` capture of the mainline driver could be
-   taken: under WSL2 the kernel `rtl8xxxu` driver will not bring the card up over usbipd/vhci_hcd —
-   its probe deadlocks on the firmware-download control transfers that the USB/IP forward can't
-   service (our userland libusb driver issues those transfers differently and works). So
-   `verify_pcap.py` is not written; the gate needs a native Linux host with the card physically
-   attached (`scripts/porting/verify_pcap.py` + a chip `verify_pcap.py` modelled on
-   `scripts/chips/rtl8192fu/verify_pcap.py`). The port was built from the pinned v6.6 C source
-   (tables byte-identical to torvalds v6.6) and validated live instead (items 3–4).
+1. **verify_pcap** — PASS on 6 v6.19.14 captures (2 cards), 99.92% byte-matched, 7 REG_RCR writes
+   waived as mac80211 `configure_filter`. The captures were taken on a native Linux host; WSL2's
+   usbipd forward deadlocks the kernel driver's firmware download.
 2. **Driver vs C** — EFUSE/identify branches follow the C for values the test card never takes,
-   behind their real runtime checks: 8191EU 1T2R (bonding), `hi_pa` high-PA AGC table, external-PA
-   PHY table. No card value is hard-coded where the C reads it from the chip. No module-level
-   mutable state (all per-`priv`). RX delivers frames without the FCS. `FAKE_MAC = UNIMPLEMENTED`
-   (active monitor not ported). Offline unit tests cover the TX/RX descriptors, EFUSE decode,
-   firmware header and an end-to-end mock-transport bring-up.
-3. **Hardware** — bring-up: one cold plug plus several reconnects succeeded on 1 card (each is a
-   cold bring-up; `power_off` re-enumerates the device). ACK lab (`scripts/ack/*`, n=100/phase):
-   NOT RUN — requires a second wifit3 card as prober/control, which the operator does not have.
+   behind their real runtime checks: 8191EU 1T2R (bonding, `rtl_chip`), `hi_pa` high-PA AGC table,
+   external-PA PHY table. Bring-up failure paths follow the C: firmware download retried up to 6
+   times, MAC table write failure aborts, `power_off` carries on after a MAC-disable timeout. No card value is hard-coded where the C reads it from the chip. No module-level
+   mutable state (all per-`priv`). RX delivers frames without the FCS. `FAKE_MAC = SPOOFABLE`.
+   Offline unit tests cover the TX/RX descriptors, EFUSE decode, firmware header, active monitor,
+   the failure paths and an end-to-end mock-transport bring-up.
+3. **Hardware** — bring-up: repeated cold bring-ups on 1 card, 6 open/close cycles clean. ACK lab
+   (`scripts/ack/rx_autoack.py`, 7925 prober, n=100/phase, 1 run): spoofed MAC ACKed with active
+   monitor on, 0/100 off; bogus MAC 0/100. tx_lab: see Status.
 4. **Grade** — Linux-vs-wifit3 RX baselines, the channel-hopping soak, and the TX-attack grade are
-   NOT RUN (no second card; no baseline sweep taken). Live checks instead: RX ~2159 frames/15 s on
-   ch 1 (27 SSIDs), ch 6/11 retune confirmed (distinct AP sets), RSSI −96..−60 dBm; TX 30 broadcast
-   Probe Requests drew 51 Probe Responses addressed to our MAC (baseline 0). No bugs observed.
-5. **Docs** — chip doc complete; this section recorded. `docs/SUPPORTED-HARDWARE.md` matrix row and
-   detail section and the `README.md` supported-hardware row added.
+   NOT RUN. Live checks: see Status.
+5. **Docs** — chip doc, `docs/SUPPORTED-HARDWARE.md` row and section, `README.md` row.
 6. **Credits & licensing** — the substantive `rtl8xxxu_8192e.c` contributors are added to
    `docs/CREDITS.md`. Firmware `rtl8192eu_nic.bin` is byte-identical to the installed
    linux-firmware copy; provenance in `docs/FIRMWARE.md`.
@@ -143,6 +146,8 @@ network only.
 
 ## Scripts
 
+- `scripts/chips/rtl8192eu/verify_pcap.py` — replays the port against a mainline `usbmon` capture
+  (run through `scripts/porting/verify_pcap.py rtl8192eu`).
 - `scripts/chips/rtl8192eu/extract_tables.py` — regenerates `tables.py` from `rtl8xxxu_8192e.c`.
 - `scripts/chips/rtl8192eu/extract_constants.py --source <dir>` — regenerates `constants.py` from the
   referenced `rtl8xxxu_regs.h` / `rtl8xxxu.h` `#define`s.
