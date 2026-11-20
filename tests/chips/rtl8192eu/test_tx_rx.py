@@ -42,6 +42,13 @@ def test_tx_desc_broadcast_and_mgmt_queue():
     assert (_get32(tx_desc, 4) >> C.TXDESC_QUEUE_SHIFT) == C.TXDESC_QUEUE_MGNT
 
 
+def test_tx_beacon_goes_on_the_mgmt_queue():
+    priv = SimpleNamespace(pipe_out={C.TXDESC_QUEUE_MGNT: 0x05})
+    endpoint, urb = tx.rtl8xxxu_tx(priv, _mac_hdr(0x80, b"\xff" * 6))
+    assert endpoint == 0x05
+    assert (_get32(urb[:_TXDESC], 4) >> C.TXDESC_QUEUE_SHIFT) == C.TXDESC_QUEUE_MGNT
+
+
 def test_tx_csum_not_inverted_on_8192e():
     priv = SimpleNamespace(pipe_out={C.TXDESC_QUEUE_BE: 0x03})
     frame = _mac_hdr(0x08, b"\x02\x00\x00\x00\x00\x01")

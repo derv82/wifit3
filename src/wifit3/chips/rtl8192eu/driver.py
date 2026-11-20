@@ -14,10 +14,14 @@ from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.models.device_id import DeviceID
 
 from .core import (
+    Nl80211Iftype,
     Rtl8xxxuPriv,
     rtl8xxxu_config,
     rtl8xxxu_deinit_led,
     rtl8xxxu_probe,
+    rtl8xxxu_set_bssid,
+    rtl8xxxu_set_linktype,
+    rtl8xxxu_set_mac,
     rtl8xxxu_stop,
     rtl8xxxu_watchdog_callback,
     start_monitor_interface,
@@ -36,7 +40,7 @@ WATCHDOG_SECONDS = 2.0  # core.c schedule_delayed_work(&priv->ra_watchdog, 2 * H
 class RTL8192EUDriver(Driver):
     SUPPORTED_CHANNELS = list(Driver.CHANNELS_2G)   # 8192eu is 2.4 GHz only
     CONFLICTING_LINUX_MODULES = ["rtl8xxxu"]
-    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active monitor not yet ported/tested
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device, id_entry: DeviceID) -> None:
         super().__init__()
@@ -107,9 +111,8 @@ class RTL8192EUDriver(Driver):
         self._rx_reader = RxReaderThread(
             loop, self._read_once, self._dispatch, name="rtl8192eu-rx", on_fatal=self._on_rx_fatal,
         )
-        await loop.run_in_executor(None, start_monitor_interface, self.priv)
+        await loop.run_in_executor(None, start_monitor_interface, self.priv, self._rx_reader.start)
         self._started = True
-        self._rx_reader.start()
         self._watchdog_task = loop.create_task(self._watchdog())
         self.current_channel = 1
 
@@ -120,7 +123,8 @@ class RTL8192EUDriver(Driver):
             async with self._io_lock:
                 await loop.run_in_executor(None, rtl8xxxu_watchdog_callback, self.priv)
 
-    async def _stop_tasks(self) -> None:
+    async def _cancel_work(self) -> None:
+        """cancel_work_sync(c2hcmd_work) + cancel_delayed_work_sync(ra_watchdog)."""
         for task in (self._watchdog_task, self._c2hcmd_task):
             if task is None:
                 continue
@@ -131,6 +135,9 @@ class RTL8192EUDriver(Driver):
                 pass
         self._watchdog_task = None
         self._c2hcmd_task = None
+
+    async def _stop_tasks(self) -> None:
+        await self._cancel_work()
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None
@@ -197,20 +204,51 @@ class RTL8192EUDriver(Driver):
         """No-op, matching ``_enable_rx_acks``."""
         return
 
+    def _program_port0(self, linktype: Nl80211Iftype, mac: bytes, bssid: bytes) -> None:
+        self.priv.vif_type = linktype
+        self.priv.vif_addr = mac
+        rtl8xxxu_set_linktype(self.priv, linktype, 0)
+        rtl8xxxu_set_mac(self.priv, 0)
+        rtl8xxxu_set_bssid(self.priv, bssid, 0)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: bytes | None = None) -> bytes:
+        """Port 0 as STATION (or AP when ``bssid`` is ``mac``): set_linktype + set_mac + set_bssid."""
+        if len(mac) != 6 or (bssid is not None and len(bssid) != 6):
+            raise ValueError("RTL8192EU active-monitor addresses must be six bytes")
+        bssid = bytes(bssid or mac)
+        linktype = Nl80211Iftype.NL80211_IFTYPE_AP if bytes(mac) == bssid else Nl80211Iftype.NL80211_IFTYPE_STATION
+        async with self._io_lock:
+            await asyncio.get_running_loop().run_in_executor(None, self._program_port0, linktype, bytes(mac), bssid)
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        if not self._started:
+            return
+        async with self._io_lock:
+            await asyncio.get_running_loop().run_in_executor(
+                None, self._program_port0, Nl80211Iftype.NL80211_IFTYPE_UNSPECIFIED, self.priv.mac_addr, bytes(6),
+            )
+        self.priv.vif_type = None
+
     def _disconnect(self) -> None:
         """rtl8xxxu_disconnect order: deinit_led, stop, power_off."""
         rtl8xxxu_deinit_led(self.priv)
-        rtl8xxxu_stop(self.priv)
+        rtl8xxxu_stop(self.priv, self._pause_rx_reader)
         self.priv.fops.power_off(self.priv)
 
+    def _pause_rx_reader(self) -> None:
+        if self._rx_reader is not None:
+            self._rx_reader.pause()
+
     async def close(self) -> None:
-        await self._stop_tasks()
+        await self._cancel_work()
         try:
             if self._started and self.transport.interface_number is not None and not self._device_gone:
                 async with self._io_lock:
                     await asyncio.get_running_loop().run_in_executor(None, self._disconnect)
         finally:
             try:
+                await self._stop_tasks()
                 self.transport.release()
             finally:
                 self._started = False

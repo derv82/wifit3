@@ -69,7 +69,7 @@ def test_bringup_runs_end_to_end(monkeypatch):
 
     fw = files("wifit3.chips.rtl8192eu").joinpath("assets/rtl8192eu_nic.bin").read_bytes()
     rtl8xxxu_probe(priv, fw)
-    start_monitor_interface(priv)
+    start_monitor_interface(priv, lambda: None)
 
     assert priv.mac_addr == bytes.fromhex("0011223344ee")
     assert priv.fw_size == len(fw) - 32

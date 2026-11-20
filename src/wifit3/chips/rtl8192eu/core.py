@@ -433,32 +433,40 @@ def rtl8723a_phy_lc_calibrate(priv: Rtl8xxxuPriv) -> None:
         rtl8xxxu_write8(priv, C.REG_TXPAUSE, 0x00)
 
 
-def rtl8xxxu_set_mac(priv: Rtl8xxxuPriv) -> None:
-    """core.c:3558. Program priv.mac_addr into REG_MACID."""
+def rtl8xxxu_set_mac(priv: Rtl8xxxuPriv, port_num: int) -> None:
+    """core.c:3558. Program the vif address (priv.vif_addr) into the port's MACID."""
+    reg = C.REG_MACID if port_num == 0 else C.REG_MACID1
     for i in range(6):
-        rtl8xxxu_write8(priv, C.REG_MACID + i, priv.mac_addr[i])
+        rtl8xxxu_write8(priv, reg + i, priv.vif_addr[i])
 
 
-def rtl8xxxu_set_linktype(priv: Rtl8xxxuPriv, linktype: Nl80211Iftype) -> None:
-    """core.c:1589. Set the MSR link type."""
-    val8 = rtl8xxxu_read8(priv, C.REG_MSR) & ~C.MSR_LINKTYPE_MASK
+def rtl8xxxu_set_linktype(priv: Rtl8xxxuPriv, linktype: Nl80211Iftype, port_num: int) -> None:
+    """core.c:1589. Set the port's MSR link type."""
     if linktype == Nl80211Iftype.NL80211_IFTYPE_UNSPECIFIED:
-        val8 |= C.MSR_LINKTYPE_NONE
+        link = C.MSR_LINKTYPE_NONE
     elif linktype == Nl80211Iftype.NL80211_IFTYPE_ADHOC:
-        val8 |= C.MSR_LINKTYPE_ADHOC
+        link = C.MSR_LINKTYPE_ADHOC
     elif linktype == Nl80211Iftype.NL80211_IFTYPE_STATION:
-        val8 |= C.MSR_LINKTYPE_STATION
+        link = C.MSR_LINKTYPE_STATION
     elif linktype == Nl80211Iftype.NL80211_IFTYPE_AP:
-        val8 |= C.MSR_LINKTYPE_AP
+        link = C.MSR_LINKTYPE_AP
+    else:
+        return
+
+    if port_num == 0:
+        val8 = (rtl8xxxu_read8(priv, C.REG_MSR) & 0x0c) | link
+    elif port_num == 1:
+        val8 = (rtl8xxxu_read8(priv, C.REG_MSR) & 0x03) | link << 2
     else:
         return
     rtl8xxxu_write8(priv, C.REG_MSR, val8)
 
 
-def rtl8xxxu_set_bssid(priv: Rtl8xxxuPriv, bssid: bytes) -> None:
-    """core.c:3581. Program bssid into REG_BSSID."""
+def rtl8xxxu_set_bssid(priv: Rtl8xxxuPriv, bssid: bytes, port_num: int) -> None:
+    """core.c:3581. Program bssid into the port's BSSID."""
+    reg = C.REG_BSSID if port_num == 0 else C.REG_BSSID1
     for i in range(6):
-        rtl8xxxu_write8(priv, C.REG_BSSID + i, bssid[i])
+        rtl8xxxu_write8(priv, reg + i, bssid[i])
 
 
 def rtl8xxxu_set_spec_sifs(priv: Rtl8xxxuPriv, cck: int, ofdm: int) -> None:
@@ -1170,19 +1178,21 @@ def rtl8xxxu_configure_filter(priv: Rtl8xxxuPriv, total_flags: Ieee80211FilterFl
     priv.regrcr = rcr
 
 
-def rtl8xxxu_start(priv: Rtl8xxxuPriv) -> None:
-    """core.c:7361 register side; the caller starts the RX reader and the 2 s watchdog."""
+def rtl8xxxu_start(priv: Rtl8xxxuPriv, submit_rx_urbs: Callable[[], None]) -> None:
+    """core.c:7361. submit_rx_urbs starts RX where the C submits its RX URBs; the caller starts the watchdog."""
     priv.fops.enable_rf(priv)
+    submit_rx_urbs()
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP2, 0xFFFF)
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP0, 0xFFFF)
     rtl8xxxu_write32_mask(priv, C.REG_OFDM0_XA_AGC_CORE1, C.OFDM0_X_AGC_CORE1_IGI_MASK, 0x1E)
 
 
-def rtl8xxxu_stop(priv: Rtl8xxxuPriv) -> None:
-    """core.c:7450 register side; the caller stops the RX reader and the watchdog."""
+def rtl8xxxu_stop(priv: Rtl8xxxuPriv, kill_rx_urbs: Callable[[], None]) -> None:
+    """core.c:7450. kill_rx_urbs stops RX reads where the C kills its RX URBs."""
     rtl8xxxu_write8(priv, C.REG_TXPAUSE, 0xFF)
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP0, 0x0000)
     rtl8xxxu_write16(priv, C.REG_RXFLTMAP2, 0x0000)
+    kill_rx_urbs()
     rtl8xxxu_write8(priv, C.REG_TXPAUSE, 0xFF)
     priv.fops.disable_rf(priv)
 
@@ -1247,8 +1257,8 @@ def rtl8xxxu_probe(priv: Rtl8xxxuPriv, fw_data: bytes,
     rtl8xxxu_init_led(priv)
 
 
-def start_monitor_interface(priv: Rtl8xxxuPriv) -> None:
+def start_monitor_interface(priv: Rtl8xxxuPriv, submit_rx_urbs: Callable[[], None]) -> None:
     """What mac80211 calls bringing up a monitor interface: start, configure_filter, config(ch 1)."""
-    rtl8xxxu_start(priv)
+    rtl8xxxu_start(priv, submit_rx_urbs)
     rtl8xxxu_configure_filter(priv, MONITOR_FILTER_FLAGS)
     rtl8xxxu_config(priv, 1)
