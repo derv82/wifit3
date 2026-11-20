@@ -106,8 +106,44 @@ Data constants in the fops are recorded on `Rtl8xxxuFileops`: `writeN_block_size
 `assets/rtl8192eu_nic.bin` — linux-firmware `rtlwifi/rtl8192eu_nic.bin`, 32286 B,
 sha256 `b15bc955fba2fc3abc093affe62c9f7284a0b84d4f13f8ce55366488dc9aad8b`. See `docs/FIRMWARE.md`.
 
+## Final checklist
+
+Per `docs/porting/FINAL-CHECKLIST.md`. Hardware results are from a generic RTL8192EU dongle
+(`0bda:818b`) via usbipd → WSL2 Kali (kernel 6.6.123), 2026-11-20, against the operator's own
+network only.
+
+1. **Verify gate** — NOT RUN. No `usbmon` capture of the mainline driver was taken, so
+   `verify_pcap.py` is not written. The port was built from the pinned v6.6 C source (tables
+   byte-identical to torvalds v6.6) and validated live instead (items 3–4). This is the main
+   outstanding gate.
+2. **Driver vs C** — EFUSE/identify branches follow the C for values the test card never takes,
+   behind their real runtime checks: 8191EU 1T2R (bonding), `hi_pa` high-PA AGC table, external-PA
+   PHY table. No card value is hard-coded where the C reads it from the chip. No module-level
+   mutable state (all per-`priv`). RX delivers frames without the FCS. `FAKE_MAC = UNIMPLEMENTED`
+   (active monitor not ported). Offline unit tests cover the TX/RX descriptors, EFUSE decode,
+   firmware header and an end-to-end mock-transport bring-up.
+3. **Hardware** — bring-up: one cold plug plus several reconnects succeeded on 1 card (each is a
+   cold bring-up; `power_off` re-enumerates the device). ACK lab (`scripts/ack/*`, n=100/phase):
+   NOT RUN — requires a second wifit3 card as prober/control, which the operator does not have.
+4. **Grade** — Linux-vs-wifit3 RX baselines, the channel-hopping soak, and the TX-attack grade are
+   NOT RUN (no second card; no baseline sweep taken). Live checks instead: RX ~2159 frames/15 s on
+   ch 1 (27 SSIDs), ch 6/11 retune confirmed (distinct AP sets), RSSI −96..−60 dBm; TX 30 broadcast
+   Probe Requests drew 51 Probe Responses addressed to our MAC (baseline 0). No bugs observed.
+5. **Docs** — chip doc complete; this section recorded. `docs/SUPPORTED-HARDWARE.md` matrix row and
+   detail section and the `README.md` supported-hardware row added.
+6. **Credits & licensing** — the substantive `rtl8xxxu_8192e.c` contributors are added to
+   `docs/CREDITS.md`. Firmware `rtl8192eu_nic.bin` is byte-identical to the installed
+   linux-firmware copy; provenance in `docs/FIRMWARE.md`.
+7. **Ship** — `uv run pytest` green, `uv run ruff check src/` clean. No real BSSIDs, MACs or SSIDs
+   in code, tests, docs or commit messages.
+
 ## Scripts
 
 - `scripts/chips/rtl8192eu/extract_tables.py` — regenerates `tables.py` from `rtl8xxxu_8192e.c`.
 - `scripts/chips/rtl8192eu/extract_constants.py --source <dir>` — regenerates `constants.py` from the
   referenced `rtl8xxxu_regs.h` / `rtl8xxxu.h` `#define`s.
+- `scripts/chips/rtl8192eu/test_hw.py` — RX-only cold-boot smoke test on one channel.
+- `scripts/chips/rtl8192eu/test_tx_probe.py` — TX test: inject broadcast Probe Requests, count the
+  Probe Responses addressed to our MAC (transmits; run only on a network you control).
+- `scripts/chips/rtl8192eu/demo_scan.py` — drives the real wifit3 TUI headlessly (Textual Pilot) to
+  scan live APs and save a screenshot.

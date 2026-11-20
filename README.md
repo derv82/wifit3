@@ -77,6 +77,7 @@
 | Realtek RTL8188FTV | 2.4 GHz | Generic unbranded dongles |
 | Realtek RTL8192CU | 2.4 GHz | TP-Link TL-WN823N v1 |
 | Realtek RTL8192FU | 2.4 GHz | D-Link AN3U rev. A1 |
+| Realtek RTL8192EU | 2.4 GHz | TP-Link TL-WN822N v4, D-Link DWA-131 rev. E1 |
 | Ralink RT2570 | 2.4 GHz | Buffalo Nintendo Wi-Fi USB Controller |
 | Ralink RT3070 | 2.4 GHz | ALFA AWUS036**NH**, TP-Link TL-WN7200ND |
 | Ralink RT5370 | 2.4 GHz | LOTEKOO 150 Mbps |

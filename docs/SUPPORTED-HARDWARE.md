@@ -40,6 +40,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
 | [RTL8192CU](#rtl8192cu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| [RTL8192EU](#rtl8192eu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -143,6 +144,25 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Handshake / PMKID / WEP / WPS | ⬜ | | |
 | ACKs | ⬜ | | Active monitor (MSR infra + REG_MACID) ported; untried. |
 | Stress | ⬜ | | |
+
+### RTL8192EU
+
+*Generic RTL8192EU dongle (`0bda:818b`) · 2.4 GHz*
+
+> Ported from the mainline Linux `rtl8xxxu` driver (`rtl8xxxu_8192e.c` + the gen2 `rtl8xxxu_core.c`
+> paths), pinned v6.6. Register tables and constants are script-extracted from source.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| **Grade** | **ungraded** | 2026-11-20 | No Linux baseline, soak or ACK lab run; RX/TX live-checked but not scored. |
+| RX | ✅ | 2026-11-20 | ~2159 frames/15 s on ch 1 (27 SSIDs); ch 6/11 retune confirmed; RSSI −96..−60 dBm. |
+| TX | ✅ | 2026-11-20 | 30 broadcast Probe Requests drew 51 Probe Responses to our MAC (baseline 0). |
+| Port | ⬜ | | No Linux baseline; `verify_pcap` gate not built (no mainline capture). |
+| ACKs | ⬜ | | `FAKE_MAC = UNIMPLEMENTED`; active monitor not ported. |
+| Stress | ⬜ | | No channel-hopping soak run. |
+
+> ACK lab and RX baselines need a second wifit3 card the operator does not have; see
+> `chips/rtl8192eu/RTL8192EU.md` → *Final checklist*.
 
 → [RTL8192CU.md](../src/wifit3/chips/rtl8192cu/RTL8192CU.md)
 
