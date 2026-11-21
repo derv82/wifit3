@@ -22,7 +22,7 @@ from wifit3.models.device_id import DeviceID
 from wifit3.chips import (
     mt7601u, mt76x0u, mt76x2u, mt7921au, mt7925au, rt2500usb, rt3572, rt5572, rtl8187,
     rtl8188ftv_dkms, rtl8812au_dkms, rtl8814au_dkms, rtl8821au_dkms, rtl8821cu_dkms, rtl8822bu_dkms, rtl8822cu,
-    rtl8192cu, rtl8192fu, rtl8922au,
+    rtl8192cu, rtl8192eu, rtl8192fu, rtl8922au,
 )
 from wifit3.chips.ar9271_v2 import constants as ar9271_constants
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
@@ -63,6 +63,14 @@ from wifit3.chips.rtl8192cu.driver import RTL8192CUDriver
 from wifit3.chips.rtl8192cu.usb import UsbEndpointDescriptor as RTL8192CUEndpoint
 from wifit3.chips.rtl8192cu.usb import _rtl_usb_init as rtl8192cu_usb_init
 from wifit3.chips.rtl8192cu.wifi import set_hal_start as rtl8192cu_set_hal_start
+from wifit3.chips.rtl8192eu import constants as RTL8192EU_CONSTANTS
+from wifit3.chips.rtl8192eu.core import (
+    rtl8xxxu_config_endpoints_no_sie as rtl8192eu_config_endpoints_no_sie,
+)
+from wifit3.chips.rtl8192eu.core import (
+    rtl8xxxu_init_queue_priority as rtl8192eu_init_queue_priority,
+)
+from wifit3.chips.rtl8192eu.driver import RTL8192EUDriver
 from wifit3.chips.rtl8192fu import constants as RTL8192FU_CONSTANTS
 from wifit3.chips.rtl8192fu.core import rtl8xxxu_config_endpoints_no_sie, rtl8xxxu_init_queue_priority
 from wifit3.chips.rtl8192fu.driver import RTL8192FUDriver
@@ -234,6 +242,16 @@ def build_rtl8192fu(dev: RecordingUsbDevice) -> Driver:
     return driver
 
 
+def build_rtl8192eu(dev: RecordingUsbDevice) -> Driver:
+    driver = RTL8192EUDriver.from_usb_device(dev, first_id(rtl8192eu.SUPPORTED_IDS))
+    driver.priv.out_ep = [0x05, 0x06, 0x08, 0x09, 0x0C, 0x0D]
+    driver.priv.nr_out_eps = 6
+    rtl8192eu_config_endpoints_no_sie(driver.priv)
+    rtl8192eu_init_queue_priority(driver.priv)
+    driver._started = True
+    return driver
+
+
 def build_rtl8812au_dkms(dev: RecordingUsbDevice) -> Driver:
     driver = Rtl8812auDkmsDriver.from_usb_device(dev, first_id(rtl8812au_dkms.SUPPORTED_IDS))
     driver._channel = 1
@@ -309,6 +327,8 @@ DRIVER_CASES: dict[str, DriverCase] = {
     "rtl8192cu": DriverCase(build_rtl8192cu, 32, 32, hw_seq_bit=None, no_ack_bit=REALTEK_BMC),
     "rtl8192fu": DriverCase(build_rtl8192fu, 40, 40, hw_seq_bit=None,
                              no_ack_bit=DescriptorBit(0, RTL8192FU_CONSTANTS.TXDESC_BROADMULTICAST << 24)),
+    "rtl8192eu": DriverCase(build_rtl8192eu, 40, 40, hw_seq_bit=None,
+                             no_ack_bit=DescriptorBit(0, RTL8192EU_CONSTANTS.TXDESC_BROADMULTICAST << 24)),
     "rtl8812au_dkms": DriverCase(build_rtl8812au_dkms, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),
     "rtl8814au_dkms": DriverCase(build_rtl8814au_dkms, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),
     "rtl8821au_dkms": DriverCase(build_rtl8821au_dkms, 40, 40, REALTEK_W8_EN_HWSEQ, REALTEK_BMC),

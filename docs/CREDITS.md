@@ -54,14 +54,14 @@ trees.
 - **Ivo van Doorn** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Gertjan van Wingerde** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Helmut Schaa** — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
-- **Jes Sorensen** — RTL8188EUS, RTL8192FU
+- **Jes Sorensen** — RTL8188EUS, RTL8192FU, RTL8192EU
 - **Sujith Manoharan** — AR9271
-- **Bitterblue Smith** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU, RTL8192CU
+- **Bitterblue Smith** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU, RTL8192CU, RTL8192EU
 - **Sean Wang** ([@moore-bros](https://github.com/moore-bros)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Ryder Lee** ([@ryderlee1110](https://github.com/ryderlee1110)) — MT7610U, MT7612U, MT7921AU, MT7925AU
 - **Yan-Hsuan Chuang** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Ping-Ke Shih** — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8188EUS, RTL8192FU, RTL8192CU
-- **Martin Kaistra** ([@djfun](https://github.com/djfun)) — RTL8188EUS, RTL8192FU
+- **Martin Kaistra** ([@djfun](https://github.com/djfun)) — RTL8188EUS, RTL8192FU, RTL8192EU
 - **Gabor Juhos** ([@juhosg](https://github.com/juhosg)) — RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271
 - **John W. Linville** ([@linvjw](https://github.com/linvjw)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271, RTL8187, RTL8192CU
 - **Luis R. Rodriguez** ([@mcgrof](https://github.com/mcgrof)) — AR9271
@@ -99,6 +99,8 @@ trees.
 - **Bruno Randolf** — RTL8188EUS, RTL8192FU
 - **Kim Wooseok** — RTL8188EUS, RTL8192FU
 - **Zenm Chen** ([@a5a5aa555oo](https://github.com/a5a5aa555oo)) — RTL8192FU
+- **Jun ASAKA** — RTL8192EU
+- **Pascal Terjan** ([@pterjan](https://github.com/pterjan)) — RTL8192EU
 - **Miaoqing Pan** ([@miaoqing-pan](https://github.com/miaoqing-pan)) — AR9271
 - **Ben Greear** ([@greearb](https://github.com/greearb)) — MT7921AU, MT7925AU, AR9271
 - **Jes Sørensen** — RTL8188EUS (the `rtl8xxxu` driver)
