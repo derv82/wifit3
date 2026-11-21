@@ -36,11 +36,11 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
 | [RTL8821CU](#rtl8821cu) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
+| [RTL8192EU](#rtl8192eu) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ⚠️ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | D |
 | [RTL8192CU](#rtl8192cu) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| [RTL8192EU](#rtl8192eu) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 
 ## Atheros Chipset
 ### AR9271
@@ -154,12 +154,16 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **ungraded** | 2026-11-20 | No Linux RX baseline or soak yet. |
-| RX | ✅ | 2026-11-20 | Ref AP 6.6–8.7 beacons/s (AP sends 9.8/s), 30 s runs, ch 1. |
-| Port | ⬜ | | `verify_pcap` PASS on 6 v6.19.14 captures (2 cards), 99.92% byte-match; no Linux RX baseline. |
+| **Grade** | **87% (B)** | 2026-11-20 | Kernel-parity RX and the full 2.4 GHz attack suite; WEP ~125 IVs/s. |
+| RX | ✅ | 2026-11-20 | Ref AP 6.4–7.3 vs 7.2–7.3/s (89–100%); breadth 68–73, same as Linux; 11/11 channels. |
+| Port | ✅ | 2026-11-20 | Matches rtl8xxxu v6.19.14 (replugged A/B/A/B); RSSI median ≤0.6 dB; `verify_pcap` 6/6, 99.92%. |
 | TX | ✅ | 2026-11-20 | tx_lab: broadcast 100/100, unicast 7 copies (HW retry limit), FakeAP beacons 265/283 heard. |
+| Handshake | ✅ | 2026-11-20 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-11-20 | Active extract (M1). |
+| WEP | ✅ | 2026-11-20 | ARP replay ~125 IVs/s; ChopChop. |
+| WPS | ✅ | 2026-11-20 | PIN (PixieDust); PBC untested. |
 | ACKs | ✅ | 2026-11-20 | Auto-ACK spoofed MAC via active monitor (on: ACKed, off: 0/100) & silicon. |
-| Stress | ⬜ | | No soak run. hop_errors: 0 errors, ~80 tunes/s. |
+| Stress | ✅ | 2026-11-20 | 30-min 14-ch soak, flat (trend 1.16). |
 
 → [RTL8192EU.md](../src/wifit3/chips/rtl8192eu/RTL8192EU.md)
 

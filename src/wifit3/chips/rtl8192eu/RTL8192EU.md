@@ -2,7 +2,7 @@
 
 2.4 GHz, Wi-Fi 4, 2T2R (8192EU) or 1T2R (8191EU), USB 2.0. Mainline `rtl8xxxu`, `rtl8192eu_fops`.
 
-**Status: ported from v6.19.14, RX + TX + active monitor on hardware; ungraded.**
+**Status: ported from v6.19.14; graded 87% (B), see `docs/SUPPORTED-HARDWARE.md`.**
 
 `verify_pcap` passes against 6 mainline v6.19.14 `usbmon` captures (2 cards, 3 each) as of `60c9d6a2`:
 99.92% of driver ops byte-matched; the 7 unmatched ops are mac80211 `configure_filter` re-writes of
@@ -20,7 +20,8 @@ Hardware (TL-WN821N `2357:0107`, Windows, ref AP on ch 1, 7925 as prober/sniffer
 - ACKs (rx_autoack): spoofed MAC ACKed with active monitor on, 0/100 off; bogus MAC 0/100.
 - hop_errors: 0 errors, ~80 tunes/s; 6 open/close cycles clean.
 
-Still open: an RX baseline vs the Linux driver, the soak, grading.
+Kali (TL-WN823N `2357:0109`, replugged before each run, ch 1–11): wifit3 vs rtl8xxxu ref AP 6.4 vs 7.2
+and 7.3 vs 7.3 beacons/s, breadth equal, RSSI median ≤0.6 dB. 30-min soak flat.
 Note: our teardown `power_off` re-enumerates the USB device, so under usbipd the card must be
 re-`attach`ed between runs.
 
@@ -110,7 +111,7 @@ Data constants in the fops are recorded on `Rtl8xxxuFileops`: `writeN_block_size
 - Captures: Kali, kernel 6.19.14, mainline `rtl8xxxu`, `capture.py`. TP-Link TL-WN823N (`2357:0109`,
   stock module) and TL-WN821N (`2357:0107`, same source rebuilt with `CONFIG_RTL8XXXU_UNTESTED`), 3 each.
 - `uv run python scripts/porting/verify_pcap.py rtl8192eu <capture>`: all 6 PASS (see Status).
-- Still to do: RX baseline vs the Linux driver, soak, FINAL-CHECKLIST.md.
+- Linux baselines, soak and the TX attack suite: done (see Status and the Final checklist).
 
 ## Firmware
 
@@ -135,8 +136,8 @@ as prober/sniffer, 2026-11-20, against the operator's own network only.
 3. **Hardware** — bring-up: repeated cold bring-ups on 1 card, 6 open/close cycles clean. ACK lab
    (`scripts/ack/rx_autoack.py`, 7925 prober, n=100/phase, 1 run): spoofed MAC ACKed with active
    monitor on, 0/100 off; bogus MAC 0/100. tx_lab: see Status.
-4. **Grade** — Linux-vs-wifit3 RX baselines, the channel-hopping soak, and the TX-attack grade are
-   NOT RUN. Live checks: see Status.
+4. **Grade** — 87% (B), 2026-11-20: RX 75 (35%), capabilities 90 (45%: handshake, PMKID, WPS PIN,
+   ACKs; WEP ~125 IVs/s at half), stability 100 (20%).
 5. **Docs** — chip doc, `docs/SUPPORTED-HARDWARE.md` row and section, `README.md` row.
 6. **Credits & licensing** — the substantive `rtl8xxxu_8192e.c` contributors are added to
    `docs/CREDITS.md`. Firmware `rtl8192eu_nic.bin` is byte-identical to the installed
