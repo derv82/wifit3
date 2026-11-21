@@ -169,7 +169,7 @@ class ApResponder:
     def _assemble(self, client: bytes, anonce: bytes, m2) -> Handshake:
         m1_frame = eapol_m1(self.bssid, client, anonce, replay=1)
         hs = Handshake(bssid=self.bssid_str, client_mac=_mac_str(client),
-                       beacon_frame=self.beacon_frame, akm_offered=[2, 8], akm_client=2)
+                       beacon_frame=self.beacon_frame, akm_offered=[2, 8])
         hs.messages.append(HandshakeMessage(
             raw=m1_frame, msg_num=1, replay_hex="0000000000000001",
             nonce=anonce, mic=bytes(16),
