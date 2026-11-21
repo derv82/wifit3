@@ -257,7 +257,10 @@ class MT7921AUDriver(Driver):
 
         if progress_cb:
             progress_cb(0.9, "Tuning...")
-        await self.set_channel(self._channel)
+        try:
+            await self.set_channel(self._channel)
+        except SetChannelError as e:
+            raise BringUpError("Warm re-attach tune", "please unplug/replug the device and try again") from e
         self.is_warm = True
         if progress_cb:
             progress_cb(1.0, "Done")

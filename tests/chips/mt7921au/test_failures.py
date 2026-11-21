@@ -6,7 +6,7 @@ import usb.core
 
 from wifit3.chips.mt7921au.driver import MT7921AUDriver
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
-from wifit3.errors import SetChannelError, is_device_gone
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 
 
 def _driver(reply) -> MT7921AUDriver:
@@ -35,6 +35,12 @@ async def test_set_channel_records_the_channel_after_the_reply():
     drv = _driver(b"ok")
     await drv.set_channel(6)
     assert drv._channel == 6
+
+
+async def test_warm_reattach_raises_bringup_error_when_the_tune_times_out():
+    drv = _driver(None)
+    with pytest.raises(BringUpError):
+        await drv._warm_reattach(None)
 
 
 async def test_a_bulk_write_after_an_unplug_raises_without_touching_usb():
