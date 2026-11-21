@@ -409,8 +409,10 @@ class TPLink(ProductName):
     TL_WN722N_V1     = "TL-WN722N v1"    # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v1.x
     TL_WN722N_V2_V3  = "TL-WN722N v2/v3" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN722N_v2 & v3
     TL_WN723N_V2_3_4 = "TL-WN723N v2/3/4" # https://wikidevi.wi-cat.ru/TP-LINK_TL-WN723N_v3
+    TL_WN821N_V5_V6  = "TL-WN821N v5/v6" # 2357:0107, rtl8xxxu rtl8192eu_fops (CONFIG_RTL8XXXU_UNTESTED)
     TL_WN822N_V4     = "TL-WN822N v4"    # 2357:0108, rtl8xxxu rtl8192eu_fops
     TL_WN823N_V2     = "TL-WN823N v2"
+    TL_WN823N_V2_V3  = "TL-WN823N v2/v3" # 2357:0109, rtl8xxxu rtl8192eu_fops
     TL_WN8200ND      = "TL-WN8200ND"
     TL_WN727N_V5_21  = "TL-WN727N v5.21" # 2357:0111, aircrack-ng/rtl8188eus os_dep/linux/usb_intf.c
 

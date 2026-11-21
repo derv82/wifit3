@@ -146,8 +146,9 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Stress | ⬜ | | |
 
 ### RTL8192EU
+<img align="right" width="110" src="../assets/cardart/stack-rtl8192eu.png" alt="TP-Link TL-WN823N / TL-WN821N / TL-WN822N">
 
-*TP-Link TL-WN821N v5/v6 (`2357:0107`), TL-WN823N v2/v3 (`2357:0109`) · 2.4 GHz*
+*TP-Link TL-WN823N v2/v3 (`2357:0109`) / TL-WN821N v5/v6 (`2357:0107`) / TL-WN822N v4 (`2357:0108`, untested) · 2.4 GHz*
 
 > Ported from the mainline Linux `rtl8xxxu` driver (`8192e.c` / `core.c`), Linux v6.19.14.
 

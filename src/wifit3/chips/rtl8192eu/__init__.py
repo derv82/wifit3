@@ -10,9 +10,9 @@ _IDS = (
     (0x0BDA, 0x818B, "RTL8192EU", None, None),
     (0x2357, 0x0108, "RTL8192EU", "TP-Link", TPLink.TL_WN822N_V4),
     (0x2001, 0x3319, "RTL8192EU", "D-Link", DLink.DWA_131),
-    (0x2357, 0x0109, "RTL8192EU", None, None),
+    (0x2357, 0x0109, "RTL8192EU", None, TPLink.TL_WN823N_V2_V3),
     # found in the rtl8192eu vendor driver (CONFIG_RTL8XXXU_UNTESTED):
-    (0x2357, 0x0107, "RTL8192EU", None, None),
+    (0x2357, 0x0107, "RTL8192EU", None, TPLink.TL_WN821N_V5_V6),
     (0x2019, 0xAB33, "RTL8192EU", None, None),
     (0x0BDA, 0x818C, "RTL8192EU", None, None),
 )

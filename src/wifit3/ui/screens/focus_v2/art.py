@@ -206,6 +206,9 @@ _ART_BY_PRODUCT: dict[str, str] = {
     TPLink.ARCHER_TX20U_PLUS: "cards/card-archertx20uplus.ans",
     TPLink.TL_WN722N_V1: "cards/card-tpwn722nv23.ans",       # AR9271 sibling; same physical card, same art
     TPLink.TL_WN722N_V2_V3: "cards/card-tpwn722nv23.ans",
+    TPLink.TL_WN821N_V5_V6: "cards/card-tpwn821nv56.ans",
+    TPLink.TL_WN822N_V4: "cards/card-tpwn822nv4.ans",
+    TPLink.TL_WN823N_V2_V3: "cards/card-tpwn823nv23.ans",
 }
 _ART_BY_CHIPSET: dict[str, str] = {
     "RTL8821CU": "cards/card-auscomer600.ans",
