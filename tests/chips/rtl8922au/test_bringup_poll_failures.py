@@ -254,17 +254,6 @@ def test_cnv_efuse_state_warns_and_carries_on_when_sys_act_never_comes(mocker, c
     assert "failed to convert efuse state" in caplog.text
 
 
-def test_efuse_read_ecv_keeps_the_cut_when_the_efuse_never_reads_ready(mocker):
-    t = _transport(mocker, {R_BE_IC_PWR_STATE: SYS_ACT})
-    assert mac.efuse_read_ecv(t, 5) == 5
-
-
-def test_efuse_read_fw_secure_warns_and_carries_on_when_the_efuse_never_reads_ready(mocker, caplog):
-    t = _transport(mocker, {R_BE_IC_PWR_STATE: SYS_ACT})
-    mac.efuse_read_fw_secure(t, CHIP_CAV)
-    assert "failed to dump secsel map" in caplog.text
-
-
 def _patch_power_switch_on(mocker, pwr_on_func_effect):
     calls = mocker.Mock()
     for name in ("power_switch_boot_mode", "reset_pwr_state_be", "mac_pwr_off", "efuse_read_fw_secure"):

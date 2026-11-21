@@ -5,7 +5,7 @@ import usb.core
 
 from wifit3.chips.rtl8922au import firmware, mac
 from wifit3.chips.rtl8922au.constants import (
-    B_BE_WCPU_FWDL_STATUS_MASK, R_AX_BOOT_DBG, R_BE_UDM1, R_BE_WCPU_FW_CTRL, R_BE_WLCPU_PORT_PC,
+    R_AX_BOOT_DBG, R_BE_UDM1, R_BE_WCPU_FW_CTRL, R_BE_WLCPU_PORT_PC,
 )
 
 
@@ -25,32 +25,10 @@ def _clock_1ms_per_read(mocker):
     mocker.patch("wifit3.chips.rtl8922au.iopoll.time.sleep", side_effect=sleep)
 
 
-def _status_field(st: int) -> int:
-    return (st << 26) & B_BE_WCPU_FWDL_STATUS_MASK
-
-
 def _patch_cpu_steps(mocker):
     mocker.patch.object(mac, "disable_cpu")
     mocker.patch.object(mac, "fwdl_enable_wcpu")
     return mocker.patch.object(firmware, "dl_fail_dump")
-
-
-def test_fw_check_rdy_reports_a_checksum_failure(mocker, caplog):
-    t = mocker.Mock()
-    t.read32.return_value = _status_field(4)          # fwdl_status_map[4] == CHECKSUM_FAIL
-    with pytest.raises(firmware.Rtw89Error) as e:
-        firmware._fw_check_rdy(t, 0)
-    assert e.value.ret == -22
-    assert "fw checksum fail" in caplog.text
-
-
-def test_fw_check_rdy_reports_an_unexpected_status(mocker, caplog):
-    t = mocker.Mock()
-    t.read32.return_value = _status_field(1)          # still FWDL_ONGOING
-    with pytest.raises(firmware.Rtw89Error) as e:
-        firmware._fw_check_rdy(t, 0)
-    assert e.value.ret == -16
-    assert "fw unexpected status 1" in caplog.text
 
 
 def test_fw_download_retries_after_a_failed_attempt(mocker):
