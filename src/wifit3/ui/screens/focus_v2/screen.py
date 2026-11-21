@@ -387,7 +387,7 @@ class FocusViewV2(Screen):
         if failed:
             names = ", ".join(m.chipset for m in failed)
             self._log(f"[yellow]{names} failed to tune to channel {channel}[/yellow]")
-        elif members_to_tune:
+        else:
             self._log(f"Tuned to [cyan]channel {channel}[/cyan]")
 
     def on_resize(self) -> None:
