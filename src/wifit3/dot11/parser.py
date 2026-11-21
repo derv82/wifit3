@@ -73,7 +73,10 @@ from wifit3.dot11.rsn import (
     ENTERPRISE_AKM_SUITES,
     PSK_AKM_SUITES,
     RSN_OUI,
+    RSNXE_ID,
+    SAE_H2E_ONLY_SELECTOR,
     SAE_AKM_SUITES,
+    parse_rsnxe_h2e,
     WPA_OUI,
     RsnElement,
     WpaElement,
@@ -175,6 +178,8 @@ class WlanFrameParser:
                 "ssid": tags.get("ssid"),
                 "encryption": tags.get("encryption", "OPEN"),
                 "wpa3": tags.get("wpa3", False),
+                "sae_h2e": tags.get("sae_h2e", "unknown"),
+                "rsnxe_status": tags.get("rsnxe_status", "absent"),
                 "transition_mode": tags.get("transition_mode", False),
                 "pmf_capable": tags.get("pmf_capable", False),
                 "pmf_required": tags.get("pmf_required", False),
@@ -227,13 +232,29 @@ class WlanFrameParser:
         if subtype == cls.SUBTYPE_AUTH:
             # Body: Algorithm(2) + Seq(2) + Status(2); status at offset 28.
             status = struct.unpack("<H", frame[28:30])[0] if len(frame) >= 30 else None
-            return AuthPacket(**base, type=f"mgmt_{subtype}", status=status)
+            return AuthPacket(**base, type=f"mgmt_{subtype}", status=status,
+                              sae_method=cls._sae_commit_method(frame))
         if subtype in (cls.SUBTYPE_DEAUTH, cls.SUBTYPE_DISASSOC):
             # Reason code is the 2-byte body right after the 24-byte header.
             reason = struct.unpack("<H", frame[24:26])[0] if len(frame) >= 26 else None
             label = "deauth" if subtype == cls.SUBTYPE_DEAUTH else "disassoc"
             return DeauthPacket(**base, type=label, reason=reason)
         return Packet(**base, type=f"mgmt_{subtype}")
+
+    @staticmethod
+    def _sae_commit_method(frame: bytes) -> str | None:
+        if len(frame) < 32 or frame[1] & 0x44 or frame[22] & 0x0f:
+            return None
+        algorithm, transaction, status, group = struct.unpack_from("<HHHH", frame, 24)
+        method = {0: "HnP", 126: "H2E", 127: "SAE-PK"}.get(status)
+        group_lengths = {19: 32, 20: 48, 21: 66, 25: 24, 26: 28,
+                         28: 32, 29: 48, 30: 64}
+        prime_len = group_lengths.get(group)
+        if algorithm != 3 or transaction != 1 or method is None or prime_len is None:
+            return None
+        if len(frame) < 32 + 3 * prime_len:
+            return None
+        return method
 
     @classmethod
     def _parse_data(cls, frame: bytes, fc1: int, subtype: int, base: Dict[str, Any]) -> "Packet":
@@ -645,8 +666,12 @@ class WlanFrameParser:
         # so honor only the first occurrence.
         seen_ssid = False
         wps_payloads: List[bytes] = []
+        rsnxe_values: List[Optional[bool]] = []
+        h2e_only = False
+        ie_end = ptr
 
         for tag_id, tag_data, raw_elem in iter_information_elements(frame, start=ptr):
+            ie_end += len(raw_elem)
             if tag_id == 0 and not seen_ssid: # SSID (only the first)
                 seen_ssid = True
                 if len(tag_data) <= 32 and not tag_data.strip(b"\x00"):   # empty or NUL-filled
@@ -662,6 +687,10 @@ class WlanFrameParser:
                     if not all(ch.isprintable() for ch in ssid_text):
                         return None  # Corrupt frame masquerading as valid
                     parsed["ssid"] = ssid_text
+            elif tag_id in (1, 50):
+                h2e_only |= SAE_H2E_ONLY_SELECTOR in tag_data
+            elif tag_id == RSNXE_ID:
+                rsnxe_values.append(parse_rsnxe_h2e(tag_data))
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if len(tag_data) == 1:
                     channel_ds = tag_data[0]
@@ -708,6 +737,17 @@ class WlanFrameParser:
                             wps_payloads.append(tag_data[4:])
                     elif oui in CHIPSET_BY_VENDOR_IE_OUI:
                         parsed.setdefault("chipset", CHIPSET_BY_VENDOR_IE_OUI[oui])
+
+        if ie_end < len(frame) and frame[ie_end] == RSNXE_ID:
+            rsnxe_values.append(None)
+        if rsnxe_values:
+            if len(rsnxe_values) != 1 or rsnxe_values[0] is None:
+                parsed["rsnxe_status"] = "malformed"
+            else:
+                parsed["rsnxe_status"] = "valid"
+                parsed["sae_h2e"] = "supported" if rsnxe_values[0] else "not-advertised"
+        if h2e_only:
+            parsed["sae_h2e"] = "only"
 
         if wps_payloads:
             parsed.update(cls._parse_wps_ie(b"".join(wps_payloads)))

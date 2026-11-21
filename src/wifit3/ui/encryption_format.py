@@ -158,7 +158,7 @@ class EncryptionSummary:
             tail = _ATTACKABLE if self.psk_attackable else _NO_ATTACK_YET
             head_color = _NO_ATTACK_YET if self.eap_only else "bright_red"
             head = f"[{head_color}]WPA3[/{head_color}]→[{tail}]2[/{tail}]"
-            return head if not detailed else head + detail
+            return head + detail
 
         # Pure WPA3. SAE is out of scope; 802.1X has no attack yet.
         if self.type is EncryptionType.WPA3:
