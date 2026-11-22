@@ -23,7 +23,7 @@ from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
-from wifit3.persist.meta import clear_meta_paths_cache, meta_path, update_meta
+from wifit3.persist.meta import clear_meta_paths_cache, meta_path, read_meta, update_meta, update_meta_file
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
@@ -556,3 +556,25 @@ class Vault:
         migrated, deleted = save.consolidate_hc_files(Path(Config.captures_dir))
         self.refresh()
         return migrated, deleted
+
+    # ----- legacy .meta nicknames (v0.6 to v0.7) -----
+
+    def move_nicknames_to_config(self) -> None:
+        """Once, when config.toml has no [nicknames] table: move each AP's nickname from the .meta of its
+        newest capture's SSID into Config, save it (raises ConfigError), then drop the .meta key."""
+        if Config.nicknames is not None:
+            return
+        Config.nicknames = {}
+        nickname_meta_paths: List[Path] = []
+        for bssid in self._index:
+            path = meta_path(self.ssid(bssid), bssid)
+            nickname = read_meta(path).get("nickname")
+            if isinstance(nickname, str) and nickname:
+                Config.set_nickname(bssid, nickname)
+                nickname_meta_paths.append(path)
+        Config.save()
+        for path in nickname_meta_paths:
+            try:
+                update_meta_file(path, nickname=None)
+            except OSError:
+                logger.warning(f"Could not remove the nickname from {path}", exc_info=True)

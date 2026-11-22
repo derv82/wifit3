@@ -13,7 +13,7 @@ from textual.widget import Widget
 
 from wifit3.models import PSK_CAPTURE_TYPES, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import PasswordStatus
-from wifit3.persist.meta import meta_path, read_meta
+from wifit3.persist.config import Config
 from wifit3.ui.colors import PASSWORD_MISMATCH_COLOR
 from textual.message import Message
 
@@ -128,8 +128,6 @@ class VaultTable(Widget):
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
         self._aps: Dict[str, Tuple[Optional[str], List[PersistedCapture]]] = {}
-        self._nicknames: Dict[str, str] = {}
-        self._nicknames_stale = True
         self._current_tab = "tab-all"
         self._filter_text = ""
         self._is_reloading = False
@@ -159,13 +157,6 @@ class VaultTable(Widget):
         self._is_reloading = True
         try:
             self._aps = self._group_aps()
-            if self._nicknames_stale:
-                self._nicknames = {}
-                for bssid, (ssid, _) in self._aps.items():
-                    nickname = read_meta(meta_path(ssid, bssid)).get("nickname")
-                    if isinstance(nickname, str) and nickname:
-                        self._nicknames[bssid] = nickname
-                self._nicknames_stale = False
             self._update_tabs()
             table = self.query_one("#vault-aps", DataTable)
             shown = self._shown_bssids()
@@ -229,7 +220,7 @@ class VaultTable(Widget):
         for bssid, (ssid, caps) in sorted(self._aps.items(), key=lambda kv: ((kv[1][0] or "").lower(), kv[0])):
             if self._filter_text and not matches_filter(
                     self._filter_text,
-                    [ssid or "", bssid, self._nicknames.get(bssid, ""), *(Path(c.path).name for c in caps)]):
+                    [ssid or "", bssid, Config.nickname(bssid) or "", *(Path(c.path).name for c in caps)]):
                 continue
             if belongs is None or belongs(caps):
                 shown.append(bssid)
@@ -254,13 +245,8 @@ class VaultTable(Widget):
     def display_name(self, bssid: str, ssid: Optional[str]) -> str:
         """``nickname (SSID)`` when the AP has a nickname, else the SSID."""
         name = ssid or "‹hidden›"
-        nickname = self._nicknames.get(bssid)
+        nickname = Config.nickname(bssid)
         return f"{nickname} ({name})" if nickname else name
-
-    def reload_nicknames(self) -> None:
-        """Re-read every nickname from its .meta, then reload the rows."""
-        self._nicknames_stale = True
-        self.reload_table()
 
     def _current_row_key(self, table: DataTable) -> Optional[str]:
         """The bssid under the cursor, so a reload can restore the selection."""

@@ -271,7 +271,7 @@ async def test_a_burst_of_vault_changes_refreshes_the_drawer_once(mocker):
             app.vault.notify_changed(bssid)
         await pilot.pause(0)
 
-        vault_changed.assert_called_once_with(False)
+        vault_changed.assert_called_once_with()
 
 
 def test_a_vault_change_from_another_thread_after_quit_logs_no_error(caplog):

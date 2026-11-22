@@ -18,7 +18,7 @@ from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, NONCE_LEN, data_header, eapol_key
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic_hmac_md5
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, ToolName
-from wifit3.persist.config import Config
+from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.meta import meta_path, read_meta, update_meta
 from wifit3.persist.pcap import write_pcap
@@ -988,3 +988,48 @@ def test_a_key_typed_in_is_not_verified_until_a_live_check_accepts_it(tmp_path, 
     v.record_live_verification(typed_key, correct=True)
 
     assert v.ap_state(typed.bssid).key_statuses[typed_key.id] is PasswordStatus.CURRENT
+
+
+_NICKNAMED_BSSID = "02:00:00:00:00:60"
+
+
+@pytest.fixture
+def nickname_meta(tmp_path, monkeypatch) -> Path:
+    """A captured AP whose .meta holds a nickname, with Config not yet holding any and saving to tmp_path."""
+    monkeypatch.setattr("wifit3.persist.config._PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "nicknames", None)
+    (tmp_path / "Den_02-00-00-00-00-60_1700000001_wpa_psk.txt").write_text(
+        "SSID: Den\nBSSID: x\nPSK: pw\n", encoding="utf-8")
+    return update_meta("Den", _NICKNAMED_BSSID, nickname="kitchen")
+
+
+def test_move_nicknames_to_config_saves_the_nickname_and_drops_the_meta_key(tmp_path, nickname_meta):
+    Vault().move_nicknames_to_config()
+    assert Config.nickname(_NICKNAMED_BSSID) == "kitchen"
+    assert "[nicknames]\n'02:00:00:00:00:60' = 'kitchen'" in (tmp_path / "config.toml").read_text("utf-8")
+    assert "nickname" not in read_meta(nickname_meta)
+
+
+def test_move_nicknames_to_config_saves_an_empty_table_when_there_are_none(tmp_path, nickname_meta):
+    update_meta("Den", _NICKNAMED_BSSID, nickname=None)
+    Vault().move_nicknames_to_config()
+    assert Config.nicknames == {}
+    assert "[nicknames]\n" in (tmp_path / "config.toml").read_text("utf-8")
+
+
+def test_move_nicknames_to_config_keeps_the_meta_key_when_config_fails_to_save(
+        tmp_path, monkeypatch, nickname_meta):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    monkeypatch.setattr("wifit3.persist.config._PATH", blocker / "config.toml")
+    with pytest.raises(ConfigError):
+        Vault().move_nicknames_to_config()
+    assert read_meta(nickname_meta)["nickname"] == "kitchen"
+
+
+def test_move_nicknames_to_config_does_nothing_once_config_has_the_table(tmp_path, nickname_meta):
+    Config.nicknames = {}
+    Vault().move_nicknames_to_config()
+    assert Config.nicknames == {}
+    assert not (tmp_path / "config.toml").exists()
+    assert read_meta(nickname_meta)["nickname"] == "kitchen"

@@ -178,9 +178,13 @@ class WifiteApp(App):
         self.scanner_view = ScannerView()
         self.focus_view = FocusViewV2()
         self.vault = Vault()
+        if self._config_error is None:
+            try:
+                self.vault.move_nicknames_to_config()
+            except ConfigError as e:
+                self._config_error = str(e)
         self._vault_notices_lock = threading.Lock()
         self._vault_refresh_pending = False     # a table refresh is scheduled for the notices so far
-        self._vault_full_refresh = False        # one of them was a full refresh (BSSID None)
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
 
@@ -351,7 +355,6 @@ class WifiteApp(App):
         """Any thread: one table refresh per tick, however many notices the Vault sends. None once the
         app has stopped (a PSK propagation can finish after quit)."""
         with self._vault_notices_lock:
-            self._vault_full_refresh |= bssid is None
             if self._vault_refresh_pending:
                 return
             self._vault_refresh_pending = True
@@ -363,11 +366,10 @@ class WifiteApp(App):
     def _refresh_vault_table(self) -> None:
         """Reload the vault table if its drawer is open."""
         with self._vault_notices_lock:
-            full_refresh, self._vault_full_refresh = self._vault_full_refresh, False
             self._vault_refresh_pending = False
         if isinstance(self.screen, VaultDrawer):
             try:
-                self.screen.vault_changed(full_refresh)
+                self.screen.vault_changed()
             except Exception:
                 logger.debug("Vault table refresh skipped", exc_info=True)
 

@@ -14,7 +14,7 @@ from .vault_table import VaultTable
 from .vault_item import AddKeyPressed, DeleteKeyPressed, ShowApPressed, VaultItemView, key_description
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, is_confirmed
-from wifit3.persist.meta import meta_path, read_meta, update_meta
+from wifit3.persist.config import Config
 from wifit3.ui.vault.job_pane import JobTrackerPane
 from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
 from wifit3.ui.vault.modals.confirm import ConfirmModal
@@ -185,14 +185,10 @@ class VaultDrawer(ModalScreen):
         else:
             widget.load("", None)
 
-    def vault_changed(self, full_refresh: bool) -> None:
-        """Reload the table, re-reading nicknames after a full refresh; its TableReloaded reloads
-        the item view, which repaints only when its AP's state changed."""
-        table = self.query_one("#vault-table", VaultTable)
-        if full_refresh:
-            table.reload_nicknames()
-        else:
-            table.reload_table()
+    def vault_changed(self) -> None:
+        """Reload the table; its TableReloaded reloads the item view, which repaints only when its
+        AP's state changed."""
+        self.query_one("#vault-table", VaultTable).reload_table()
 
     @on(VaultTable.TableReloaded)
     def _table_reloaded(self, event: VaultTable.TableReloaded) -> None:
@@ -234,21 +230,16 @@ class VaultDrawer(ModalScreen):
         if not bssid:
             self.notify("Select an AP first", severity="warning")
             return
-        nickname = read_meta(meta_path(ssid, bssid)).get("nickname")
-        current = nickname if isinstance(nickname, str) else ""
 
         def _save(value: Optional[str]) -> None:
             if value is None:
                 return
-            try:
-                update_meta(ssid, bssid, nickname=value or None)
-            except OSError as exc:
-                self.notify(f"Could not save nickname: {exc}", severity="error")
-                return
-            self.query_one("#vault-table", VaultTable).reload_nicknames()
+            Config.set_nickname(bssid, value)
+            self.app.persist_config()
+            self.query_one("#vault-table", VaultTable).reload_table()
             self.notify("Nickname saved" if value else "Nickname cleared")
 
-        self.app.push_screen(NicknameModal(ssid, current), _save)
+        self.app.push_screen(NicknameModal(ssid, Config.nickname(bssid) or ""), _save)
 
     def action_delete_ap(self) -> None:
         ssid, bssid = self._selected_network()
