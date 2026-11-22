@@ -2,7 +2,8 @@
 FCS-less MPDU bodies (every chip driver strips at RX ingress), so the writer
 no longer second-guesses the frame tail."""
 
-from wifit3.persist.pcap import write_pcap
+from wifit3.models import AccessPoint, Handshake, HandshakeMessage
+from wifit3.persist.pcap import HandshakePcaps, read_pcap, write_pcap
 
 
 def _first_packet(path) -> bytes:
@@ -51,3 +52,64 @@ def test_write_pcap_preserves_per_frame_timestamps(tmp_path):
     assert write_pcap(path, recs) == 2
     assert _record_header(path, 0)[:2] == (1000, 500000)
     assert _record_header(path, 1)[:2] == (1002, 250000)
+
+
+_CLIENT = "11:22:33:44:55:66"
+_ANONCE = b"\xaa" * 32
+_SNONCE = b"\x22" * 32
+
+
+def _message(msg_num: int, replay: int, nonce: bytes, ts: float) -> HandshakeMessage:
+    return HandshakeMessage(
+        raw=bytes([msg_num, replay]) + nonce[:1], msg_num=msg_num,
+        replay_hex=replay.to_bytes(8, "big").hex(), nonce=nonce, mic=b"\x11" * 16,
+        eapol_payload=bytes(120), timestamp=ts,
+    )
+
+
+def _ap(*messages: HandshakeMessage) -> AccessPoint:
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    hs = Handshake(bssid=ap.bssid, client_mac=_CLIENT, beacon_frame=b"BEACON")
+    hs.messages.extend(messages)
+    ap.handshakes[_CLIENT] = hs
+    return ap
+
+
+def _frames(path) -> list[bytes]:
+    return [frame for frame, _ in read_pcap(path)]
+
+
+def test_handshake_pcaps_writes_the_beacon_and_the_4way(tmp_path):
+    m1 = _message(1, 1, _ANONCE, 100.0)
+    m2 = _message(2, 1, _SNONCE, 100.01)
+    HandshakePcaps().save(_ap(m1, m2), _CLIENT)
+    [pcap] = tmp_path.glob("*_handshake.pcap")
+    assert _frames(pcap) == [b"BEACON", m1.raw, m2.raw]
+
+
+def test_handshake_pcaps_rewrites_the_same_pcap_when_the_handshake_gains_frames(tmp_path):
+    pcaps = HandshakePcaps()
+    ap = _ap(_message(1, 1, _ANONCE, 100.0), _message(2, 1, _SNONCE, 100.01))
+    pcaps.save(ap, _CLIENT)
+    m3 = _message(3, 2, _ANONCE, 100.02)
+    ap.handshakes[_CLIENT].messages.append(m3)
+    pcaps.save(ap, _CLIENT)
+    [pcap] = tmp_path.glob("*_handshake.pcap")
+    assert _frames(pcap)[-1] == m3.raw
+
+
+def test_handshake_pcaps_skips_a_handshake_with_no_new_frames(tmp_path):
+    pcaps = HandshakePcaps()
+    ap = _ap(_message(1, 1, _ANONCE, 100.0), _message(2, 1, _SNONCE, 100.01))
+    pcaps.save(ap, _CLIENT)
+    [pcap] = tmp_path.glob("*_handshake.pcap")
+    pcap.unlink()
+    pcaps.save(ap, _CLIENT)
+    assert list(tmp_path.glob("*_handshake.pcap")) == []
+
+
+def test_handshake_pcaps_one_pcap_per_handshake(tmp_path):
+    ap = _ap(_message(1, 1, _ANONCE, 100.0), _message(2, 1, _SNONCE, 100.01),
+             _message(1, 1, b"\xbb" * 32, 120.0), _message(2, 1, b"\x33" * 32, 120.01))
+    HandshakePcaps().save(ap, _CLIENT)
+    assert len(list(tmp_path.glob("*_handshake.pcap"))) == 2

@@ -67,14 +67,13 @@ def _ap_with_hs(ssid: str = "HomeNet", bssid: str = "aa:bb:cc:dd:ee:ff",
 # ---- save_handshake --------------------------------------------------------
 
 class TestSaveHandshake:
-    def test_writes_hc22000_and_pcap(self, tmp_path):
+    def test_writes_hc22000_only(self, tmp_path):
         ap = _ap_with_hs()
         result = save_handshake(ap, "11:22:33:44:55:66")
         assert result is not None and result.was_new is True
         assert result.path.name == "HomeNet_aa-bb-cc-dd-ee-ff.hc22000"
         assert result.path.exists()
-        pcaps = list(tmp_path.glob("*_handshake.pcap"))
-        assert len(pcaps) == 1 and pcaps[0].stat().st_size > 0
+        assert list(tmp_path.glob("*_handshake.pcap")) == []
 
     def test_body_is_wpa02_only(self, tmp_path):
         # AP also has a PMKID, so save_handshake must NOT include the WPA*01 line.
@@ -119,7 +118,6 @@ class TestSaveHandshake:
         assert again is not None and again.was_new is True
         lines = [line for _, line in read_hc22000(again.path)]
         assert [line.authorized for line in lines] == [False, True]
-        assert len(list(tmp_path.glob("*_handshake.pcap"))) == 2
 
     def test_an_m1_m2_for_an_anonce_saved_authorized_is_deduped(self, tmp_path):
         anonce = b"\xA0" + b"\x00" * 31

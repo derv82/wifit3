@@ -175,31 +175,6 @@ and Textual compositing.
 **Direction.** Cache raw values and rebuild markup only when a value changes, instead of
 rebuilding the whole snapshot each tick.
 
-## Capture handling lives in the Scanner's table refresh
-
-**Problem.** Saving, logging and auto-cracking a capture happen in `ScannerView.refresh_table`, so
-capture handling is tied to a UI loop. Not a functional bug: captures from any screen work today.
-Design debt that needs the backend thought through before moving it.
-
-## Session pcap rewrites every handshake of the session
-
-**Problem.** Each handshake save writes a new `<ssid>_<bssid>_<epoch>_handshake.pcap` holding the
-beacon plus every EAPOL frame in memory for that client (`persist/save.py` `_pcap_records_for`).
-A save fires per new ANonce and again when an ANonce gains M3/M4, so each later pcap for a client
-repeats the earlier ones. Frames after a client's last save never reach a pcap. Repeat pcaps
-inflate the Vault's capture count. Nothing cracks from a pcap; the `.hc22000` is complete.
-
-**Why it's not a quick fix.**
-- pcap consumers pick one handshake from a multi-handshake pcap, often the wrong one: none
-  reliably prefers authorized pairs (hcxpcapngtool: smallest time gap; aircrack-ng: last; cowpatty:
-  first; John: first authorized). So the target is one exchange per pcap.
-- A file per ANonce needs the M3/M4 save to find and rewrite that ANonce's pcap: no in-memory map,
-  no opening pcaps. The filename epoch is parsed by `LEGACY_CAPTURE_RE` (capture history).
-- `crackable_pairs` returns one best pair (2 frames) per ANonce, not the exchange: built from it,
-  the M3 rewrite drops M1 and zeroed M4s.
-- Replay counters don't identify an exchange: many APs restart them per association.
-- Arrival order breaks when M1 is missed or M2 arrives after the AP's next M1.
-
 ## `beacon_clone` copies HE/EHT operation widths as-is
 
 **Problem.** `beacon_clone` forces the HT/VHT operation elements to 20 MHz but copies HE and EHT

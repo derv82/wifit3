@@ -237,6 +237,16 @@ def test_save_handshake_and_pmkid_cached_and_summarized(tmp_path):
     assert v.summary() == "1 handshake, 1 PMKID"
 
 
+def test_save_handshake_writes_a_pcap_only_when_save_pcap_is_on(tmp_path, monkeypatch):
+    v = Vault()
+    monkeypatch.setattr(Config, "save_pcap", False)
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    assert list(tmp_path.glob("*_handshake.pcap")) == []
+    monkeypatch.setattr(Config, "save_pcap", True)
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    assert len(list(tmp_path.glob("*_handshake.pcap"))) == 1
+
+
 # ---- known_psk / has_psk: session fields OR a prior-session WPS file ---------
 
 def test_known_psk_from_session_fields(tmp_path):

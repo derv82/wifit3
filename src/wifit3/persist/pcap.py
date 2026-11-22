@@ -12,6 +12,11 @@ import time
 from pathlib import Path
 from typing import Iterable, Iterator
 
+from wifit3.crack.handshake import handshake_messages
+from wifit3.models import AccessPoint
+from wifit3.persist.config import Config
+from wifit3.persist.save import fresh_path
+
 LINKTYPE_IEEE802_11 = 105
 PCAP_MAGIC = 0xA1B2C3D4
 PCAP_VERSION = (2, 4)
@@ -71,3 +76,30 @@ def read_pcap(path: Path) -> Iterator[tuple[bytes, int]]:
         offset += 16
         yield data[offset:offset + length], ts_sec
         offset += length
+
+
+class HandshakePcaps:
+    """One pcap per handshake: the beacon and every frame of its 4-way. Rewrites the pcap when
+    the handshake gains frames, for the handshakes written this session."""
+
+    def __init__(self) -> None:
+        # (bssid, client_mac, anonce) -> (pcap_path, num_messages)
+        self._written: dict[tuple[str, str, bytes], tuple[Path, int]] = {}
+
+    def save(self, ap: AccessPoint, client_mac: str) -> None:
+        hs = ap.handshakes.get(client_mac)
+        if hs is None:
+            return
+        for anonce, pair in hs.valid_pairs_by_instance().items():
+            messages = handshake_messages(hs, pair)
+            key = (ap.bssid, client_mac, anonce)
+            if key in self._written:
+                path, frame_count = self._written[key]
+                if len(messages) <= frame_count:
+                    continue
+            else:
+                path = fresh_path(Path(Config.captures_dir), ap.ssid, ap.bssid, "_handshake.pcap")
+            records = [(hs.beacon_frame, messages[0].timestamp)]
+            records += [(message.raw, message.timestamp) for message in messages]
+            write_pcap(path, records)
+            self._written[key] = (path, len(messages))

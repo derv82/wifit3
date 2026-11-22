@@ -24,6 +24,7 @@ from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
 from wifit3.persist.meta import clear_meta_paths_cache, meta_path, read_meta, update_meta, update_meta_file
+from wifit3.persist.pcap import HandshakePcaps
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
@@ -105,6 +106,7 @@ class Vault:
         self._change_counts: Dict[str, int] = {}
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
         self._propagation_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="psk-propagation")
+        self._handshake_pcaps = HandshakePcaps()
         try:
             self.refresh()
         except Exception as exc:
@@ -320,7 +322,10 @@ class Vault:
     # ----- writes (persist to disk, then fold into the cache) -----
 
     def save_handshake(self, ap: "AccessPoint", client_mac: str) -> Optional[HashlineSaveResult]:
-        return self._save_hashlines(ap, CaptureType.HS, lambda: save.save_handshake(ap, client_mac))
+        result = self._save_hashlines(ap, CaptureType.HS, lambda: save.save_handshake(ap, client_mac))
+        if result is not None and Config.save_pcap:
+            self._handshake_pcaps.save(ap, client_mac)
+        return result
 
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[HashlineSaveResult]:
         return self._save_hashlines(ap, CaptureType.PMKID, lambda: save.save_pmkid(ap, client_mac))
