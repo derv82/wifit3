@@ -9,6 +9,7 @@ import struct
 import pytest
 
 from wifit3.dot11.mac import str_to_mac
+from wifit3.dot11.packet import AuthPacket
 from wifit3.dot11.wsc import messages as WSC
 from wifit3.models import AccessPoint, IdKey, IdSource
 from wifit3.wlan.sink import WlanSink
@@ -51,6 +52,43 @@ def _wps_m1_frame(bssid: bytes, client: bytes) -> bytes:
 
 
 # ----- registry + per-card signal --------------------------------------------
+
+def test_sae_h2e_updates_preserve_unknown_and_accept_new_evidence():
+    sink = WlanSink()
+    sink.update(_beacon(), W0)
+    ap = sink.access_points[BSSID]
+    assert ap.sae_h2e == "unknown"
+    for value in ("supported", "unknown", "only", "unknown", "not-advertised"):
+        sink.update(_beacon({"sae_h2e": value}), W0)
+        if value != "unknown":
+            expected = value
+        assert ap.sae_h2e == expected
+
+
+def test_observed_sae_methods_are_session_only_and_scoped_to_existing_ap():
+    class AuthWithMethod(AuthPacket):
+        sae_method = None
+
+    def auth(bssid, method):
+        frame = AuthWithMethod(type="mgmt_11", type_id=0, subtype_id=11, bssid=bssid,
+                               source=bssid, dest="00:11:22:33:44:55", to_ds=False,
+                               from_ds=False, rssi=-40, raw=b"")
+        frame.sae_method = method
+        return frame
+
+    sink = WlanSink()
+    other = "aa:bb:cc:dd:ee:01"
+    sink.update(auth(BSSID, "HnP"), W0)
+    assert not sink.access_points
+    sink.update(_beacon({"sae_h2e": "supported"}), W0)
+    sink.update(_beacon({"bssid": other, "source": other}), W0)
+    for method in (None, "HnP", "H2E", "HnP", "SAE-PK", "invalid"):
+        sink.update(auth(BSSID, method), W0)
+    assert sink.access_points[BSSID].observed_sae_methods == {"HnP", "H2E", "SAE-PK"}
+    assert sink.access_points[BSSID].sae_h2e == "supported"
+    assert not sink.access_points[other].observed_sae_methods
+    assert not WlanSink().access_points
+
 
 def test_beacon_creates_ap_and_smooths_signal_per_card():
     s = WlanSink()

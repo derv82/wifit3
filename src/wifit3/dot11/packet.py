@@ -69,6 +69,8 @@ class BeaconPacket(Packet):
     vendor_akm_offered: bool = False
     pairwise_cipher: Optional[str] = None
     wpa3: bool = False
+    sae_h2e: str = "unknown"
+    rsnxe_status: str = "absent"
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False
@@ -129,8 +131,9 @@ class AssocRequestPacket(Packet):
 
 @dataclass(slots=True, kw_only=True)
 class AuthPacket(Packet):
-    """An Open-System Authentication frame; ``status`` is the result code (0 = success)."""
+    """An Authentication frame; ``sae_method`` describes an observed commit, not its outcome."""
     status: Optional[int] = None
+    sae_method: str | None = None
 
 
 @dataclass(slots=True, kw_only=True)

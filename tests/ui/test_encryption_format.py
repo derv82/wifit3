@@ -115,6 +115,7 @@ def test_wpa3_personal_transition_keeps_attackable_wpa2_half():
         muted="dim",
     )
     assert "[bright_red]WPA3[/bright_red]→[bright_green]2[/bright_green]" in m
+    assert "(PSK/SAE)" in m
 
 
 def test_wpa3_enterprise_transition_is_not_attackable():
@@ -123,6 +124,7 @@ def test_wpa3_enterprise_transition_is_not_attackable():
         muted="dim",
     )
     assert "[yellow]WPA3[/yellow]→[yellow]2[/yellow]" in m
+    assert "(EAP/EAP256)" in m
     assert "bright_green" not in m
 
 
