@@ -155,6 +155,43 @@ def test_rehandshake_is_two_instances():
     assert len(wpa.crackable_pairs(hs)) == 2
 
 
+def test_handshake_messages_full_4way_with_m1_retry():
+    m1 = _frame(1, 1, nonce=ANONCE, mic=False, ts=100.000)
+    m1_retry = _frame(1, 1, nonce=ANONCE, mic=False, ts=100.004)
+    m2 = _frame(2, 1, nonce=SNONCE, ts=100.008)
+    m3 = _frame(3, 2, nonce=ANONCE, ts=100.020)
+    m4 = _frame(4, 2, nonce=b"\x00" * 32, ts=100.024)
+    hs = _hs(m1, m1_retry, m2, m3, m4)
+    [pair] = wpa.crackable_pairs(hs)
+    assert wpa.handshake_messages(hs, pair) == [m1, m1_retry, m2, m3, m4]
+
+
+def test_handshake_messages_snonce_answering_several_anonces():
+    # The AP sends a fresh ANonce with each M1 retry; the client keeps one SNonce.
+    anonces = [b"\x31" * 32, b"\x32" * 32, b"\x33" * 32]
+    m1s = [_frame(1, rc, nonce=anonces[rc - 1], mic=False, ts=100.0 + rc) for rc in (1, 2, 3)]
+    m2s = [_frame(2, rc, nonce=SNONCE, ts=100.005 + rc) for rc in (1, 2, 3)]
+    hs = _hs(m1s[0], m2s[0], m1s[1], m2s[1], m1s[2], m2s[2])
+    by_anonce = {p.anonce_frame.nonce: p for p in wpa.crackable_pairs(hs)}
+    assert len(by_anonce) == 3
+    for rc in (1, 2, 3):
+        assert wpa.handshake_messages(hs, by_anonce[anonces[rc - 1]]) == [m1s[rc - 1], m2s[rc - 1]]
+
+
+def test_handshake_messages_excludes_next_association_m4():
+    a_m1 = _frame(1, 1, nonce=ANONCE, mic=False, ts=100.0)
+    a_m2 = _frame(2, 1, nonce=SNONCE, ts=100.01)
+    a_m3 = _frame(3, 2, nonce=ANONCE, ts=100.02)
+    b_m1 = _frame(1, 1, nonce=b"\x55" * 32, mic=False, ts=120.0)
+    b_m2 = _frame(2, 1, nonce=b"\x07" * 32, ts=120.01)
+    b_m3 = _frame(3, 2, nonce=b"\x55" * 32, ts=120.02)
+    b_m4 = _frame(4, 2, nonce=b"\x00" * 32, ts=120.03)
+    hs = _hs(a_m1, a_m2, a_m3, b_m1, b_m2, b_m3, b_m4)
+    by_anonce = {p.anonce_frame.nonce: p for p in wpa.crackable_pairs(hs)}
+    assert wpa.handshake_messages(hs, by_anonce[ANONCE]) == [a_m1, a_m2, a_m3]
+    assert wpa.handshake_messages(hs, by_anonce[b"\x55" * 32]) == [b_m1, b_m2, b_m3, b_m4]
+
+
 def test_describe_flags():
     good = wpa.describe(_frame(2, 5, nonce=SNONCE))
     assert good.has_nonce and good.has_mic and good.eapol_complete and good.useful
