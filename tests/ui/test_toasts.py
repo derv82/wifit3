@@ -15,9 +15,9 @@ class _NotifyRecorder:
         self.toasts.append((title, message))
 
 
-def _handshake(client_mac: str, pair_label: str, ssid="Net") -> HandshakeCaptured:
+def _handshake(client_mac: str, messages_label: str, ssid="Net") -> HandshakeCaptured:
     return HandshakeCaptured(bssid=_BSSID, ssid=ssid, channel=6, client_mac=client_mac,
-                             pair_label=pair_label, authorized=pair_label != "M1+M2")
+                             messages_label=messages_label, authorized=messages_label != "M1+M2")
 
 
 def _titles(app: _NotifyRecorder) -> list[str]:

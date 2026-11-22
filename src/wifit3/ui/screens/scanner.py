@@ -406,7 +406,7 @@ class ScannerView(Screen):
         ap_label = escape(ev.ssid or ev.bssid)
         if isinstance(ev, HandshakeCaptured):
             msg = (
-                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
+                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.messages_label}) on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, UncrackableHandshakeSeen):

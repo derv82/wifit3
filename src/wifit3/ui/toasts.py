@@ -45,7 +45,7 @@ class Toasts:
                 rank = ShownCaptureRank.AUTHORIZED
             else:
                 rank = ShownCaptureRank.CHALLENGE
-            self._show_capture(event.bssid, rank, f"Handshake captured ({event.pair_label})",
+            self._show_capture(event.bssid, rank, f"Handshake captured ({event.messages_label})",
                                f"{name} {location}")
         elif isinstance(event, PmkidCaptured):
             self._show_capture(event.bssid, ShownCaptureRank.AUTHORIZED, "PMKID captured (M1)",

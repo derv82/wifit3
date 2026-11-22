@@ -2,7 +2,10 @@
 4-way handshake (or PMKID) they assemble into.
 """
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional, List, Set, Dict, Tuple
+from typing import TYPE_CHECKING, ClassVar, Optional, List, Set, Dict, Tuple
+
+if TYPE_CHECKING:
+    from wifit3.crack.handshake import CrackablePair
 
 
 @dataclass
@@ -85,13 +88,13 @@ class Handshake:
         pairs = self._crackable_pairs()
         return self._ordered(pairs[0]) if pairs else None
 
-    def valid_pairs_by_instance(self) -> Dict[bytes, Tuple[HandshakeMessage, HandshakeMessage]]:
+    def valid_pairs_by_instance(self) -> Dict[bytes, "CrackablePair"]:
         """Each crackable handshake instance (keyed by its ANonce, fresh per
-        association) mapped to its (lower-msg, higher-msg) pair. Gated on a
-        beacon: we don't announce a capture for an AP we've never heard beacon."""
+        association) mapped to its pair. Gated on a beacon: we don't announce a
+        capture for an AP we've never heard beacon."""
         if not self.beacon_frame:
             return {}
-        return {p.instance_key: self._ordered(p) for p in self._crackable_pairs()}
+        return {p.instance_key: p for p in self._crackable_pairs()}
 
     @property
     def complete_instances(self) -> int:

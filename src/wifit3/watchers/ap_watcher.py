@@ -34,7 +34,7 @@ class EapolFrameSeen(ApEvent):
 @dataclass(frozen=True)
 class HandshakeCaptured(ApEvent):
     client_mac: str
-    pair_label: str              # "M1+M2", "M2+M3", ...
+    messages_label: str          # "M1+M2", "M1+M2+M3+M4", ...
     authorized: bool             # M3/M4 in the pair: the AP confirmed the client's PSK
     save_result: Optional[HashlineSaveResult] = None   # None when not saved (no SSID yet)
 
@@ -130,6 +130,7 @@ class HandshakeInstance(NamedTuple):
     client_mac: str
     anonce: bytes
     authorized: bool
+    has_m4: bool
 
 
 def _pairing_inputs(handshake: Handshake) -> tuple:
@@ -192,7 +193,8 @@ class EapolFrameDetector:
 
 
 class HandshakeDetector:
-    """Each crackable handshake instance (ANonce), and again when it becomes authorized."""
+    """Each crackable handshake instance (ANonce), again when it becomes authorized, and
+    again when it gains an M4."""
 
     def __init__(self) -> None:
         self._reported_instances: Set[HandshakeInstance] = set()
@@ -205,8 +207,11 @@ class HandshakeDetector:
             return []
         self._polled_pairing_inputs[key] = pairing_inputs
         events = []
-        for anonce, (first, second) in handshake.valid_pairs_by_instance().items():
-            instance = HandshakeInstance(ap.bssid, client_mac, anonce, authorized=second.msg_num > 2)
+        for anonce, pair in handshake.valid_pairs_by_instance().items():
+            first, second = sorted((pair.anonce_frame.msg_num, pair.mic_frame.msg_num))
+            msg_nums = sorted({m.msg_num for m in wpa.handshake_messages(handshake, pair)})
+            instance = HandshakeInstance(ap.bssid, client_mac, anonce,
+                                         authorized=second > 2, has_m4=4 in msg_nums)
             if instance in self._reported_instances:
                 continue
             self._reported_instances.add(instance)
@@ -215,7 +220,7 @@ class HandshakeDetector:
                 ssid=ap.ssid,
                 channel=ap.channel,
                 client_mac=client_mac,
-                pair_label=f"M{first.msg_num}+M{second.msg_num}",
+                messages_label="+".join(f"M{n}" for n in msg_nums),
                 authorized=instance.authorized,
             ))
         return events
