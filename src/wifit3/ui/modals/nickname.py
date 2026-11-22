@@ -7,9 +7,11 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label
 
+from wifit3.persist.config import Config
 
-class NicknameModal(ModalScreen[Optional[str]]):
-    """Edit an AP's nickname; dismisses with the new one ("" clears it), or None when cancelled."""
+
+class NicknameModal(ModalScreen[bool]):
+    """Edit an AP's nickname in Config ("" clears it); dismisses with whether it saved."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -25,16 +27,16 @@ class NicknameModal(ModalScreen[Optional[str]]):
     NicknameModal #buttons Button { margin-left: 1; }
     """
 
-    def __init__(self, ssid: Optional[str], nickname: str = "") -> None:
+    def __init__(self, ssid: Optional[str], bssid: str) -> None:
         super().__init__()
         self._ssid = ssid
-        self._nickname = nickname
+        self._bssid = bssid
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Label("Set Router Nickname", id="title")
             yield Label(self._ssid or "Hidden network", markup=False, id="network")
-            yield Input(self._nickname, placeholder="Nickname (leave empty to clear)", id="nickname")
+            yield Input(Config.nickname(self._bssid) or "", placeholder="Nickname (leave empty to clear)", id="nickname")
             with Horizontal(id="buttons"):
                 yield Button("Cancel", id="cancel")
                 yield Button("Save", variant="primary", id="save")
@@ -47,11 +49,15 @@ class NicknameModal(ModalScreen[Optional[str]]):
     @on(Input.Submitted, "#nickname")
     @on(Button.Pressed, "#save")
     def _save(self) -> None:
-        self.dismiss(self.query_one("#nickname", Input).value.strip())
+        nickname = self.query_one("#nickname", Input).value.strip()
+        Config.set_nickname(self._bssid, nickname)
+        self.app.persist_config()
+        self.notify("Nickname saved" if nickname else "Nickname cleared")
+        self.dismiss(True)
 
     @on(Button.Pressed, "#cancel")
     def _cancel_pressed(self) -> None:
         self.action_cancel()
 
     def action_cancel(self) -> None:
-        self.dismiss(None)
+        self.dismiss(False)

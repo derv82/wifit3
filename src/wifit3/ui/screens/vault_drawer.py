@@ -14,11 +14,10 @@ from .vault_table import VaultTable
 from .vault_item import AddKeyPressed, DeleteKeyPressed, ShowApPressed, VaultItemView, key_description
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, is_confirmed
-from wifit3.persist.config import Config
 from wifit3.ui.vault.job_pane import JobTrackerPane
 from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
 from wifit3.ui.vault.modals.confirm import ConfirmModal
-from wifit3.ui.vault.modals.nickname import NicknameModal
+from wifit3.ui.modals.nickname import NicknameModal
 
 
 def _ap_contents_text(captures: list[PersistedCapture], state: ApState) -> str:
@@ -231,15 +230,11 @@ class VaultDrawer(ModalScreen):
             self.notify("Select an AP first", severity="warning")
             return
 
-        def _save(value: Optional[str]) -> None:
-            if value is None:
-                return
-            Config.set_nickname(bssid, value)
-            self.app.persist_config()
-            self.query_one("#vault-table", VaultTable).reload_table()
-            self.notify("Nickname saved" if value else "Nickname cleared")
+        def _saved(saved: Optional[bool]) -> None:
+            if saved:
+                self.query_one("#vault-table", VaultTable).reload_table()
 
-        self.app.push_screen(NicknameModal(ssid, Config.nickname(bssid) or ""), _save)
+        self.app.push_screen(NicknameModal(ssid, bssid), _saved)
 
     def action_delete_ap(self) -> None:
         ssid, bssid = self._selected_network()
