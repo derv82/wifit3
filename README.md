@@ -39,7 +39,7 @@
 - **WEP Suite:** Pure Python ARP replay, ChopChop, Fake Authentication, and PTW key recovery.
 
 ### Vault & Cracking
-- **Vault:** Shows every capture per AP, its PSK status (current, stale or uncracked); search, nicknames, add credentials by hand; `Show AP` and `Verify` against the live AP.
+- **Vault:** Shows every capture per AP, its PSK status (current, stale or uncracked); search, add credentials by hand; `Show AP` and `Verify` against the live AP.
 - **Cracking:** Built-in CPU Crack, Hashcat (multiple wordlists; pause, resume, skip) and Hashtopolis; auto-crack after each capture; remembers which wordlists were tried.
 - **Wordlists:** Built-in default passwords, SSID variants, BSSID-based PSKs and probed SSIDs (also saved to a wordlist file).
 

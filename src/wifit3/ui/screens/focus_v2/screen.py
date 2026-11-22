@@ -62,6 +62,7 @@ from wifit3.ui import focus_model as fm, pmkid_log
 from wifit3.ui.capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_sta
 from wifit3.ui.eapol_aggregate import EapolAggregator
 from wifit3.ui.encryption_format import psk_capture_supported, wep_key_hex_and_ascii
+from wifit3.ui.modals.nickname import NicknameModal
 from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
 from wifit3.ui.screens.vault_item import key_text
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
@@ -157,14 +158,15 @@ class FocusViewV2(Screen):
     # Attack hotkeys come from the campaign registry
     BINDINGS = [
         Binding("escape", "go_back", "Back", show=True),
-        Binding("d", "deauth_all", "Deauth", show=True),
+        Binding("q", "app.quit", "Quit", show=True),
         *[Binding(cls.hotkey[0], f"campaign('{cls.key}')", cls.hotkey[1], show=True)
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("d", "deauth_all", "Deauth", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("s", "silence", "Silence", show=True),
         Binding("s", "unsilence", "unSilence", show=True),
-        Binding("q", "app.quit", "Quit", show=True),
     ]
 
     _DEAUTH_SEL_ROUNDS = 10
@@ -426,6 +428,9 @@ class FocusViewV2(Screen):
             guessid = self.app.guessid(ap)
             if guessid:
                 essid = f"{fm.truncate_ssid(guessid)}?"
+        nickname = Config.nickname(ap.bssid)
+        if nickname:
+            essid = fm.truncate_ssid(f"{nickname} ({essid})")
         rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
         return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
                     power_dbm=ap.signal, signal=rate,
@@ -1132,6 +1137,11 @@ class FocusViewV2(Screen):
 
     def action_unsilence(self) -> None:
         self._toggle_silence()
+
+    def action_set_nickname(self) -> None:
+        if self._target_ap is None:
+            return
+        self.app.push_screen(NicknameModal(self._target_ap.ssid, self._target_ap.bssid))
 
     def _toggle_silence(self) -> None:
         """Flip the focused AP's silenced state (campaigns off, handshakes/PMKIDs ignored)."""
