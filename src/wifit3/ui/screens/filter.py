@@ -70,7 +70,10 @@ class ScanFilter:
         if self.min_signal is not None and ap.signal <= self.min_signal:
             return False
         # The scanner runs this over every AP every tick, and the box is usually empty.
-        return not self.text or text_matches(self.text, ap.bssid, ssid or ap.ssid)
+        if not self.text:
+            return True
+        names = f"{Config.nickname(ap.bssid) or ''} {ssid or ap.ssid or ''}"
+        return text_matches(self.text, ap.bssid, names)
 
 
 class FilterBar(HorizontalScroll):

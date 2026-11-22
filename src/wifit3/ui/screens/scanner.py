@@ -37,6 +37,7 @@ from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
 from .filter import FilterBar, ScanFilter
+from ..modals.nickname import NicknameModal
 
 if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
@@ -159,16 +160,17 @@ class ScannerView(Screen):
 
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
-        Binding("c", "change_channel", "Channel Filter", show=True),
+        Binding("v", "open_vault", "Vault", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("e", "focus_encryption", "Encryption", show=True),
+        Binding("c", "change_channel", "Channels", show=True),
         Binding("p", "focus_power", "Power", show=True),
-        Binding("s", "cycle_sort", "Sort Col", show=True),
-        Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
         Binding("f", "focus_filter", "Filter", show=True),
         Binding("/", "focus_filter", "Filter", show=False),
-        Binding("l", "toggle_log", "Toggle Log", show=True),
-        Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
-        Binding("v", "open_vault", "Vault", show=True),
+        Binding("s", "cycle_sort", "Sort Col", show=True),
+        Binding("o", "toggle_sort_dir", "Sort Order", show=True),
+        Binding("l", "toggle_log", "Toggle Log", show=False),
+        Binding("w", "wps_pbc_mode", "WPS PBC", show=False),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
         Binding("g", "scroll_home", "Top", show=False, priority=True),
@@ -324,6 +326,7 @@ class ScannerView(Screen):
         row = APRow(
             bssid=ap.bssid,
             ssid=ap.ssid,
+            nickname=Config.nickname(ap.bssid),
             guessid=guessid,
             channel=ap.channel,
             signal=ap.signal,
@@ -367,7 +370,7 @@ class ScannerView(Screen):
             ap.wps, ap.wps_locked, ap.identity.summary,
             wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
             clients, is_stale, beacon_flash, guessid,
-            vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
+            vault.revision(ap.bssid), Config.is_silenced(ap.bssid), Config.nickname(ap.bssid),
         )
 
     def _evict_expired_aps(self) -> None:
@@ -561,6 +564,12 @@ class ScannerView(Screen):
             return
         self.app.target_ap = ap
         self.app.push_screen(self.app.focus_view)
+
+    def action_set_nickname(self) -> None:
+        ap = self.selected_ap()
+        if ap is None:
+            return
+        self.app.push_screen(NicknameModal(ap.ssid, ap.bssid))
 
     def action_open_vault(self) -> None:
         self.app.action_toggle_vault()

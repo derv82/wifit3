@@ -103,6 +103,13 @@ def test_hidden_ap_found_by_guessed_ssid():
     assert ScanFilter(text="castle").matches(hidden, ssid="Castle Crasher")
 
 
+def test_text_filter_matches_the_nickname_and_the_ssid():
+    Config.set_nickname("aa:bb:cc:dd:ee:ff", "Kitchen")
+    assert ScanFilter(text="kitch").matches(_ap(ssid="HomeNet"))
+    assert ScanFilter(text="kitchen homenet").matches(_ap(ssid="HomeNet"))
+    assert not ScanFilter(text="kitchenhomenet").matches(_ap(ssid="HomeNet"))
+
+
 # ---- ScanFilter min_signal -------------------------------------------------
 
 def test_min_signal_drops_aps_at_or_below_the_threshold():
