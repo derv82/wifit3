@@ -24,7 +24,7 @@ from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
 from wifit3.persist.meta import clear_meta_paths_cache, meta_path, read_meta, update_meta, update_meta_file
-from wifit3.persist.pcap import HandshakePcaps
+from wifit3.persist.pcap import FourWayHandshake, HandshakePcaps, read_handshakes
 from wifit3.persist.save import SaveResult
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
@@ -100,6 +100,7 @@ class Vault:
     def __init__(self) -> None:
         self._index: Dict[str, List[PersistedCapture]] = {}
         self._ap_states: Dict[str, ApState] = {}
+        self._pcap_handshakes: Dict[str, tuple[FourWayHandshake, ...]] = {}
         self._change_listeners: list[Callable[[Optional[str]], None]] = []
         self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
         self._refresh_count = 0
@@ -153,9 +154,11 @@ class Vault:
         if bssid is None:
             self._refresh_count += 1
             self._ap_states.clear()
+            self._pcap_handshakes.clear()
         else:
             self._change_counts[bssid] = self._change_counts.get(bssid, 0) + 1
             self._ap_states.pop(bssid, None)
+            self._pcap_handshakes.pop(bssid, None)
         for listener in self._change_listeners:
             try:
                 listener(bssid)
@@ -186,6 +189,17 @@ class Vault:
                 self._ap_states.pop(bssid, None)
             self._record_pcap_dates(state)
         return state
+
+    def pcap_handshakes(self, bssid: str) -> tuple[FourWayHandshake, ...]:
+        """The AP's 4-ways read from its pcaps, newest first, cached until the AP changes."""
+        handshakes = self._pcap_handshakes.get(bssid)
+        if handshakes is None:
+            revision = self.revision(bssid)
+            paths = [Path(c.path) for c in self.persisted(bssid) if c.path.endswith(".pcap")]
+            handshakes = self._pcap_handshakes[bssid] = tuple(read_handshakes(bssid, self.ssid(bssid), paths))
+            if self.revision(bssid) != revision:    # changed by another thread meanwhile
+                self._pcap_handshakes.pop(bssid, None)
+        return handshakes
 
     @staticmethod
     def _record_pcap_dates(state: ApState) -> None:
@@ -324,7 +338,16 @@ class Vault:
     def save_handshake(self, ap: "AccessPoint", client_mac: str) -> Optional[HashlineSaveResult]:
         result = self._save_hashlines(ap, CaptureType.HS, lambda: save.save_handshake(ap, client_mac))
         if result is not None and Config.save_pcap:
-            self._handshake_pcaps.save(ap, client_mac)
+            written = self._handshake_pcaps.save(ap, client_mac)
+            indexed = {c.path for c in self.persisted(ap.bssid)}
+            for path in written:
+                if str(path) not in indexed:
+                    epoch = int(LEGACY_CAPTURE_RE.match(path.name).group("epoch"))
+                    self._index.setdefault(ap.bssid, []).insert(0, PersistedCapture(
+                        type=CaptureType.HS, timestamp=epoch, path=str(path), bssid=ap.bssid,
+                        ssid=safe_ssid(ap.ssid)))
+            if written:
+                self.notify_changed(ap.bssid)
         return result
 
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[HashlineSaveResult]:

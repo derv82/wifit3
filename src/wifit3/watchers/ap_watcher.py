@@ -209,7 +209,8 @@ class HandshakeDetector:
         events = []
         for anonce, pair in handshake.valid_pairs_by_instance().items():
             first, second = sorted((pair.anonce_frame.msg_num, pair.mic_frame.msg_num))
-            msg_nums = sorted({m.msg_num for m in wpa.handshake_messages(handshake, pair)})
+            messages = wpa.handshake_messages(handshake, pair)
+            msg_nums = {m.msg_num for m in messages}
             instance = HandshakeInstance(ap.bssid, client_mac, anonce,
                                          authorized=second > 2, has_m4=4 in msg_nums)
             if instance in self._reported_instances:
@@ -220,7 +221,7 @@ class HandshakeDetector:
                 ssid=ap.ssid,
                 channel=ap.channel,
                 client_mac=client_mac,
-                messages_label="+".join(f"M{n}" for n in msg_nums),
+                messages_label=wpa.messages_label(messages),
                 authorized=instance.authorized,
             ))
         return events

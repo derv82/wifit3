@@ -24,6 +24,7 @@ from wifit3.persist.meta import meta_path, read_meta, update_meta
 from wifit3.persist.pcap import write_pcap
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
 from tests.hashline_dates import write_hashline_dates
+from tests.persist.test_pcap import _beacon, _m1_m2
 
 
 _PMKID_AND_EAPOL_LINES = (f"WPA*01*{'00' * 16}*001122334403*aabbccddeeff*4e6574***\n"
@@ -245,6 +246,28 @@ def test_save_handshake_writes_a_pcap_only_when_save_pcap_is_on(tmp_path, monkey
     monkeypatch.setattr(Config, "save_pcap", True)
     v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
     assert len(list(tmp_path.glob("*_handshake.pcap"))) == 1
+
+
+def test_save_handshake_indexes_its_new_pcap(tmp_path):
+    v = Vault()
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    [pcap] = tmp_path.glob("*_handshake.pcap")
+    assert str(pcap) in [c.path for c in v.persisted("aa:bb:cc:dd:ee:ff")]
+
+
+def test_pcap_handshakes_is_dropped_on_notify_changed(tmp_path):
+    bssid = "02:00:00:00:00:01"
+    write_pcap(tmp_path / "HomeNet_02-00-00-00-00-01_1700000000_handshake.pcap",
+               [(_beacon(), 999.0), *_m1_m2(1, 1000.0)])
+    v = Vault()
+    handshakes = v.pcap_handshakes(bssid)
+    assert len(handshakes) == 1
+    assert v.pcap_handshakes(bssid) is handshakes
+    v.notify_changed(bssid)
+    assert v.pcap_handshakes(bssid) is not handshakes
+    handshakes = v.pcap_handshakes(bssid)
+    v.notify_changed(None)
+    assert v.pcap_handshakes(bssid) is not handshakes
 
 
 # ---- known_psk / has_psk: session fields OR a prior-session WPS file ---------
@@ -564,7 +587,7 @@ def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
     ap = _ap_with_hs(pmkid=b"\x11" * 16)
 
     v.save_handshake(ap, _CLIENT)
-    assert [_submitted(c) for c in v.manager.submit_job.call_args_list] == [_auto_crack_call(v.persisted(ap.bssid)[0])]
+    assert [_submitted(c) for c in v.manager.submit_job.call_args_list] == [_auto_crack_call(v.ap_state(ap.bssid).hashline_capture)]
 
     ap.handshakes[_CLIENT].messages[0] = _ef(1, nonce=b"\xA1" + b"\x00" * 31,
                                              payload_mic=b"\x00" * 16)
@@ -573,7 +596,7 @@ def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
 
     v.save_pmkid(ap, _CLIENT)
     assert v.manager.submit_job.call_count == 2
-    assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(v.persisted(ap.bssid)[0])
+    assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(v.ap_state(ap.bssid).hashline_capture)
 
 
 def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
@@ -585,7 +608,7 @@ def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
     v.save_handshake(_ap_with_hs(), _CLIENT)
     probed_ssids.add("Later_SSID")
 
-    capture = v.persisted(_ap_with_hs().bssid)[0]
+    capture = v.ap_state(_ap_with_hs().bssid).hashline_capture
     assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(capture, ["Alpha_SSID", "Zeta_SSID"])
 
 
@@ -752,7 +775,7 @@ def test_save_submits_to_the_chosen_tool_with_its_saved_settings(tmp_path, mocke
 
     v.save_handshake(_ap_with_hs(), _CLIENT)
 
-    capture = v.persisted(_ap_with_hs().bssid)[0]
+    capture = v.ap_state(_ap_with_hs().bssid).hashline_capture
     assert v.manager.submit_job.call_args == (
         ("hashcat", capture, {"hashcat_exe": "/usr/bin/hashcat", "wordlists": ["/lists/a.txt"],
                               "hashcat_args": "-w 3", "default_passwords": True,

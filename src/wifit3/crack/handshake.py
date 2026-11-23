@@ -43,7 +43,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.dot11.eapol import AES_128_CMAC, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
@@ -329,6 +329,11 @@ def handshake_messages(hs: Handshake, pair: CrackablePair) -> List[HandshakeMess
                     messages.append(f)
                     break
     return messages
+
+
+def messages_label(messages: Iterable[HandshakeMessage]) -> str:
+    """``M1+M2+M3+M4``: the message numbers present, ascending."""
+    return "+".join(f"M{n}" for n in sorted({m.msg_num for m in messages}))
 
 
 def crackable_captures(ap: AccessPoint) -> set[tuple[str, bytes]]:
