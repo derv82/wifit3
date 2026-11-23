@@ -188,7 +188,7 @@ class KeyRow(VerticalGroup):
         details = [_status_reason(self.key, self.status)]
         total = len(self._state.hashlines)
         if self.key.type == CaptureType.WPA_PSK and total:
-            details.insert(0, f"{len(self.key.hashline_ids)}/{total} captures")
+            details.insert(0, f"{len(self.key.hashline_ids)}/{total} hashlines")
         return ", ".join(details)
 
     def _show_expansion(self, expanded: bool) -> None:

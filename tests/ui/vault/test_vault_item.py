@@ -59,5 +59,5 @@ async def test_key_row_takes_its_keys_status_and_says_why():
     current_row, guess_row = await _row(current, state), await _row(guess, state)
 
     assert current_row.has_class("-current") and guess_row.has_class("-not-verified")
-    assert "(0/1 captures, verified)" in current_row._summary_markup()
-    assert "(0/1 captures, not verified yet)" in guess_row._summary_markup()
+    assert "(0/1 hashlines, verified)" in current_row._summary_markup()
+    assert "(0/1 hashlines, not verified yet)" in guess_row._summary_markup()

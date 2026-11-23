@@ -18,7 +18,9 @@ from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.exhaustion import record_exhausted
 from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
+from wifit3.persist.pcap import write_pcap
 from wifit3.ui.screens.vault.drawer import VaultDrawer, _ap_contents_text
+from wifit3.ui.screens.vault.handshakes import UncrackedHandshakeList
 from wifit3.ui.screens.vault.table import VaultTable
 from wifit3.ui.screens.vault.hashlines import (CrackerButton, UncrackedHashlineList, exhausted_count_text,
                                                hashline_groups, hashline_prompt, _exhausted_names)
@@ -29,6 +31,7 @@ from wifit3.ui.screens.vault.modals.add_credential import ManualCredential
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
+from tests.persist.test_pcap import _BSSID, _PSK, _SSID, _beacon, _m1_m2
 
 _EAPOL_LINE = ("WPA*02*" + "0" * 32 + "*aabbccddeeff*112233445566*5465737431*" + "a" * 64 + "*"
                + "00" * 99 + "*02\n")
@@ -320,11 +323,11 @@ async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocke
         mocker.patch.object(app, "push_screen", side_effect=lambda modal, callback: callback({"wordlists": []}))
         uncracked = item.query_one(UncrackedHashlineList)
         groups = uncracked.groups()
-        assert "3 captures selected" in str(item.query_one(".selected-count", Label).content)
+        assert "3 hashlines selected" in str(item.query_one(".selected-count", Label).content)
 
         uncracked.deselect(groups[0])
         await pilot.pause(0)
-        assert "2 captures selected" in str(item.query_one(".selected-count", Label).content)
+        assert "2 hashlines selected" in str(item.query_one(".selected-count", Label).content)
         next(b for b in item.query(CrackerButton).results(CrackerButton) if b.tool.name == ToolName.CPU_CRACK).press()
         await pilot.pause(0)
 
@@ -334,3 +337,63 @@ async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocke
         uncracked.deselect_all()
         await pilot.pause(0)
         assert all(button.disabled for button in item.query(CrackerButton).results(CrackerButton))
+
+
+def _write_handshake_pcap(tmp_path) -> None:
+    """A HomeNet pcap holding one M1+M2 that ``_PSK`` cracks."""
+    write_pcap(tmp_path / f"{_SSID}_{_BSSID.replace(':', '-')}_1000_handshake.pcap",
+               [(_beacon(), 1000.0), *_m1_m2(1, 1000.0)])
+
+
+@pytest.mark.asyncio
+async def test_an_ap_with_a_crackable_pcap_lists_its_uncracked_handshake(tmp_path):
+    _write_handshake_pcap(tmp_path)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, _BSSID)
+        panel = item.query_one(_ApStatePanel)
+
+        assert panel._handshake_section.display
+        assert " ".join(str(label.content) for label in panel._handshake_section.query(Label)) == \
+            "UNCRACKED HANDSHAKES (1/1 captures)"
+        assert item.query_one(UncrackedHandshakeList).option_count == 1
+
+
+@pytest.mark.asyncio
+async def test_saving_the_psk_hides_the_uncracked_handshakes(tmp_path):
+    _write_handshake_pcap(tmp_path)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, _BSSID)
+        panel = item.query_one(_ApStatePanel)
+
+        app.vault.save_wpa_psk(_SSID, _BSSID, _PSK)
+        item.load(_BSSID, _SSID)
+        await _wait_until(pilot, lambda: not panel._handshake_section.display)
+
+
+@pytest.mark.asyncio
+async def test_the_dwpa_button_is_disabled_with_a_work_in_progress_tooltip(tmp_path):
+    _write_handshake_pcap(tmp_path)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, _BSSID)
+        button = item.query_one(_ApStatePanel)._dwpa_button
+
+        assert button.disabled
+        assert button.tooltip == "Not implemented yet; work in progress"
+
+
+@pytest.mark.asyncio
+async def test_none_crackable_shows_only_for_pcaps_without_a_crackable_4way(tmp_path):
+    _write_handshake_pcap(tmp_path)
+    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_handshake.pcap").write_bytes(b"")
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, _BSSID)
+        assert not item.query_one(_ApStatePanel)._no_crackable_label.display
+
+        item.load("aa:bb:cc:dd:ee:ff", "HomeNet")
+        await _wait_until(pilot, lambda: item.query_one(_ApStatePanel)._no_crackable_label.display)
+        assert str(item.query_one(_ApStatePanel)._no_crackable_label.content) == \
+            f"1 capture, none crackable ({date_text(1700000000)})"

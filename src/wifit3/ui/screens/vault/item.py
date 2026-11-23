@@ -17,10 +17,12 @@ from wifit3.campaigns.campaign import Campaign
 from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, DatedHashline, Key, PasswordStatus
+from wifit3.persist.pcap import FourWayHandshake
 from wifit3.ui.colors import KEY_CHIP_STYLE, PASSWORD_MISMATCH_COLOR
 from wifit3.ui.screens.vault.breakpoints import NARROW, SHORT, TALL, TINY, WIDE
-from wifit3.ui.screens.vault.hashlines import (CrackerButton, UncrackedHashlineList, captures_count_markup,
-                                               exhausted_count_text, hashline_groups, hashline_prompt,
+from wifit3.ui.screens.vault.handshakes import UncrackedHandshakeList, captures_count_markup, handshake_prompt
+from wifit3.ui.screens.vault.hashlines import (CrackerButton, UncrackedHashlineList, exhausted_count_text,
+                                               hashline_groups, hashline_prompt, hashlines_count_markup,
                                                selected_count_text)
 from wifit3.ui.screens.vault.key_row import KEY_KINDS, KeyRow, key_text
 from wifit3.ui.screens.vault.rows import date_text
@@ -164,8 +166,14 @@ class _ApStatePanel(VerticalGroup):
         self._uncracked_list = UncrackedHashlineList(classes="uncracked")
         self._selected_count_label = Label("", classes="selected-count")
         self._cracker_buttons = [CrackerButton(tool) for tool in self.app.vault.manager.tools.values()]
+        self._handshake_section = VerticalGroup(classes="uncracked-section")
+        self._handshake_count_label = Label("")
+        self._handshake_list = UncrackedHandshakeList(classes="uncracked")
+        self._dwpa_button = Button("DWPA", "primary", classes="tool-btn", disabled=True,
+                                   tooltip="Not implemented yet; work in progress")
 
-    async def show(self, state: ApState, expanded_key_ids: frozenset[tuple[CaptureType, str]],
+    async def show(self, state: ApState, handshakes: tuple[FourWayHandshake, ...],
+                   expanded_key_ids: frozenset[tuple[CaptureType, str]],
                    unticked_hashline_ids: frozenset[str]) -> None:
         """Update the widgets in place for ``state``; for the same AP, keep the focus, the highlighted
         hashline and each list's scroll."""
@@ -175,6 +183,9 @@ class _ApStatePanel(VerticalGroup):
         uncracked = self._uncracked_list
         uncracked_scroll = uncracked.scroll_y if same_ap else 0.0
         highlighted = uncracked.highlighted_group() if same_ap else None
+        handshake_list = self._handshake_list
+        handshake_scroll = handshake_list.scroll_y if same_ap else 0.0
+        highlighted_handshake = handshake_list.highlighted_handshake() if same_ap else None
         show_client, show_ssid = _client_and_ssid_columns(state)
         async with self.batch():
             self._state = state
@@ -183,15 +194,17 @@ class _ApStatePanel(VerticalGroup):
             self._status_label.update(Content.from_markup(_status_markup(state)))
             self._no_keys_label.display = not state.keys
             files = state.handshake_and_pmkid_files
-            self._no_crackable_label.display = bool(files and not state.hashlines)
+            self._no_crackable_label.display = bool(files and not state.hashlines and not handshakes)
             if files:
                 self._no_crackable_label.update(_no_crackable_text(files))
             self._show_uncracked(state, show_client, show_ssid, unticked_hashline_ids)
+            self._show_handshakes(state, handshakes, show_ssid)
         focused = self.screen.focused
         if focused is not None and self in focused.ancestors and focused not in self.screen.focus_chain:
             focused.blur()
         self.call_after_refresh(self._restore, focus_key, history_scroll, uncracked_scroll,
-                                highlighted[0].id if highlighted else None)
+                                highlighted[0].id if highlighted else None,
+                                handshake_scroll, highlighted_handshake)
 
     async def _show_ssid_lines(self, state: ApState) -> None:
         texts = _ssid_texts(state)
@@ -230,7 +243,8 @@ class _ApStatePanel(VerticalGroup):
 
     def _restore(self, focus_key: Optional[tuple[tuple[CaptureType, str], int]],
                  history_scroll: dict[tuple[CaptureType, str], float], uncracked_scroll: float,
-                 highlighted_hashline_id: Optional[str]) -> None:
+                 highlighted_hashline_id: Optional[str], handshake_scroll: float,
+                 highlighted_handshake: Optional[FourWayHandshake]) -> None:
         for row in self.key_rows:
             row.history_rows.scroll_to(y=history_scroll.get(row.key.id, 0.0), animate=False)
         uncracked = self._uncracked_list
@@ -239,6 +253,10 @@ class _ApStatePanel(VerticalGroup):
         if index is not None:
             uncracked.highlighted = index
         uncracked.scroll_to(y=uncracked_scroll, animate=False)
+        handshake_list = self._handshake_list
+        if highlighted_handshake in handshake_list.handshakes:
+            handshake_list.highlighted = handshake_list.handshakes.index(highlighted_handshake)
+        handshake_list.scroll_to(y=handshake_scroll, animate=False)
         if focus_key is not None:
             key_id, button_index = focus_key
             button = next((row.buttons[button_index] for row in self.key_rows if row.key.id == key_id), None)
@@ -267,12 +285,20 @@ class _ApStatePanel(VerticalGroup):
         with self._uncracked_section:
             yield Rule(classes="uncracked-rule")
             with Horizontal(classes="section-line"):
-                yield Label("UNCRACKED", classes="section")
+                yield Label("UNCRACKED HASHES", classes="section")
                 yield self._uncracked_count_label
             yield self._uncracked_list
             yield self._selected_count_label
             with Horizontal(classes="tools"):
                 yield from self._cracker_buttons
+        with self._handshake_section:
+            yield Rule(classes="uncracked-rule")
+            with Horizontal(classes="section-line"):
+                yield Label("UNCRACKED HANDSHAKES", classes="section")
+                yield self._handshake_count_label
+            yield self._handshake_list
+            with Horizontal(classes="tools"):
+                yield self._dwpa_button
 
     def _show_uncracked(self, state: ApState, show_client: bool, show_ssid: bool,
                         unticked_hashline_ids: frozenset[str]) -> None:
@@ -280,7 +306,7 @@ class _ApStatePanel(VerticalGroup):
         self._uncracked_section.display = bool(uncracked)
         exhausted = state.exhausted_wordlists
         self._uncracked_count_label.update(
-            Content.from_markup(captures_count_markup(len(uncracked), len(state.hashlines))))
+            Content.from_markup(hashlines_count_markup(len(uncracked), len(state.hashlines))))
         groups = hashline_groups(uncracked)
         ticked = [not all(h.id in unticked_hashline_ids for h in group) for group in groups]
         exhausted_counts = [exhausted_count_text(group, exhausted) for group in groups]
@@ -293,6 +319,18 @@ class _ApStatePanel(VerticalGroup):
         uncracked_lines = [h.line for h in uncracked]
         for button in self._cracker_buttons:
             button.display = state.hashline_capture is not None and button.tool.can_crack(uncracked_lines)
+
+    def _show_handshakes(self, state: ApState, handshakes: tuple[FourWayHandshake, ...],
+                         show_ssid: bool) -> None:
+        psks = [key.value for key in state.keys if key.type == CaptureType.WPA_PSK]
+        uncracked = tuple(h for h in handshakes if not any(h.matches_psk(psk) for psk in psks))
+        self._handshake_section.display = bool(uncracked)
+        self._handshake_count_label.update(
+            Content.from_markup(captures_count_markup(len(uncracked), len(handshakes))))
+        show_client = len({h.client_mac for h in handshakes}) > 1
+        label_width = max((len(h.messages_label) for h in uncracked), default=0)
+        self._handshake_list.show(uncracked, [handshake_prompt(h, show_client, show_ssid, label_width)
+                                              for h in uncracked])
 
     def _show_selected_count(self, selected: list[Hc22000Line]) -> None:
         self._selected_count_label.update(selected_count_text(len(selected)))
@@ -363,17 +401,20 @@ class VaultItemView(Vertical):
         self._bssid = ""
         self._ssid: Optional[str] = None
         self._state: Optional[ApState] = None
+        self._handshakes: tuple[FourWayHandshake, ...] = ()
 
     def load(self, bssid: str, ssid: Optional[str]) -> None:
         """Show this AP. Reloading the AP in view keeps the pane's scroll, the focus, each list's
         scroll, and what the user expanded and ticked."""
         state = self.app.vault.ap_state(bssid) if bssid else None
-        if (bssid, ssid, state) == (self._bssid, self._ssid, self._state):
+        handshakes = self.app.vault.pcap_handshakes(bssid) if bssid else ()
+        if (bssid, ssid, state) == (self._bssid, self._ssid, self._state) and handshakes is self._handshakes:
             return
-        same_ap, same_state = bssid == self._bssid, state == self._state
+        same_ap = bssid == self._bssid
+        same_state = state == self._state and handshakes is self._handshakes
         if not same_ap:
             self.history_expanded_by_user.clear()
-        self._bssid, self._ssid, self._state = bssid, ssid, state
+        self._bssid, self._ssid, self._state, self._handshakes = bssid, ssid, state, handshakes
         if state is not None:
             self._set_title()
         if same_ap and same_state:
@@ -389,7 +430,7 @@ class VaultItemView(Vertical):
                 await self.recompose()
             panel = self._panel()
             if state is not None and panel is not None:
-                await panel.show(state, *self._panel_choices(state))
+                await panel.show(state, self._handshakes, *self._panel_choices(state))
 
     def _panel(self) -> Optional[_ApStatePanel]:
         return next(iter(self.query_children(_ApStatePanel).results(_ApStatePanel)), None)

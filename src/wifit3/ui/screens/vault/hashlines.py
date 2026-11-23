@@ -32,12 +32,12 @@ def hashline_groups(hashlines: tuple[DatedHashline, ...]) -> list[HashlineGroup]
     return [tuple(group) for _, group in groupby(hashlines, same)]
 
 
-def captures_count_markup(count: int, total: int) -> str:
-    return f"[dim]({count}/{total} captures)[/]"
+def hashlines_count_markup(count: int, total: int) -> str:
+    return f"[dim]({count}/{total} hashlines)[/]"
 
 
 def selected_count_text(count: int) -> str:
-    return f"{count} capture{'' if count == 1 else 's'} selected"
+    return f"{count} hashline{'' if count == 1 else 's'} selected"
 
 
 def _wordlists_text(count: int) -> str:
