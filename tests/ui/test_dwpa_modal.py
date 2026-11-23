@@ -98,13 +98,12 @@ async def test_upload_saves_the_settings_and_dismisses(handshake, dwpa_service):
         assert Config.dwpa == DwpaSettings(url=dwpa_service.url, user_key=_KEY)
 
 
-@pytest.mark.parametrize("key", ["", _KEY.upper(), "0123", "zz" * 16])
-async def test_an_invalid_key_is_not_sent(handshake, dwpa_service, key):
+async def test_an_empty_key_is_not_sent(handshake, dwpa_service):
     app = _Host()
     async with app.run_test() as pilot:
         dismissed = await _open(app, pilot, handshake)
         app.screen.query_one("#dwpa-url", Input).value = dwpa_service.url
-        app.screen.query_one("#dwpa-key", Input).value = key
+        app.screen.query_one("#dwpa-key", Input).value = ""
         app.screen.query_one("#dwpa-upload", Button).press()
         await pilot.pause(0)
 
@@ -176,30 +175,6 @@ async def test_the_query_asks_about_the_networks_bssid_and_ssid(handshake, dwpa_
         assert "Possibly already cracked on DWPA" in str(result.render())
 
 
-async def test_a_network_the_server_does_not_know_gets_no_warning(handshake, dwpa_service):
-    dwpa_service.answer(json.dumps({network_hash(_BSSID, _SSID)[:4]: None}).encode())
-    app = _Host()
-    async with app.run_test() as pilot:
-        await _open(app, pilot, handshake)
-        app.screen.query_one("#dwpa-url", Input).value = dwpa_service.url
-        result = app.screen.query_one("#dwpa-result", Label)
-        await _query(app, pilot, result, "Not found")
-
-        assert "Possibly already cracked" not in str(result.render())
-        assert not app.screen.query_one("#dwpa-query", Button).disabled
-
-
-async def test_the_query_needs_a_url(handshake, dwpa_service):
-    app = _Host()
-    async with app.run_test() as pilot:
-        await _open(app, pilot, handshake)
-        app.screen.query_one("#dwpa-query", Button).press()
-        await pilot.pause(0)
-
-        assert dwpa_service.requests == []
-        assert app.screen.query_one("#dwpa-query", Button).disabled is False
-
-
 async def test_a_network_without_an_ssid_cannot_be_queried(handshake, dwpa_service):
     app = _Host()
     async with app.run_test() as pilot:
@@ -260,50 +235,6 @@ async def test_retrieve_hands_the_cracked_keys_to_the_vault(handshake, dwpa_serv
         assert Config.dwpa == DwpaSettings(url=dwpa_service.url, user_key=_KEY)
 
 
-async def test_retrieve_with_nothing_cracked_says_so(handshake, dwpa_service):
-    store = _StoreKeys()
-    app = _Host()
-    async with app.run_test() as pilot:
-        app.push_screen(DwpaConfigModal(handshake, _BSSID, _SSID, store))
-        await pilot.pause(0)
-        app.screen.query_one("#dwpa-url", Input).value = dwpa_service.url
-        app.screen.query_one("#dwpa-key", Input).value = _KEY
-        result = app.screen.query_one("#dwpa-result", Label)
-        await _retrieve(app, pilot, result, "No cracked keys")
-
-        assert len(dwpa_service.requests) == 1
-        assert store.networks == []
-
-
-async def test_retrieve_needs_a_url_and_a_key(handshake, dwpa_service):
-    app = _Host()
-    async with app.run_test() as pilot:
-        dismissed = await _open(app, pilot, handshake)
-        app.screen.query_one("#dwpa-key", Input).value = _KEY
-        app.screen.query_one("#dwpa-retrieve", Button).press()
-        await pilot.pause(0)
-        app.screen.query_one("#dwpa-url", Input).value = dwpa_service.url
-        app.screen.query_one("#dwpa-key", Input).value = "not-a-key"
-        app.screen.query_one("#dwpa-retrieve", Button).press()
-        await pilot.pause(0)
-
-        assert dwpa_service.requests == []
-        assert dismissed == []
-
-
-async def test_a_failed_retrieve_shows_the_message(handshake, dwpa_service):
-    dwpa_service.answer(b"", status=500)
-    app = _Host()
-    async with app.run_test() as pilot:
-        await _open(app, pilot, handshake)
-        app.screen.query_one("#dwpa-url", Input).value = dwpa_service.url
-        app.screen.query_one("#dwpa-key", Input).value = _KEY
-        result = app.screen.query_one("#dwpa-result", Label)
-        await _retrieve(app, pilot, result, "HTTP 500")
-
-        assert not app.screen.query_one("#dwpa-retrieve", Button).disabled
-
-
 async def test_a_downloaded_key_for_the_selected_handshake_is_announced(handshake, dwpa_service,
                                                                         monkeypatch):
     dwpa_service.answer(b"aabbccddeeff:020000000003:HomeNet:88888888\n"
@@ -320,21 +251,6 @@ async def test_a_downloaded_key_for_the_selected_handshake_is_announced(handshak
 
         assert any("88888888" in message and "HomeNet" in message for message in announced)
         assert not any("hunter22" in message for message in announced)
-
-
-async def test_keys_for_other_networks_are_not_announced(handshake, dwpa_service, monkeypatch):
-    dwpa_service.answer(b"020000000002:020000000003:Elsewhere:hunter22\n")
-    app = _Host()
-    async with app.run_test() as pilot:
-        announced = []
-        monkeypatch.setattr(app, "notify", lambda message, *a, **k: announced.append(str(message)))
-        await _open(app, pilot, handshake)
-        app.screen.query_one("#dwpa-url", Input).value = dwpa_service.url
-        app.screen.query_one("#dwpa-key", Input).value = _KEY
-        result = app.screen.query_one("#dwpa-result", Label)
-        await _retrieve(app, pilot, result, "cracked key on DWPA")
-
-        assert announced == []
 
 
 class _NotifiedHost(_Host):

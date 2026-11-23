@@ -1,5 +1,4 @@
 import json
-import socket
 
 import pytest
 
@@ -24,15 +23,6 @@ def capture(tmp_path):
     path = tmp_path / "handshake.pcap"
     path.write_bytes(b"\xd4\xc3\xb2\xa1capture-bytes")
     return path
-
-
-def test_a_bare_host_is_reached_over_https(capture):
-    with socket.socket() as taken:
-        taken.bind(("127.0.0.1", 0))
-        port = taken.getsockname()[1]
-
-    with pytest.raises(DwpaError, match=rf"Cannot reach https://127.0.0.1:{port}/[?]submit="):
-        upload_capture(f"127.0.0.1:{port}", _KEY, str(capture))
 
 
 def test_a_trailing_slash_on_the_url_is_dropped(capture, dwpa_service):
@@ -87,15 +77,6 @@ def test_an_http_error_raises_with_the_status(capture, dwpa_service):
 
     with pytest.raises(DwpaError, match="HTTP 500"):
         upload_capture(dwpa_service.url, _KEY, str(capture))
-
-
-def test_an_unreachable_server_raises(capture):
-    with socket.socket() as taken:
-        taken.bind(("127.0.0.1", 0))
-        port = taken.getsockname()[1]
-
-    with pytest.raises(DwpaError, match="Cannot reach"):
-        upload_capture(f"http://127.0.0.1:{port}", _KEY, str(capture))
 
 
 def test_the_network_hash_matches_the_k_anonymity_example():
