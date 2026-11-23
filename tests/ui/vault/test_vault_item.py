@@ -3,7 +3,9 @@ import time
 from wifit3.crack.hc22000_format import hashline_id, parse_hc22000
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, DatedHashline, Key, PasswordStatus
-from wifit3.ui.screens.vault.item import _KeyRow, date_text, hashline_groups, key_text
+from wifit3.ui.screens.vault.hashlines import hashline_groups
+from wifit3.ui.screens.vault.key_row import KeyRow, key_text
+from wifit3.ui.screens.vault.rows import date_text
 
 _LINE = "WPA*02*{mic}*aabbccddeeff*{sta}*486f6d65*" + "a" * 64 + "*" + "00" * 99 + "*{pair}"
 
@@ -40,8 +42,8 @@ def test_hashline_groups_join_runs_from_one_minute_pair_and_client():
     assert [len(group) for group in hashline_groups(lines)] == [2, 1, 1]
 
 
-async def _row(key: Key, state: ApState) -> _KeyRow:
-    row = _KeyRow()
+async def _row(key: Key, state: ApState) -> KeyRow:
+    row = KeyRow()
     await row.show(key, state, show_client=False, show_ssid=False, expanded=False)
     return row
 

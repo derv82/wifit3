@@ -1,38 +1,29 @@
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass
-from itertools import groupby
-from typing import Mapping, Optional
+from typing import Optional
 
 from rich.markup import escape
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalGroup, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalGroup
 from textual.content import Content
-from textual.events import MouseMove, Resize
+from textual.events import Resize
 from textual.message import Message
-from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Label, Rule, SelectionList, Static
 from textual.widgets.selection_list import Selection
 
 from wifit3.campaigns.campaign import Campaign
-from wifit3.campaigns.pin import EMPTY_PIN_LABEL
 from wifit3.crack.hc22000_format import Hc22000Line
-from wifit3.models import CREDENTIAL_NAMES, CaptureType, PersistedCapture
-from wifit3.persist.ap_state import (
-    ApState,
-    DatedHashline,
-    Key,
-    LiveVerification,
-    PasswordStatus,
-    epoch_sort_key,
-)
-from wifit3.persist.exhaustion import ExhaustedWordlist
+from wifit3.models import CaptureType, PersistedCapture
+from wifit3.persist.ap_state import ApState, DatedHashline, Key, PasswordStatus
 from wifit3.ui.colors import KEY_CHIP_STYLE, PASSWORD_MISMATCH_COLOR
-from wifit3.ui.encryption_format import wep_key_ascii
 from wifit3.ui.screens.vault.breakpoints import NARROW, SHORT, TALL, TINY, WIDE
+from wifit3.ui.screens.vault.hashlines import (CrackerButton, UncrackedHashlineList, captures_count_markup,
+                                               exhausted_count_text, hashline_groups, hashline_prompt,
+                                               selected_count_text)
+from wifit3.ui.screens.vault.key_row import KEY_KINDS, KeyRow, key_text
+from wifit3.ui.screens.vault.rows import date_text
 from wifit3.ui.vault.tools_ui import UI_TOOLS
 from wifit3.vault.tools.base import VaultTool
 
@@ -43,158 +34,13 @@ _STATUS_COLOR = {
     PasswordStatus.STALE: PASSWORD_MISMATCH_COLOR,
     PasswordStatus.NOT_CRACKED: "$text-error",
 }
-_AUTHORIZED_TOOLTIP = "[$text-success]authorized:[/] PMKID or M3/M4 (the AP accepted this password)"
-_CHALLENGE_TOOLTIP = "[$text-warning]challenge:[/] No M3/M4 (could be a wrong password)"
-_EXPAND_LABEL, _COLLAPSE_LABEL = "▶", "▼"
 _SHOW_AP_TOOLTIP = "Focus this AP"
-_EXPAND_TOOLTIP, _COLLAPSE_TOOLTIP = "Show captures and verifications", "Hide captures and verifications"
-
-
-@dataclass(frozen=True)
-class _KeyKind:
-    badge: str          # before the value in its row, and on the status chip
-    badge_color: str
-
-
-_KEY_KINDS = {
-    CaptureType.WPA_PSK: _KeyKind("PSK", "$text-success"),
-    CaptureType.WPS_PIN: _KeyKind("WPS", "$text-accent"),
-    CaptureType.WEP: _KeyKind("WEP", "$text-secondary"),
-}
-_TOGGLE_WIDTH = 3
-_BADGE_WIDTH = max(len(kind.badge) for kind in _KEY_KINDS.values())
-_VALUE_COLUMN = _TOGGLE_WIDTH + _BADGE_WIDTH + 2       # a space after the badge, then the chip's own space
 _LIST_INDENT = 2                                        # the UNCRACKED rows under their header
-
-_HashlineGroup = tuple[DatedHashline, ...]
-
-
-def key_description(key: Key) -> str:
-    """``PSK hunter22``, ``WPS PIN 12345670``, ``WEP key abcde``."""
-    return f"{CREDENTIAL_NAMES[key.type]} {key_text(key)}"
-
-
-def _status_reason(key: Key, status: PasswordStatus) -> str:
-    if status is PasswordStatus.CURRENT:
-        return "verified"
-    if status is PasswordStatus.STALE:
-        return "stale"
-    if key.manual_capture_names:
-        return "added, unverified"
-    return "not verified yet"
-
-
-def key_text(key: Key) -> str:
-    """The key as the user types it: a WEP key in ASCII when printable, else hex."""
-    if key.type == CaptureType.WEP:
-        return wep_key_ascii(key.value) or key.value
-    if key.type == CaptureType.WPS_PIN:
-        return key.value or EMPTY_PIN_LABEL
-    return key.value
-
-
-def date_text(epoch: Optional[int]) -> str:
-    """``today  19:37``, ``Oct 22 19:37``, ``Oct 22 2025``; ``no date`` for None."""
-    if epoch is None:
-        return "no date"
-    moment, now = time.localtime(epoch), time.localtime()
-    if moment.tm_year != now.tm_year:
-        return time.strftime("%b %d %Y", moment)
-    if moment.tm_yday == now.tm_yday:
-        return time.strftime("today  %H:%M", moment)
-    return time.strftime("%b %d %H:%M", moment)
-
-
-def _client_text(hashline: DatedHashline) -> str:
-    """Last two bytes of the client MAC, ``…aa:bb``."""
-    mac_sta = hashline.line.mac_sta
-    return f"…{mac_sta[-4:-2]}:{mac_sta[-2:]}"
-
-
-def hashline_groups(hashlines: tuple[DatedHashline, ...]) -> list[_HashlineGroup]:
-    """Runs of hashlines from the same minute, message pair, client and SSID."""
-    def same(h: DatedHashline) -> tuple:
-        minute = None if h.first_captured is None else h.first_captured // 60
-        return minute, h.line.pair_label, h.line.mac_sta, h.line.ssid, h.line.authorized
-    return [tuple(group) for _, group in groupby(hashlines, same)]
-
-
-def _captures_count_markup(count: int, total: int) -> str:
-    return f"[dim]({count}/{total} captures)[/]"
 
 
 def _no_crackable_text(files: tuple[PersistedCapture, ...]) -> str:
     count = len(files)
     return f"{count} capture{'' if count == 1 else 's'}, none crackable ({date_text(files[0].timestamp)})"
-
-
-def _selected_count_text(count: int) -> str:
-    return f"{count} capture{'' if count == 1 else 's'} selected"
-
-
-def _wordlists_text(count: int) -> str:
-    return f"{count} wordlist{'' if count == 1 else 's'}"
-
-
-def _exhausted_count_text(group: _HashlineGroup,
-                          exhausted: Mapping[str, frozenset[ExhaustedWordlist]]) -> str:
-    """``2 wordlists exhausted (1 on some lines)``: the wordlists that ran out on the group's lines."""
-    per_line = [exhausted.get(h.id, frozenset()) for h in group]
-    on_any = frozenset.union(*per_line)
-    on_some = on_any - frozenset.intersection(*per_line)
-    if not on_any:
-        return ""
-    return f"{_wordlists_text(len(on_any))} exhausted" + (f" ({len(on_some)} on some lines)" if on_some else "")
-
-
-def _exhausted_names(group: _HashlineGroup, exhausted: Mapping[str, frozenset[ExhaustedWordlist]]) -> list[str]:
-    wordlists = frozenset.union(frozenset(), *(exhausted.get(h.id, frozenset()) for h in group))
-    return sorted(" / ".join(w.names) or "unnamed wordlist" for w in wordlists)
-
-
-def _verdict_tooltip(hashline: DatedHashline) -> str:
-    return _AUTHORIZED_TOOLTIP if hashline.line.authorized else _CHALLENGE_TOOLTIP
-
-
-def _hashline_tooltip(group: _HashlineGroup, exhausted: Mapping[str, frozenset[ExhaustedWordlist]]) -> str:
-    tooltip = _verdict_tooltip(group[0])
-    names = _exhausted_names(group, exhausted)
-    if names:
-        tooltip += f"\n\n[$text-warning]Exhausted {_wordlists_text(len(names))}:[/]\n" + "\n".join(f"- {escape(n)}" for n in names)
-    return tooltip
-
-
-def _row_content(epoch: Optional[int], pair: str, client: str, verdict: tuple[str, str], show_client: bool,
-                 trailing: list[tuple[str, str]]) -> Content:
-    """One history or UNCRACKED row: date, pair, client, verdict, then ``trailing`` (text, style) columns."""
-    columns = [(date_text(epoch).ljust(12), "$foreground-muted"), (pair.ljust(5), "")]
-    if show_client:
-        columns.append((client.ljust(6), "$text-secondary"))
-    columns += [(verdict[0].ljust(10), verdict[1]), *trailing]
-    return Content(" ").join(Content.styled(text, style) for text, style in columns)
-
-
-def _hashline_prompt(group: _HashlineGroup, show_client: bool, show_ssid: bool,
-                     exhausted_count: str, exhausted_width: int) -> Content:
-    first = group[0]
-    verdict = ("authorized", "$text-success") if first.line.authorized else ("challenge", "$text-warning")
-    trailing = [((f"×{len(group)}" if len(group) > 1 else "").ljust(3), "$foreground-muted")]
-    if exhausted_width:
-        trailing.append((exhausted_count.ljust(exhausted_width), "italic $text-accent"))
-    if show_ssid:
-        trailing.append((first.line.ssid, ""))
-    return _row_content(first.first_captured, first.line.pair_label, _client_text(first), verdict, show_client,
-                        trailing)
-
-
-def _live_verification_content(verification: LiveVerification, show_client: bool) -> Content:
-    verdict = (("verified live", "$text-success") if verification.correct
-               else ("rejected live", "$text-error"))
-    return _row_content(verification.at, "", "", verdict, show_client, [])
-
-
-def _status_class(status: PasswordStatus) -> str:
-    return "-" + status.name.lower().replace("_", "-")
 
 
 def _client_and_ssid_columns(state: ApState) -> tuple[bool, bool]:
@@ -206,7 +52,7 @@ def _status_markup(state: ApState) -> str:
     key = state.status_key
     if key is None:
         return status
-    chip = f"[{KEY_CHIP_STYLE[state.status]}] {_KEY_KINDS[key.type].badge}: {escape(key_text(key))} [/]"
+    chip = f"[{KEY_CHIP_STYLE[state.status]}] {KEY_KINDS[key.type].badge}: {escape(key_text(key))} [/]"
     return f"{chip} {status}"
 
 
@@ -221,155 +67,6 @@ def _ssid_texts(state: ApState) -> list[tuple[str, str, Optional[str]]]:
     return texts
 
 
-class DeleteKeyPressed(Message):
-    """The user asked to delete ``key`` and every file holding it."""
-
-    def __init__(self, key: Key) -> None:
-        super().__init__()
-        self.key = key
-
-
-class _KeyRow(VerticalGroup):
-    DEFAULT_CSS = f"""
-    _KeyRow {{ height: auto; }}
-    _KeyRow .key-line {{ height: 3; }}
-    _KeyRow .no-toggle {{ width: {_TOGGLE_WIDTH}; }}
-    _KeyRow Button.toggle {{
-        width: {_TOGGLE_WIDTH}; height: 100%; content-align: center middle; background: transparent;
-    }}
-    _KeyRow .key-text {{
-        width: 1fr; height: 100%; content-align: left middle; text-wrap: nowrap; text-overflow: ellipsis;
-    }}
-    _KeyRow .history {{ display: none; height: auto; padding-left: {_VALUE_COLUMN}; }}
-    _KeyRow.-expanded .history {{ display: block; }}
-    _KeyRow .history-rows {{ height: auto; max-height: 8; scrollbar-size-vertical: 1; }}
-    _KeyRow .history-row {{ height: 1; text-wrap: nowrap; text-overflow: ellipsis; }}
-    """
-
-    expanded: reactive[bool] = reactive(False)
-
-    class Toggled(Message):
-        def __init__(self, key: Key, expanded: bool) -> None:
-            super().__init__()
-            self.key = key
-            self.expanded = expanded
-
-    key: Key
-    status: PasswordStatus
-    _state: ApState
-    _show_client: bool
-    _show_ssid: bool
-    _has_history: bool
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._history_built = False
-        self.toggle_button = Button("", compact=True, classes="toggle")
-        self._no_toggle_label = Label("", classes="no-toggle")
-        self._summary_label = Label("", classes="key-text")
-        self.copy_button = Button("Copy", classes="key-btn")
-        self.delete_button = Button("Delete", variant="error", classes="key-btn",
-                                    tooltip="Delete this key and every file holding it")
-        self.history_rows = VerticalScroll(classes="history-rows")
-
-    @property
-    def buttons(self) -> tuple[Button, Button, Button]:
-        return self.toggle_button, self.copy_button, self.delete_button
-
-    async def show(self, key: Key, state: ApState, *, show_client: bool, show_ssid: bool, expanded: bool) -> None:
-        """Show ``key``; its history rows are rebuilt only when they would read differently."""
-        if self._history_built and (key, state.hashlines, show_client, show_ssid) != (
-                self.key, self._state.hashlines, self._show_client, self._show_ssid):
-            self._history_built = False
-            await self.history_rows.remove_children()
-        self.status = state.key_statuses[key.id]
-        for status in PasswordStatus:
-            self.set_class(status is self.status, _status_class(status))
-        self.key, self._state = key, state
-        self._show_client, self._show_ssid = show_client, show_ssid
-        self._has_history = bool(key.live_verifications or key.hashline_ids)
-        self.toggle_button.display = self._has_history
-        self._no_toggle_label.display = not self._has_history
-        self._summary_label.update(Content.from_markup(self._summary_markup()))
-        self._summary_label.tooltip = self._details()
-        self.set_reactive(_KeyRow.expanded, expanded)
-        self._show_expansion(expanded)
-        if expanded:
-            await self._build_history()
-
-    def _history(self) -> list[Static]:
-        rows = [(v.at, Static(_live_verification_content(v, self._show_client), classes="history-row"))
-                for v in self.key.live_verifications]
-        matched = tuple(h for h in self._state.hashlines if h.id in self.key.hashline_ids)
-        for group in hashline_groups(matched):
-            row = Static(_hashline_prompt(group, self._show_client, self._show_ssid, "", 0), classes="history-row")
-            row.tooltip = _verdict_tooltip(group[0])
-            rows.append((group[0].first_captured, row))
-        return [row for _, row in sorted(rows, key=lambda row: epoch_sort_key(row[0]), reverse=True)]
-
-    def compose(self) -> ComposeResult:
-        with Horizontal(classes="key-line"):
-            yield self.toggle_button
-            yield self._no_toggle_label
-            yield self._summary_label
-            yield self.copy_button
-            yield self.delete_button
-        with Vertical(classes="history"):
-            yield self.history_rows
-
-    async def _build_history(self) -> None:
-        """The history rows, built the first time the key is expanded."""
-        if self._history_built or not self._has_history:
-            return
-        self._history_built = True
-        await self.history_rows.mount_all(self._history())
-
-    def _summary_markup(self) -> str:
-        key = self.key
-        kind = _KEY_KINDS[key.type]
-        markup = (f"[bold {kind.badge_color}]{kind.badge.ljust(_BADGE_WIDTH)}[/] "
-                  f"[{KEY_CHIP_STYLE[self.status]}] {escape(key_text(key))} [/]")
-        return f"{markup} [dim]({self._details()})[/dim]"
-
-    def _details(self) -> str:
-        details = [_status_reason(self.key, self.status)]
-        total = len(self._state.hashlines)
-        if self.key.type == CaptureType.WPA_PSK and total:
-            details.insert(0, f"{len(self.key.hashline_ids)}/{total} captures")
-        return ", ".join(details)
-
-    def _show_expansion(self, expanded: bool) -> None:
-        self.set_class(expanded, "-expanded")
-        self.toggle_button.label = _COLLAPSE_LABEL if expanded else _EXPAND_LABEL
-        self.toggle_button.tooltip = _COLLAPSE_TOOLTIP if expanded else _EXPAND_TOOLTIP
-
-    async def watch_expanded(self, expanded: bool) -> None:
-        self._show_expansion(expanded)
-        if expanded and self.is_mounted:
-            await self._build_history()
-
-    @on(Button.Pressed)
-    def _button_pressed(self, event: Button.Pressed) -> None:
-        if event.button is self.toggle_button:
-            self.expanded = not self.expanded
-            self.post_message(self.Toggled(self.key, self.expanded))
-        elif event.button is self.copy_button:
-            self._copy()
-        elif event.button is self.delete_button:
-            self.post_message(DeleteKeyPressed(self.key))
-        else:
-            return
-        event.stop()
-
-    def _copy(self) -> None:
-        if self.key.type == CaptureType.WPS_PIN and not self.key.value:
-            self.app.copy_to_clipboard("")
-            self.notify("PIN is empty")
-            return
-        self.app.copy_to_clipboard(key_text(self.key))
-        self.notify("Copied to clipboard")
-
-
 class AddKeyPressed(Message):
     """The user asked to add a key to the AP in view."""
 
@@ -380,14 +77,6 @@ class ShowApPressed(Message):
     def __init__(self, bssid: str) -> None:
         super().__init__()
         self.bssid = bssid
-
-
-class _CrackerButton(Button):
-    """Opens ``tool``'s launch modal for the ticked hashlines."""
-
-    def __init__(self, tool: VaultTool) -> None:
-        super().__init__(tool.label, "primary", classes="tool-btn")
-        self.tool = tool
 
 
 class _SsidLine(Horizontal):
@@ -411,36 +100,6 @@ class _SsidLine(Horizontal):
         self._ssid_label.update(ssid)
         self._dates_label.update(dates or "")
         self._dates_label.display = dates is not None
-
-
-class _UncrackedList(SelectionList[_HashlineGroup]):
-    """The uncracked hashline groups, each ticked to crack or not."""
-
-    def __init__(self, classes: str) -> None:
-        super().__init__(classes=classes)
-        self._exhausted: Mapping[str, frozenset[ExhaustedWordlist]] = {}
-
-    def show(self, selections: list[Selection[_HashlineGroup]],
-             exhausted: Mapping[str, frozenset[ExhaustedWordlist]]) -> None:
-        """Replace the options, highlighting the first; posts no SelectedChanged."""
-        self._exhausted = exhausted
-        self.tooltip = None
-        with self.prevent(SelectionList.SelectedChanged):
-            self.clear_options()
-            self.add_options(selections)
-        self.action_first()
-
-    def on_mouse_move(self, event: MouseMove) -> None:
-        index = event.style.meta.get("option")
-        tooltip = None if index is None else _hashline_tooltip(self.get_option_at_index(index).value, self._exhausted)
-        if tooltip != self.tooltip:
-            self.tooltip = tooltip
-
-    def groups(self) -> list[_HashlineGroup]:
-        return [self.get_option_at_index(i).value for i in range(self.option_count)]
-
-    def highlighted_group(self) -> Optional[_HashlineGroup]:
-        return None if self.highlighted is None else self.get_option_at_index(self.highlighted).value
 
 
 class _ApStatePanel(VerticalGroup):
@@ -497,14 +156,14 @@ class _ApStatePanel(VerticalGroup):
         self._ssid_rule = Rule()
         self.add_key_button = Button("Add key", compact=True, classes="add-key",
                                      tooltip="Add a PSK, WPS PIN or WEP key")
-        self.key_rows: list[_KeyRow] = []
+        self.key_rows: list[KeyRow] = []
         self._no_keys_label = Label("none yet", classes="none-yet")
         self._no_crackable_label = Label("", classes="none-yet")
         self._uncracked_section = VerticalGroup(classes="uncracked-section")
         self._uncracked_count_label = Label("")
-        self._uncracked_list = _UncrackedList(classes="uncracked")
+        self._uncracked_list = UncrackedHashlineList(classes="uncracked")
         self._selected_count_label = Label("", classes="selected-count")
-        self._cracker_buttons = [_CrackerButton(tool) for tool in self.app.vault.manager.tools.values()]
+        self._cracker_buttons = [CrackerButton(tool) for tool in self.app.vault.manager.tools.values()]
 
     async def show(self, state: ApState, expanded_key_ids: frozenset[tuple[CaptureType, str]],
                    unticked_hashline_ids: frozenset[str]) -> None:
@@ -561,7 +220,7 @@ class _ApStatePanel(VerticalGroup):
 
     async def _show_key_rows(self, state: ApState, show_client: bool, show_ssid: bool,
                              expanded_key_ids: frozenset[tuple[CaptureType, str]]) -> None:
-        rows = self.key_rows[:len(state.keys)] + [_KeyRow() for _ in state.keys[len(self.key_rows):]]
+        rows = self.key_rows[:len(state.keys)] + [KeyRow() for _ in state.keys[len(self.key_rows):]]
         await self.remove_children(self.key_rows[len(state.keys):])
         await self.mount_all(rows[len(self.key_rows):], before=self._no_keys_label)
         for row, key in zip(rows, state.keys):
@@ -621,13 +280,13 @@ class _ApStatePanel(VerticalGroup):
         self._uncracked_section.display = bool(uncracked)
         exhausted = state.exhausted_wordlists
         self._uncracked_count_label.update(
-            Content.from_markup(_captures_count_markup(len(uncracked), len(state.hashlines))))
+            Content.from_markup(captures_count_markup(len(uncracked), len(state.hashlines))))
         groups = hashline_groups(uncracked)
         ticked = [not all(h.id in unticked_hashline_ids for h in group) for group in groups]
-        exhausted_counts = [_exhausted_count_text(group, exhausted) for group in groups]
+        exhausted_counts = [exhausted_count_text(group, exhausted) for group in groups]
         exhausted_width = max(map(len, exhausted_counts), default=0)
         self._uncracked_list.show(
-            [Selection(_hashline_prompt(group, show_client, show_ssid, count, exhausted_width), group, is_ticked)
+            [Selection(hashline_prompt(group, show_client, show_ssid, count, exhausted_width), group, is_ticked)
              for group, count, is_ticked in zip(groups, exhausted_counts, ticked)], exhausted)
         selected = [h.line for group, is_ticked in zip(groups, ticked) if is_ticked for h in group]
         self._show_selected_count(selected)
@@ -636,7 +295,7 @@ class _ApStatePanel(VerticalGroup):
             button.display = state.hashline_capture is not None and button.tool.can_crack(uncracked_lines)
 
     def _show_selected_count(self, selected: list[Hc22000Line]) -> None:
-        self._selected_count_label.update(_selected_count_text(len(selected)))
+        self._selected_count_label.update(selected_count_text(len(selected)))
         for button in self._cracker_buttons:
             button.disabled = not button.tool.can_crack(selected)
 
@@ -650,7 +309,7 @@ class _ApStatePanel(VerticalGroup):
 
     @on(Button.Pressed)
     def _button_pressed(self, event: Button.Pressed) -> None:
-        if isinstance(event.button, _CrackerButton):
+        if isinstance(event.button, CrackerButton):
             self._launch_tool(event.button.tool)
         elif event.button is self.add_key_button:
             self.post_message(AddKeyPressed())
@@ -735,7 +394,7 @@ class VaultItemView(Vertical):
     def _panel(self) -> Optional[_ApStatePanel]:
         return next(iter(self.query_children(_ApStatePanel).results(_ApStatePanel)), None)
 
-    def _key_rows(self) -> list[_KeyRow]:
+    def _key_rows(self) -> list[KeyRow]:
         panel = self._panel()
         return [] if panel is None else panel.key_rows
 
@@ -765,13 +424,13 @@ class VaultItemView(Vertical):
         for row in self._key_rows():
             row.expanded = self.history_expanded(row.key)
 
-    @on(_KeyRow.Toggled)
-    def _key_toggled(self, event: _KeyRow.Toggled) -> None:
+    @on(KeyRow.Toggled)
+    def _key_toggled(self, event: KeyRow.Toggled) -> None:
         self.history_expanded_by_user[event.key.id] = event.expanded
 
     @on(SelectionList.SelectionToggled)
     def _hashline_toggled(self, event: SelectionList.SelectionToggled) -> None:
-        if not isinstance(event.selection_list, _UncrackedList):
+        if not isinstance(event.selection_list, UncrackedHashlineList):
             return
         ids = {h.id for h in event.selection.value}
         if ids <= self.unticked_hashline_ids:

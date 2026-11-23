@@ -20,9 +20,11 @@ from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault.drawer import VaultDrawer, _ap_contents_text
 from wifit3.ui.screens.vault.table import VaultTable
-from wifit3.ui.screens.vault.item import (DeleteKeyPressed, VaultItemView, date_text, hashline_groups, _ApStatePanel,
-                                          _CrackerButton, _exhausted_count_text, _exhausted_names, _hashline_prompt,
-                                          _no_crackable_text, _UncrackedList)
+from wifit3.ui.screens.vault.hashlines import (CrackerButton, UncrackedHashlineList, exhausted_count_text,
+                                               hashline_groups, hashline_prompt, _exhausted_names)
+from wifit3.ui.screens.vault.item import VaultItemView, _ApStatePanel, _no_crackable_text
+from wifit3.ui.screens.vault.key_row import DeleteKeyPressed
+from wifit3.ui.screens.vault.rows import date_text
 from wifit3.ui.screens.vault.modals.add_credential import ManualCredential
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
@@ -143,7 +145,7 @@ def test_an_ap_with_only_pcaps_says_how_many_captures_none_crackable(tmp_path):
 def test_each_uncracked_row_reads_its_pair_client_verdict_and_ssid(tmp_path):
     _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE + _OTHER_CLIENT_LINE + _PMKID_LINE)
     groups = hashline_groups(Vault().ap_state("aa:bb:cc:dd:ee:ff").uncracked)
-    prompts = [" ".join(str(_hashline_prompt(group, True, True, "", 0)).split()) for group in groups]
+    prompts = [" ".join(str(hashline_prompt(group, True, True, "", 0)).split()) for group in groups]
 
     assert prompts == ["no date M2+M3 …55:66 authorized Test1", "no date M2+M3 …55:77 authorized Test1",
                        "no date PMKID …55:66 authorized Test1"]
@@ -158,7 +160,7 @@ def test_each_uncracked_row_counts_and_names_its_exhausted_wordlists(tmp_path):
     state = Vault().ap_state("aa:bb:cc:dd:ee:ff")
     groups = hashline_groups(state.uncracked)
 
-    assert [_exhausted_count_text(g, state.exhausted_wordlists) for g in groups] == [
+    assert [exhausted_count_text(g, state.exhausted_wordlists) for g in groups] == [
         "2 wordlists exhausted (1 on some lines)", "", "1 wordlist exhausted"]
     assert [_exhausted_names(g, state.exhausted_wordlists) for g in groups] == [
         ["default.txt", "rockyou.txt"], [], ["default.txt"]]
@@ -297,7 +299,7 @@ async def test_a_tick_handled_after_switching_aps_is_kept_for_its_own_hashlines(
     app = _VaultApp()
     async with app.run_test() as pilot:
         item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
-        uncracked = item.query_one(_UncrackedList)
+        uncracked = item.query_one(UncrackedHashlineList)
         group = uncracked.groups()[0]
 
         uncracked.toggle(group)
@@ -316,14 +318,14 @@ async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocke
         item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
         submit = mocker.patch.object(app.vault.manager, "submit_job", return_value="job")
         mocker.patch.object(app, "push_screen", side_effect=lambda modal, callback: callback({"wordlists": []}))
-        uncracked = item.query_one(_UncrackedList)
+        uncracked = item.query_one(UncrackedHashlineList)
         groups = uncracked.groups()
         assert "3 captures selected" in str(item.query_one(".selected-count", Label).content)
 
         uncracked.deselect(groups[0])
         await pilot.pause(0)
         assert "2 captures selected" in str(item.query_one(".selected-count", Label).content)
-        next(b for b in item.query(_CrackerButton).results(_CrackerButton) if b.tool.name == ToolName.CPU_CRACK).press()
+        next(b for b in item.query(CrackerButton).results(CrackerButton) if b.tool.name == ToolName.CPU_CRACK).press()
         await pilot.pause(0)
 
         chosen = submit.call_args.kwargs["hashlines"]
@@ -331,4 +333,4 @@ async def test_unchecked_hashlines_are_left_out_of_the_crack_job(tmp_path, mocke
 
         uncracked.deselect_all()
         await pilot.pause(0)
-        assert all(button.disabled for button in item.query(_CrackerButton).results(_CrackerButton))
+        assert all(button.disabled for button in item.query(CrackerButton).results(CrackerButton))

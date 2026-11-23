@@ -64,7 +64,7 @@ from wifit3.ui.eapol_aggregate import EapolAggregator
 from wifit3.ui.encryption_format import psk_capture_supported, wep_key_hex_and_ascii
 from wifit3.ui.modals.nickname import NicknameModal
 from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
-from wifit3.ui.screens.vault.item import key_text
+from wifit3.ui.screens.vault.key_row import key_text
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
 from wifit3.watchers.ap_watcher import (
     ApDecloaked, ApEvent, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,

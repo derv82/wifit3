@@ -13,7 +13,8 @@ from textual.widgets import DataTable, Label
 from wifit3.persist.ap_state import ApState
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.vault.drawer import VaultDrawer
-from wifit3.ui.screens.vault.item import VaultItemView, _ApStatePanel, _KeyRow
+from wifit3.ui.screens.vault.item import VaultItemView, _ApStatePanel
+from wifit3.ui.screens.vault.key_row import KeyRow
 
 T = TypeVar("T")
 
@@ -68,7 +69,7 @@ def shown_state(drawer: VaultDrawer, bssid: str) -> Optional[ApState]:
     uncracked = panel._uncracked_list
     if (uncracked._exhausted is not state.exhausted_wordlists) if uncracked is not None else state.uncracked:
         return None
-    rows = list(panel.query(_KeyRow).results(_KeyRow))
+    rows = list(panel.query(KeyRow).results(KeyRow))
     if len(rows) != len(state.keys) or any(row._state is not state for row in rows):
         return None
     if {str(label.content) for label in panel.query(".ssid").results(Label)} != (

@@ -13,7 +13,8 @@ from textual.widgets.option_list import Option
 
 from wifit3.models import CREDENTIAL_NAMES
 from wifit3.persist.ap_state import Key
-from wifit3.ui.screens.vault.item import date_text, key_text
+from wifit3.ui.screens.vault.key_row import key_text
+from wifit3.ui.screens.vault.rows import date_text
 
 def key_option_prompts(keys: list[Key]) -> list[Content]:
     """``PSK: hunter22    Sep 23 05:06``: type and value left, the date right-aligned and dim."""

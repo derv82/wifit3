@@ -11,7 +11,8 @@ from textual.binding import Binding
 
 from .breakpoints import COMPACT, NARROW, SHORT, TALL, TINY, WIDE
 from .table import VaultTable
-from .item import AddKeyPressed, DeleteKeyPressed, ShowApPressed, VaultItemView, key_description
+from .item import AddKeyPressed, ShowApPressed, VaultItemView
+from .key_row import DeleteKeyPressed, key_description
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, is_confirmed
 from wifit3.ui.screens.vault.job_pane import JobTrackerPane
