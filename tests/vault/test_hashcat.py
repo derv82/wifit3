@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, ssid_passwords, ssid_variants
+from wifit3.crack.passwords import DEFAULT_PASSWORDS_PATH, all_ssid_variants, ssid_passwords
 from wifit3.persist.config import Config
 from wifit3.persist.exhaustion import SSID_VARIANTS_IDENTITY, wordlist_identity
 from wifit3.vault.tools.hashcat import (
@@ -346,7 +346,7 @@ def test_launch_runs_the_default_passwords_then_the_ssid_passwords_first(tmp_pat
                                            str(ssid_passwords_path),
                                            str(wordlist.resolve())]
     assert ssid_passwords_path.read_text(encoding="utf-8").splitlines() == list(dict.fromkeys(
-        ssid_variants("ab") + ssid_passwords(["CafeGuest"])))
+        all_ssid_variants([("ab", "02:00:00:00:00:01")]) + ssid_passwords(["CafeGuest"])))
     assert spawn.call_args.args[0][-1] == str(DEFAULT_PASSWORDS_PATH.resolve())
     assert job.tool_state["identities"] == [
         wordlist_identity(DEFAULT_PASSWORDS_PATH), SSID_VARIANTS_IDENTITY, wordlist_identity(wordlist)]

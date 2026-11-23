@@ -39,7 +39,6 @@ def pkt(d: dict) -> Packet:
             replay_counter=r.get("eapol_replay_counter"),
             nonce=r.get("eapol_nonce"),
             mic=r.get("eapol_mic"),
-            key_data_len=r.get("eapol_key_data_len", 0),
             payload=r.get("eapol_payload", b""),
             pmkid=r.get("eapol_pmkid"),
             akm=r.get("eapol_akm"),
@@ -48,6 +47,6 @@ def pkt(d: dict) -> Packet:
     if t == "wep_data":
         return WepDataPacket(
             **base,
-            iv=r.get("wep_iv"), keyid=r.get("wep_keyid"), cipher=r.get("wep_cipher"),
+            iv=r.get("wep_iv"), cipher=r.get("wep_cipher"),
         )
     return Packet(**r)

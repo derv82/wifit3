@@ -102,10 +102,10 @@ def _input(twin, punt, modes=(PuntMode.DEAUTH, PuntMode.CSA), period=0.5, bssid=
 def _crackable_hs():
     hs = Handshake(bssid=_BSSID, client_mac=_CLIENT, beacon_frame=_BEACON, akm_offered=[2])
     hs.messages.append(HandshakeMessage(raw=b"", msg_num=1, replay_hex="0000000000000005",
-                                        nonce=b"\xaa" * 32, mic=bytes(16), key_data_len=0,
+                                        nonce=b"\xaa" * 32, mic=bytes(16),
                                         eapol_payload=bytes(120), timestamp=1.0))
     hs.messages.append(HandshakeMessage(raw=b"", msg_num=2, replay_hex="0000000000000005",
-                                        nonce=b"\x02" * 32, mic=b"\x11" * 16, key_data_len=0,
+                                        nonce=b"\x02" * 32, mic=b"\x11" * 16,
                                         eapol_payload=bytes(120), akm=2, timestamp=1.1))
     return hs
 
@@ -162,6 +162,8 @@ def test_csa_target_channel():
     assert csa_target_channel(1) == 6                 # 2.4G decoy
     assert csa_target_channel(11) == 1
     assert csa_target_channel(36) == 40               # 5G target stays in-band
+    assert csa_target_channel(56) == 36               # a DFS target's decoy is not DFS
+    assert csa_target_channel(100) == 36
     assert csa_target_channel(11, 1) == 1             # preferred honored when off the AP's channel
     assert csa_target_channel(11, 11) == 1            # preferred == AP channel -> decoy (the no-op guard)
 

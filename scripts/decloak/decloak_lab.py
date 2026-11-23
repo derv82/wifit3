@@ -33,7 +33,7 @@ sys.path.insert(0, str(_HERE.parent.parent / "src"))
 sys.path.insert(0, str(_HERE.parent))
 
 from dev import select_device
-from wifit3.campaigns.auth_assoc import Association, AssocState, build_client_leaving
+from wifit3.wlan.station import Association, AssocState, build_client_leaving
 from wifit3.device.manager import wlan_ifaces, wlan_close
 from wifit3.dot11 import mac_to_str, str_to_mac
 from wifit3.dot11.mac import BROADCAST_MAC, random_client_mac
@@ -268,9 +268,7 @@ def report(probes: list[Probe], prober: ProberCounts, sniffed: Optional[SnifferC
 
 
 async def run(array: WlanArray, iface, sniffer, args) -> int:
-    if not await iface.set_channel(args.channel):
-        print(f"[-] set_channel({args.channel}) failed")
-        return 1
+    await iface.set_channel(args.channel)
     ap = await find_target(array, args)
     if ap is None:
         return 1
@@ -288,9 +286,7 @@ async def run(array: WlanArray, iface, sniffer, args) -> int:
         prober = ProberCounts(args.bssid.lower(), our_mac)
         iface.register_rx_callback(prober)
         if sniffer is not None:
-            if not await sniffer.set_channel(args.channel):
-                print(f"[-] sniffer set_channel({args.channel}) failed")
-                return 1
+            await sniffer.set_channel(args.channel)
             sniffed = SnifferCounts(our_mac, str_to_mac(args.bssid))
             sniffer.register_rx_callback(sniffed)
             # enable_rx_acks clears _our_tx_macs, so register our MAC after arming.

@@ -19,7 +19,7 @@ RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS. A prior rt2800usb gate was whittled down to a
     firmware-only block that printed PASS over a driver that mis-read EFUSE — exactly the
     disaster this rewrite exists to prevent.
-  * NEVER copy logic from chips/rt2800usb/ — it is a *structural* reference only and has a
+  * NEVER copy logic from chips/rt3572/ — it is a *structural* reference only and has a
     CONFIRMED EFUSE word-vs-byte addressing bug (see chips/rt3070/RT3070.md). Port from the
     kernel C in driver_sources/rt2x00-source-v6.18/ and let THIS wire confirm it.
   * The cursor only advances by reproducing the wire or by an explicit named waiver.

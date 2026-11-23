@@ -128,7 +128,7 @@ def _walk_operational(w: Walk, setup, power, rfkill_mask: int, rx_conf: int,
             # Scheduled only on TX (dev.c:223, in the TX path); here it is the aireplay-ng
             # injection at the capture tail reading the cumulative retry count via 0xFFFA.
             # Our port is fire-and-forget (no TX-status reporting), and this is a different
-            # program's TX consequence -- the rtl8188eus REG_TX_RPT_TIME analogue.
+            # program's TX consequence -- the rtl8188eus_dkms REG_TX_RPT_TIME analogue.
             w.waive("aireplay-triggered TX-status work (rtl8187_work, reg 0xFFFA) "
                     "[external tool; bulk-OUT TX out of the control gate]")
             continue

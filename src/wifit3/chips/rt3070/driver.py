@@ -9,12 +9,13 @@ against the cold-boot capture by ``scripts/porting/verify_pcap.py rt3070`` (the 
 TX (``inject_frame`` → ``tx.send_frame``) is wired but **never fired by
 the driver** — injection/deauth is the user's explicit action [[passive_by_default]].
 
-Standalone port (NOT a ``chips/rt2800usb`` DeviceID delta — that shared base has a
+Standalone port (NOT a ``chips/rt3572`` DeviceID delta — that shared base has a
 confirmed EFUSE addressing bug); see ``chips/rt3070/RT3070.md`` for the ground-truth facts.
 """
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import threading
 from typing import Callable, ClassVar, List, Optional
@@ -23,7 +24,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -39,7 +40,7 @@ _SCAN_START_CHANNEL = 1            # first channel tuned at connect
 
 
 class RT3070Driver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(Driver.CHANNELS_2G)   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RT3070Transport):
@@ -181,6 +182,7 @@ class RT3070Driver(Driver):
         if progress_cb:
             progress_cb(0.5, f"RT3070: {mode}")
             progress_cb(0.9, f"Tuning to channel {_SCAN_START_CHANNEL}")
+        self.transport.device_started = True   # rt2x00lib_start, before mac80211's first config
         await self.set_channel(_SCAN_START_CHANNEL)
 
         # bulk-IN RX reader on a dedicated thread (off the event loop so the TUI can't
@@ -211,28 +213,28 @@ class RT3070Driver(Driver):
                 if parsed is not None:
                     cb(parsed)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"rt3070: channel {channel} not supported")
         loop = asyncio.get_running_loop()
         async with self._io_lock:
             await loop.run_in_executor(None, self._tune, channel)
         self._channel = channel
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Transmit one 802.11 frame (e.g. deauth / WEP replay) on the MGMT bulk-OUT pipe.
         The TXWI ACK bit is set ON so the chip retries up to the global TX_RTY_CFG
         SHORT_RTY_LIMIT (mac80211 default 7, set at monitor entry). The seq is
         already stamped by the base. Explicit-action only — nothing on the scan/connect path
         calls this [[passive_by_default]]. Serialized via ``_io_lock`` so it never races a retune."""
         if not frame_bytes:
-            return False
+            return
         if self._bulk_out_ep is None:
             logger.error("RT3070 inject: no bulk-OUT endpoint")
-            return False
+            return
         loop = asyncio.get_running_loop()
         async with self._io_lock:
             await loop.run_in_executor(None, self._do_inject, frame_bytes)
-        return True
 
     async def _enable_rx_acks(self) -> None:
         """No-op: the Ralink monitor RX filter (RX_FILTER_CFG=0x93, DROP_ACK + DROP_NOT_TO_ME
@@ -250,8 +252,16 @@ class RT3070Driver(Driver):
         # an in-flight (or cancelled-but-draining) channel tune on the USB device. ACK bit ON
         # for a unicast addr1 so the chip requests the AP's ACK + retries un-ACKed frames.
         with self._hw_lock:
-            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame,
-                          use_no_ack=bool(frame[4] & 0x01))
+            if not self.transport.device_present:   # rt2x00mac.c:104-105
+                raise usb.core.USBError("device not present", errno=errno.ENODEV)
+            try:
+                tx.send_frame(self.transport.dev, self._bulk_out_ep, frame,
+                              use_no_ack=bool(frame[4] & 0x01))
+            except usb.core.USBError as error:
+                if is_device_gone(error):            # rt2x00usb.c:330-333
+                    self.transport.device_present = False
+                    raise
+                logger.debug("RT3070 inject: TX failed, frame dropped: %s", error)
 
     def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,

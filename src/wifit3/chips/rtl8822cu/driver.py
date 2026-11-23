@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import struct
 from typing import Callable, ClassVar, Optional
@@ -10,7 +11,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.chips.rx_reader import RxReaderThread
 
@@ -71,7 +72,7 @@ _DEFAULT_CHANNEL = 1
 
 
 class RTL8822CUDriver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[list[int]] = list(range(1, 15)) + [36, 40, 44, 48, 149, 153, 157, 161, 165]
+    SUPPORTED_CHANNELS: ClassVar[list[int]] = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):
@@ -318,7 +319,7 @@ class RTL8822CUDriver(Driver):
         # enter_monitor_mode is what enables MAC RX; starting it before bringup (the prior "sibling
         # parity" position, commit 7333e4e5) ran the bulk IN pipe through the power cycle and both
         # firmware downloads while the RX chain was not latched, and hardware saw zero frames.
-        # rtl8821au and the last known good 1a445c1f both start the reader here, last.
+        # The last known good 1a445c1f starts the reader here, last.
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8822cu-rx",
             on_fatal=lambda exc: self._on_lost and self._on_lost(exc),
@@ -332,24 +333,20 @@ class RTL8822CUDriver(Driver):
             progress_cb(1.0, "RTL8822CU monitor receiver online")
         return True
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Runtime channel tune: the vendor ``config_phydm_switch_channel_8822c`` +
         ``switch_bandwidth`` sequence (``phy.switch_channel``), the same call the pcap harness
         verifies per hop. ``scan`` no longer selects a different path: every hop on the wire is a
         plain ``switch_channel``."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8822CU: channel {channel} not supported")
         loop = asyncio.get_running_loop()
-        try:
-            await loop.run_in_executor(None, switch_channel, self.transport, channel,
-                                       self.txpwr)
-            self._current_channel = channel
-            self.current_band_is_2g = channel <= 14
-            if not self._rx_regs_after_tune_logged:
-                self._rx_regs_after_tune_logged = True
-                await loop.run_in_executor(None, self._log_rx_registers, "after_tune")
-            return True
-        except (IOError, ValueError, usb.core.USBError) as exc:
-            logger.warning("RTL8822CU channel %d failed: %s", channel, exc)
-            return False
+        await loop.run_in_executor(None, switch_channel, self.transport, channel, self.txpwr)
+        self._current_channel = channel
+        self.current_band_is_2g = channel <= 14
+        if not self._rx_regs_after_tune_logged:
+            self._rx_regs_after_tune_logged = True
+            await loop.run_in_executor(None, self._log_rx_registers, "after_tune")
 
     async def close(self) -> None:
         if self._rx_reader:
@@ -383,18 +380,25 @@ class RTL8822CUDriver(Driver):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: set_mac_addr(self.transport, mac6))
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         if not self._bulk_out_eps:
-            return False
+            return
+        if self.transport.surprise_removed:  # RTW_CANNOT_TX [SRC usb_ops_linux.c:583-591]
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
         try:
             desc = build_tx_desc_inject(frame_bytes, band_is_2g=self.current_band_is_2g)
-            ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
-            loop = asyncio.get_running_loop()
-            sent = await loop.run_in_executor(None, lambda: write_bulk(self.dev, ep, desc + frame_bytes))
-            return sent == len(desc) + len(frame_bytes)
-        except (ValueError, IOError, usb.core.USBError) as exc:
-            logger.warning("RTL8822CU TX failed: %s", exc)
-            return False
+        except ValueError as exc:
+            logger.debug("RTL8822CU TX dropped: %s", exc)   # rtw_monitor_xmit_entry drops silently [SRC rtw_xmit.c:4897-4906]
+            return
+        ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, lambda: write_bulk(self.dev, ep, desc + frame_bytes))
+        except usb.core.USBError as exc:
+            logger.info("usb_write_port, status=%d", -(exc.errno or errno.EIO))  # [SRC usb_ops_linux.c:675] drop
+            if is_device_gone(exc):
+                self.transport.surprise_removed = True
+                raise
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Supply the incrementing SW sequence number the injected TxDesc copies: the 8822c

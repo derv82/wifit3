@@ -94,7 +94,7 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev: HandshakeCaptured | None
     lines = [header]
     if hs_ev is not None:
         verdict = (f"[black bold on green] ✓ Valid 4-Way Handshake "
-                   f"({hs_ev.pair_label}) [/black bold on green]")
+                   f"({hs_ev.messages_label}) [/black bold on green]")
         if instance > 1:
             verdict += f" [dim](capture ×{instance})[/dim]"
         lines += [treelog.branch(b) for b in bodies]       # every Mx a branch …
@@ -120,7 +120,7 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev: HandshakeCaptured | None
 def _render_reannounce(client_mac: str, hs_ev: HandshakeCaptured, instance: int) -> list[str]:
     """A compact one-liner for a repeat capture on an already-announced client
     (its per-frame detail was suppressed, so there's no tree to redraw)."""
-    return [f"[black bold on green] ✓ Valid 4-Way Handshake ({hs_ev.pair_label}) "
+    return [f"[black bold on green] ✓ Valid 4-Way Handshake ({hs_ev.messages_label}) "
             f"[/black bold on green] [dim](capture ×{instance})[/dim] "
             f"[bold]{client_mac}[/bold]"]
 

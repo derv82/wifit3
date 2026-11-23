@@ -1,0 +1,146 @@
+"""rtl8188ftv_dkms M2 parses: pure byte surgery over the shadow map."""
+from unittest.mock import MagicMock
+
+import pytest
+
+
+def _map(entries=None):
+    m = bytearray([0xFF] * 512)
+    for addr, value in dict(entries or {}).items():
+        m[addr] = value
+    return bytes(m)
+
+
+def test_sign4():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    assert prom._sign4(0x7) == 7
+    assert prom._sign4(0x8) == -8
+    assert prom._sign4(0xF) == -1
+    assert prom._sign4(0x0) == 0
+
+
+def test_check_invalid_mac():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    assert prom.check_invalid_mac(bytes.fromhex("000000000001"), True) is False
+    assert prom.check_invalid_mac(b"\x00" * 6, True) is True
+    assert prom.check_invalid_mac(b"\xff" * 6, True) is True
+    assert prom.check_invalid_mac(bytes.fromhex("030000000001"), True) is True
+    assert prom.check_invalid_mac(bytes.fromhex("020000000001"), False) is False
+
+
+def test_macaddr_cfg_keeps_valid_efuse_mac():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    assert prom.macaddr_cfg(bytes.fromhex("000000000001")) == bytes.fromhex("000000000001")
+
+
+def test_macaddr_cfg_randomizes_invalid_mac(monkeypatch):
+    # rtw_ieee80211.c:1525-1528: *(u32 *)&mac[2] = rtw_random32(); mac[0..2] = 00:e0:4c
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    monkeypatch.setattr(prom, "random32", lambda: 0x44332211)
+    assert prom.macaddr_cfg(b"\x00" * 6) == bytes.fromhex("00e04c223344")
+
+
+def test_chnl_group_2g():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    assert [prom.chnl_group_2g(ch) for ch in (1, 2)] == [0, 0]
+    assert [prom.chnl_group_2g(ch) for ch in (3, 5)] == [1, 1]
+    assert [prom.chnl_group_2g(ch) for ch in (6, 8)] == [2, 2]
+    assert [prom.chnl_group_2g(ch) for ch in (9, 11)] == [3, 3]
+    assert [prom.chnl_group_2g(ch) for ch in (12, 14)] == [4, 4]
+
+
+def test_power_value_autoload_fail_defaults():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    out = prom.read_power_value(bytes(512), True)
+    assert out.cck_base[0] == [0x2D] * 6
+    assert out.bw20_diff[0] == [0x02, 0xFE, 0xFE, 0xFE]
+    assert out.ofdm_diff[0] == [0x04, 0xFE, 0xFE, 0xFE]
+    assert out.cck_diff[0] == [0xFE] * 4
+
+
+def test_power_value_ff_forces_fail():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    m = _map({0x11: 0xFF})
+    out = prom.read_power_value(m, False)
+    assert out.cck_base[0] == [0x2D] * 6
+
+
+def test_thermal_crystal_customer_defaults_on_fail():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    params = prom.EfuseParams()
+    prom.parse_thermal(bytes(512), True, params)
+    assert params.thermal == 0x18
+    prom.parse_eeprom_ver(bytes(512), True, params)
+    assert params.version == 1
+    params2 = prom.EfuseParams()
+    prom.parse_eeprom_ver(_map({0xC4: 0x07}), False, params2)
+    assert params2.version == 0x07
+
+
+def test_power_saving_paths():
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    params = prom.EfuseParams()
+    prom.parse_power_saving(bytes(512), True, params)
+    assert params.hw_powerdown is False and params.remote_wakeup is False
+    params = prom.EfuseParams()
+    prom.parse_power_saving(_map({0xC2: 0x10, 0xD4: 0x02}), False, params)
+    assert params.hw_powerdown == 0x10 and params.remote_wakeup is True
+    params = prom.EfuseParams()
+    prom.parse_power_saving(bytes(512), False, params, hwpdn_mode=1)
+    assert params.hw_powerdown == 1
+
+
+# rtw_ieee80211.c:1451-1481 rtw_check_invalid_mac_address(mac, _TRUE) rejects these classes
+INVALID_EFUSE_MACS = {
+    "all_zero": "000000000000",
+    "all_ff": "ffffffffffff",
+    "multicast": "011122334455",
+    "locally_administered": "021122334455",
+}
+VALID_EFUSE_MAC = "001122334455"
+
+
+def _read_adapter_info(monkeypatch, mac_hex, pg_pwrtrim=0xFF, pg_therm=0xFF):
+    from wifit3.chips.rtl8188ftv_dkms import constants as C
+    from wifit3.chips.rtl8188ftv_dkms import efuse, prom
+    efuse_map = bytearray(_map({0x00: 0x29, 0x01: 0x81}))
+    efuse_map[prom.EEPROM_MAC_ADDR_8188FU:prom.EEPROM_MAC_ADDR_8188FU + 6] = bytes.fromhex(mac_hex)
+    monkeypatch.setattr(efuse, "get_eeprom_size", lambda t: 4)
+    monkeypatch.setattr(efuse, "cell_select", lambda t: None)
+    monkeypatch.setattr(efuse, "power_switch", lambda t, write, on: None)
+    monkeypatch.setattr(efuse, "read_section_map", lambda t, smic: bytes(efuse_map))
+    kfree = {prom.PPG_BB_GAIN_2G_TXA_OFFSET_8188F: pg_pwrtrim, prom.PPG_THERMAL_OFFSET_8188F: pg_therm}
+    monkeypatch.setattr(prom, "efuse_read1byte", lambda t, addr: (True, kfree[addr]))
+    t = MagicMock()
+    t.read8.return_value = C.EEPROM_EN
+    params, _table = prom.read_adapter_info(t, True)
+    return params
+
+
+def test_read_adapter_info_keeps_valid_efuse_mac(monkeypatch):
+    # hal_com.c:3570: a valid hw_addr is copied to EEPROMMACAddr
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    params = _read_adapter_info(monkeypatch, VALID_EFUSE_MAC)
+    assert params.autoload_fail is False
+    assert params.mac == bytes.fromhex(VALID_EFUSE_MAC)
+    assert prom.macaddr_cfg(params.mac) == bytes.fromhex(VALID_EFUSE_MAC)
+
+
+@pytest.mark.parametrize("mac_hex", INVALID_EFUSE_MACS.values(), ids=INVALID_EFUSE_MACS.keys())
+def test_read_adapter_info_zeroes_invalid_efuse_mac(monkeypatch, mac_hex):
+    # hal_com.c:3570-3584: an invalid hw_addr leaves EEPROMMACAddr all-zero
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    params = _read_adapter_info(monkeypatch, mac_hex)
+    assert params.mac == b"\x00" * 6
+    monkeypatch.setattr(prom, "random32", lambda: 0x44332211)
+    assert prom.macaddr_cfg(params.mac) == bytes.fromhex("00e04c223344")
+
+
+def test_parse_kfree_flag_on_bb_gain_zero(monkeypatch):
+    # rtl8188f_hal_init.c:4372-4379 + hal_pg.h:29: low nibble 0xF is offset 0, flag still ON
+    from wifit3.chips.rtl8188ftv_dkms import prom
+    params = _read_adapter_info(monkeypatch, VALID_EFUSE_MAC, pg_pwrtrim=0x0F)
+    assert params.kfree_flag == prom.KFREE_FLAG_ON
+    assert params.kfree_bb_gain == 0
+    assert params.thermal == prom.EEPROM_Default_ThermalMeter_8188F
+

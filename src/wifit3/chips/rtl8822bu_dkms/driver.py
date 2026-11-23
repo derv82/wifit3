@@ -10,9 +10,8 @@ the capture's monitor switch: MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO s
 RXFLTMAP0/1/2=0xFFFF). RX frames decode via `rx.iter_frames` (24-byte rx_pkt_desc + jaguar2 phy-status
 RSSI, FCS-stripped).
 
-Not registered in the manager (the mainline `chips/rtl8822bu/` owns 2357:0138); this `_dkms` port
-is exercised standalone via `scripts/chips/rtl8822bu_dkms/test_hw.py`. `inject_frame` is a stub — the TX
-descriptor is a later milestone, and the agent never fires live TX.
+`scripts/chips/rtl8822bu_dkms/test_hw.py` exercises it standalone. `inject_frame` sends one frame
+(`tx.build_inject_txdesc` + `usb_write_port`); the agent never fires live TX.
 """
 from __future__ import annotations
 
@@ -26,7 +25,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -45,9 +44,6 @@ _BULK_OUT_EP_TX = 0x05                          # 8822b bulk-OUT (FW/TX)
 CHANNELS_2G = list(range(1, 15))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
-# Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.
-# set_channel + verify_channels still drive the full CHANNELS_5G above, byte-for-byte vs the capture.
-CHANNELS_5G_NON_DFS = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 
 # The pcap-gated reference card is rfe_type 3 / cut 3; rfe_type 2 / cut 3 is live-hardware
 # verified on a TP-Link Archer T4U v3. Other burns run vendor-ported but hardware-untested RFE arms.
@@ -137,7 +133,7 @@ def _rx_state_line(t) -> str:
 
 
 class Rtl8822buDkmsDriver(Driver):
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G_NON_DFS
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: Rtl8822buTransport):
@@ -387,7 +383,9 @@ class Rtl8822buDkmsDriver(Driver):
             line = await loop.run_in_executor(None, _rx_state_line, self.transport)
         logger.debug("[RXSTATE %s] %s", ctx, line)
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8822BU: channel {channel} not supported")
         loop = asyncio.get_running_loop()
         prev = self._channel
         # Report the dwell we're leaving — exposes the "ch1..13 caught 0, ch36 caught N"
@@ -410,9 +408,8 @@ class Rtl8822buDkmsDriver(Driver):
         self._channel = channel
         if band_change:
             await self._dbg_rx_state(f"post-tune ch{channel} (band change)")
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the fill_fake_txdesc descriptor (`tx.build_inject_txdesc`, HW ACK-retry limit
         12) and bulk-OUT the frame once. Live TX is the user's explicit
         action — the agent never calls this; the descriptor build is unit-tested in test_tx.py (no
@@ -422,8 +419,7 @@ class Rtl8822buDkmsDriver(Driver):
         payload = tx.build_inject_txdesc(bytes(frame_bytes), hw_rate=hw_rate, rate_id=rate_id)
         loop = asyncio.get_running_loop()
         async with self._io_lock:
-            await loop.run_in_executor(None, self.transport.bulk_out, payload)
-        return True
+            await loop.run_in_executor(None, self.transport.usb_write_port, payload)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Realtek HW assigns the 802.11 sequence number (the txdesc sets EN_HWSEQ), so the

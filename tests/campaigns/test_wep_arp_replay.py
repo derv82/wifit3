@@ -161,10 +161,10 @@ async def test_locks_onto_yielding_candidate(mocker):
     r.start()
     for _ in range(40):
         await asyncio.sleep(0)
-        if r.stats.has_winner:
+        if r._winner is not None:
             break
     r.stop()
-    assert r.stats.has_winner
+    assert r._winner is not None
     assert r._winner == GOOD
     assert BAD in r._failed
 
@@ -193,9 +193,9 @@ async def test_iv_churn_without_echo_is_not_replayable(mocker):
         await asyncio.sleep(0)
         if GOOD in r._failed:
             break
-    has_winner, failed = r.stats.has_winner, set(r._failed)
+    winner, failed = r._winner, set(r._failed)
     r.stop()
-    assert not has_winner
+    assert winner is None
     assert GOOD in failed
 
 

@@ -15,7 +15,7 @@ from .firmware import MT7921AUFirmwareLoader
 from .constants import *
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.chips.products import ALFA, Panda
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 from wifit3.dot11.parser import WlanFrameParser
 
 logger = logging.getLogger(__name__)
@@ -35,11 +35,8 @@ class MT7921AUDriver(Driver):
     re-sync the channel. Cold chips take the full _cold_boot path.
     """
 
-    # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-14) + the 5 GHz 20 MHz
-    # channels of the world regulatory domain (regdomain.CHANNELS_5GHZ).
-    SUPPORTED_CHANNELS = list(range(1, 15)) + [
-        36, 40, 44, 48, 149, 153, 157, 161, 165,
-    ]
+    # Dual-band Wi-Fi 6 radio, 20 MHz primary.
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     # Bench (rx_autoack, 2026-07-16): auto-ACKs a spoofed MAC via active monitor on both
     # bands (2G 102/100, 5G 100/100); does NOT ACK its own silicon MAC. Behaves SPOOFABLE.
     # (An earlier read of ~120 EAPOL per WPS PBC and openwrt/mt76#839 suggested otherwise;
@@ -100,9 +97,8 @@ class MT7921AUDriver(Driver):
         The kernel's mt7921u_probe reads MT_CONN_ON_MISC/FW_N9_RDY to tell whether
         firmware is already up; that read is HW-safe here. A warm chip still has
         firmware running in monitor mode, so we reattach to it (the mt7921u_resume
-        model) instead of cold-booting. A cold boot's wfsys_reset + mcu_power_on
-        POISON a warm chip's bulk pipes on WinUSB (where we cannot do the kernel's
-        pre-reset usb_reset_device), so warm and cold are strictly separate paths.
+        model) instead of cold-booting. Firmware another driver booted (WFDMA
+        NEED_REINIT latch clear) gets mt7921u_probe's wfsys_reset, then a cold boot.
         See chips/mt7921au/MT7921AU.md "Warm re-attach"."""
         # ProgressCallback is (percentage, message) — the wifit3-wide convention.
         if progress_cb:
@@ -111,8 +107,10 @@ class MT7921AUDriver(Driver):
         self.transport.subscribe(self._on_raw_rx)
 
         if self._detect_warm():
-            self._require_own_firmware()
-            return await self._warm_reattach(progress_cb)
+            if not self._booted_by_another_driver():
+                return await self._warm_reattach(progress_cb)
+            logger.info("MT7921AU: firmware was booted by another driver; resetting WFSYS.")
+            self.firmware.wfsys_reset()          # mt7921u_probe, usb.c:213-216
         return await self._cold_boot(progress_cb)
 
     def _detect_warm(self) -> bool:
@@ -129,17 +127,8 @@ class MT7921AUDriver(Driver):
         logger.debug("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
         return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
 
-    def _require_own_firmware(self) -> None:
-        try:
-            needs_reset = self.firmware.dma_need_reinit()
-        except usb.core.USBError as e:
-            logger.warning("MT7921AU warm check: WFDMA read failed (%s); assuming reset needed.", e)
-            needs_reset = True
-        if needs_reset:
-            logger.error("MT7921AU: firmware was booted by another driver; replug required.")
-            raise BringUpError(
-                "Warm-reattach",
-                "please unplug/replug the device and try again")
+    def _booted_by_another_driver(self) -> bool:
+        return self.firmware.dma_need_reinit()
 
     @staticmethod
     def derive_product_name(mac: Optional[str]) -> Optional[str]:
@@ -163,12 +152,24 @@ class MT7921AUDriver(Driver):
 
     async def _cold_boot(self, progress_cb: Optional[ProgressCallback]) -> bool:
         """Full bring-up of a cold chip: firmware upload, post-boot device init,
-        monitor entry. The RX reader is started by load_firmware."""
+        monitor entry. The RX reader is started by power_on."""
         if progress_cb:
             progress_cb(0.1, "Uploading firmware...")
-        if not await self.firmware.load_firmware():
+        if not await self.firmware.power_on():
             raise BringUpError("Firmware upload", "please unplug/replug the device and try again")
-        self.transport.start_rx()   # idempotent — load_firmware already started it
+        for _ in range(MT792x_MCU_INIT_RETRY_COUNT):          # mt7921_init_hardware, init.c:211-219
+            if await self.firmware.load_firmware():
+                break
+            try:
+                await self.firmware.init_reset()
+            except usb.core.USBError as e:
+                if is_device_gone(e):
+                    raise
+                raise BringUpError("Firmware upload",
+                                   "please unplug/replug the device and try again") from e
+        else:
+            raise BringUpError("Firmware upload", "please unplug/replug the device and try again")
+        self.transport.start_rx()   # idempotent — power_on already started it
 
         if progress_cb:
             progress_cb(0.6, "Configuring device...")
@@ -214,8 +215,6 @@ class MT7921AUDriver(Driver):
         post-boot init: the firmware already did all of that and keeps streaming RX
         the instant we re-post a read. We only re-establish the host interface:
 
-          - a light dma_init(resume) IFF the WFDMA NEED_REINIT latch was cleared
-            (mt792x_dma_need_reinit); a normal reconnect leaves it set, so skipped.
           - re-post RX (start the reader)  == mt76u_resume_rx
           - re-sync the channel.
 
@@ -227,9 +226,6 @@ class MT7921AUDriver(Driver):
         logger.info("MT7921AU warm reattach (firmware already running)...")
         if progress_cb:
             progress_cb(0.5, "Reattaching to running firmware...")
-        if self.firmware.dma_need_reinit():
-            logger.info("WFDMA needs re-init; running light dma_init(resume).")
-            self.firmware._dma_init(resume=True)
         # Drain any RX the prior session left buffered on EP 0x84 before re-posting the
         # reader: a fresh WinUSB handle otherwise reads that stale data first and shadows
         # the GET_NIC_CAPAB reply below (seq-mismatch -> the query times out).
@@ -261,22 +257,29 @@ class MT7921AUDriver(Driver):
 
         if progress_cb:
             progress_cb(0.9, "Tuning...")
-        await self.set_channel(self._channel)
+        try:
+            await self.set_channel(self._channel)
+        except SetChannelError as e:
+            raise BringUpError("Warm re-attach tune", "please unplug/replug the device and try again") from e
         self.is_warm = True
         if progress_cb:
             progress_cb(1.0, "Done")
         logger.info("MT7921AU warm reattach ready on channel %d.", self._channel)
         return True
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 20 MHz channel via the monitor sniffer config command."""
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        """Tune to a 20 MHz channel via the monitor sniffer config command, waiting for the
+        firmware's reply like mt7921_mcu_config_sniffer (mt7921/mcu.c:1225-1226)."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"MT7921AU: channel {channel} not supported")
         logger.debug("MT7921AU: tuning to channel %d", channel)
         cmd, payload = mcu.config_sniffer(channel)
-        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        if await self.transport.send_mcu_command(cmd, payload) is None:
+            # mt7921/mcu.c:25-31 resets the chip on a missed reply; not ported, the tune raises.
+            raise SetChannelError(f"MT7921AU: Message 0x{cmd:x} timeout")
         self._channel = channel
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the connac2 TX descriptor (HW ACK-retry limit 15, NO_ACK set iff addr1 is group,
         byte-verified by verify_pcap CHECK 4 against the captured aireplay TX) and send it once
         on the frame's USB bulk-OUT endpoint: mgmt/ctrl on HCCA (0x09), data on AC_BE (0x04).
@@ -286,9 +289,9 @@ class MT7921AUDriver(Driver):
             wire, endpoint = tx.build_tx(frame_bytes, band_5ghz=self._channel > 14)
         except ValueError as e:
             logger.error("MT7921AU inject_frame: %s", e)
-            return False
+            return
         async with self._tx_lock:
-            return await self.transport.send_bulk_checked(wire, endpoint)
+            await self.transport.send_bulk_checked(wire, endpoint)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Software-stamp an incrementing 802.11 sequence number (frag-preserving, one step is

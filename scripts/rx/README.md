@@ -14,5 +14,6 @@ scripts/rx/
 ├─ reports/                Soak output, gitignored. Filename: <chip>_<YYYYmmdd>-<HHMMSS>.{md,csv}.
 ├─ soak_all.py             Runs soak across several cards, one cold-boot at a time.
 ├─ beacon_watch.py         Live beacons/sec off the card: a quick RX pulse-check.
+├─ hop_errors.py           Hop every channel, count errors, dwell & count frames.
 └─ beacon_watch_usbcap.py  Same count from a driver_captures/ capture (A/B vs the kernel).
 ```

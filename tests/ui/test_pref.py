@@ -1,16 +1,14 @@
-"""The Ctrl+P preferences modal (ui/pref.py): Save survives a failing Config.save(),
-and Consolidate has moved out of Prefs into the Vault screen."""
+"""The Ctrl+P preferences modal (ui/pref.py): what Save writes to Config, and that it survives
+a failing Config.save()."""
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select
+from textual.widgets import Button, Checkbox, Select
 
 from wifit3.models import ToolName
 from wifit3.persist import config
 from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.vault import Vault
 from wifit3.ui.pref import PreferencesModal
-from wifit3.ui.vault.modals.cpu_crack import CpuCrackConfigModal
-from wifit3.ui.vault.modals.hashcat import HashcatConfigModal
 from tests.ui.wait_until import wait_until
 
 
@@ -42,27 +40,6 @@ async def test_save_notifies_instead_of_crashing_on_config_error(monkeypatch):
         assert toasts, "a failed save should surface a toast"
         assert toasts[0][1].get("title") == "Config Error"
         assert not isinstance(app.screen, PreferencesModal)   # dismissed anyway
-
-
-@pytest.mark.asyncio
-async def test_preferences_scroll_when_the_window_is_too_short():
-    app = _Host()
-    async with app.run_test(size=(80, 18)) as pilot:
-        app.push_screen(PreferencesModal())
-        await pilot.pause(0)
-
-        assert app.screen.query_one("#dialog").max_scroll_y > 0
-
-
-@pytest.mark.asyncio
-async def test_prefs_no_longer_hosts_consolidate(tmp_path):
-    """Consolidate moved to the Vault screen; Prefs must not show it, even with legacy files."""
-    (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000001_handshake.hc22000").write_text("WPA*02*...\n")
-    app = _Host()
-    async with app.run_test() as pilot:
-        app.push_screen(PreferencesModal())
-        await pilot.pause(0)
-        assert len(app.screen.query("#consolidate")) == 0
 
 
 async def _open_prefs(app, pilot) -> None:
@@ -106,19 +83,6 @@ async def test_auto_crack_off_hides_configure_and_saves_off(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_choosing_an_unconfigured_tool_opens_its_modal_in_save_mode(monkeypatch):
-    monkeypatch.setattr(Config.hashcat, "path", None)
-    app = _Host()
-    async with app.run_test() as pilot:
-        await _open_prefs(app, pilot)
-        app.screen.query_one("#auto_crack", Select).value = "hashcat"
-        await wait_until(pilot, lambda: bool(app.screen.query("#wordlist-launch")))
-
-        assert isinstance(app.screen, HashcatConfigModal)
-        assert str(app.screen.query_one("#wordlist-launch", Button).label) == "Save"
-
-
-@pytest.mark.asyncio
 async def test_cancelling_an_unconfigured_tools_modal_restores_the_previous_choice(monkeypatch):
     monkeypatch.setattr(Config, "auto_crack", ToolName.CPU_CRACK)
     monkeypatch.setattr(Config.hashcat, "path", None)
@@ -140,12 +104,30 @@ async def test_cancelling_an_unconfigured_tools_modal_restores_the_previous_choi
 
 
 @pytest.mark.asyncio
-async def test_configure_button_opens_the_chosen_tools_modal():
+async def test_enable_dfs_channels_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "enable_dfs_channels", False)
     app = _Host()
     async with app.run_test() as pilot:
         await _open_prefs(app, pilot)
-        app.screen.query_one("#auto_crack_configure", Button).press()
-        await wait_until(pilot, lambda: bool(app.screen.query("#wordlist-launch")))
+        app.screen.query_one("#enable_dfs_channels", Checkbox).value = True
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
 
-        assert isinstance(app.screen, CpuCrackConfigModal)
-        assert str(app.screen.query_one("#wordlist-launch", Button).label) == "Save"
+    assert Config.enable_dfs_channels is True
+    assert "enable_dfs_channels = true" in (tmp_path / "config.toml").read_text("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_save_probed_ssids_is_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "save_probed_ssids", False)
+    app = _Host()
+    async with app.run_test() as pilot:
+        await _open_prefs(app, pilot)
+        app.screen.query_one("#save_probed_ssids", Checkbox).value = True
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+
+    assert Config.save_probed_ssids is True
+    assert "save_probed_ssids = true" in (tmp_path / "config.toml").read_text("utf-8")

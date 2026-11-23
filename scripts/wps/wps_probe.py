@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, str_to_mac
+from wifit3.wlan.station import Association, WlanTransport, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.campaigns.wps.registrar import PinResult, WpsRegistrar
 from wifit3.wlan.array import WlanArray
@@ -127,8 +127,7 @@ async def discover_iface(debug: bool, card: str = ""):
 
 async def find_ap(iface, array, channel: int, bssid: str | None, ssid: str | None, scan_s: float):
     step(f"Park on channel {channel}, find the AP")
-    if not await iface.set_channel(channel):
-        fail(f"set_channel({channel}) failed.")
+    await iface.set_channel(channel)
     deadline = time.time() + scan_s
     while time.time() < deadline:
         for ap in array.get_access_points():

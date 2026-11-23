@@ -1,7 +1,7 @@
 """Spec tests for the channel -> operating-class + band helpers (IEEE 802.11-2020 Annex E)."""
 import pytest
 
-from wifit3.dot11.chan import channel_operating_class, same_band
+from wifit3.dot11.chan import channel_operating_class, is_dfs_channel, same_band
 
 
 def test_channel_operating_class_2ghz_and_5ghz():
@@ -25,3 +25,8 @@ def test_same_band():
     assert same_band(6, 36) is False            # 2.4 -> 5 GHz
     assert same_band(149, 11) is False          # 5 -> 2.4 GHz
     assert same_band(14, 36) is False           # ch 14 is 2.4 GHz
+
+
+def test_is_dfs_channel():
+    assert [c for c in (48, 52, 64, 68, 96, 100, 144, 149) if is_dfs_channel(c)] == [52, 64, 100, 144]
+    assert is_dfs_channel(6) is False

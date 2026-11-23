@@ -353,9 +353,6 @@ class WlanSink:
         if frame_type in ("deauth", "disassoc") and client.bssid == bssid:
             client.akm_selected = None
 
-        if frame_type == "probe_req" and self._is_real_ssid(pkt.ssid):
-            client.probed_ssids.add(pkt.ssid)
-
         if frame_type in ("assoc_req", "reassoc_req"):
             ap = self.access_points.get(bssid)
             if ap is not None:
@@ -404,21 +401,7 @@ class WlanSink:
 
         # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list.
         if client_mac not in self.own_macs and not hs.has_message(raw_frame):
-            eapol = HandshakeMessage(
-                raw=raw_frame,
-                msg_num=pkt.msg_num,
-                replay_hex=replay.hex(),
-                nonce=pkt.nonce or b"",
-                mic=pkt.mic or b"",
-                key_data_len=pkt.key_data_len,
-                eapol_payload=pkt.payload,
-                akm=akm,
-                akm_selection_rejected=pkt.akm_selection_rejected,
-                mdid=pkt.mdid,
-                r0khid=pkt.r0khid,
-                r1khid=pkt.r1khid,
-                timestamp=time.time(),
-            )
+            eapol = HandshakeMessage.from_packet(pkt, akm, time.time())
             hs.add_message(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")

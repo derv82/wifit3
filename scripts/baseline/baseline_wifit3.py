@@ -75,9 +75,7 @@ async def run(args) -> int:
     print(f"[*] Sweeping {channels} at {args.secs}s/channel", file=sys.stderr)
     try:
         for ch in channels:
-            if not await iface.set_channel(ch):
-                print(f"  CH{ch:>3}: set_channel failed, skipping", file=sys.stderr)
-                continue
+            await iface.set_channel(ch)
             cur_channel["ch"] = ch
             await asyncio.sleep(0.25)  # AGC / pipe drain
             await asyncio.sleep(args.secs)

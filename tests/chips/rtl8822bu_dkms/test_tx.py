@@ -83,8 +83,8 @@ async def test_driver_inject_uses_1m_cck_on_2ghz():
     driver = Rtl8822buDkmsDriver(MagicMock())
     driver._channel = 1
     sent = []
-    driver.transport.bulk_out = sent.append
-    assert await driver.inject_frame(_DEAUTH_UNICAST) is True
+    driver.transport.usb_write_port = sent.append
+    await driver.inject_frame(_DEAUTH_UNICAST)
     assert int.from_bytes(sent[0][0x10:0x14], "little") & 0x7F == DESC_RATE1M
     assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == RATEID_IDX_B
 
@@ -93,8 +93,8 @@ async def test_driver_inject_uses_6m_ofdm_on_5ghz():
     driver = Rtl8822buDkmsDriver(MagicMock())
     driver._channel = 149
     sent = []
-    driver.transport.bulk_out = sent.append
-    assert await driver.inject_frame(_DEAUTH_UNICAST) is True
+    driver.transport.usb_write_port = sent.append
+    await driver.inject_frame(_DEAUTH_UNICAST)
     assert int.from_bytes(sent[0][0x10:0x14], "little") & 0x7F == DESC_RATE6M
     assert (int.from_bytes(sent[0][4:8], "little") >> 16) & 0x1F == RATEID_IDX_G
 

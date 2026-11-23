@@ -38,7 +38,8 @@ def _write_firmware(t: RT5372Transport, blob: bytes) -> None:
     t.register_write(C.H2M_MAILBOX_STATUS, 0xFFFFFFFF)
 
     # Tell the device to load the firmware (long-timeout vendor request).
-    t.device_mode_sw(C.USB_MODE_FIRMWARE)
+    if t.device_mode_sw(C.USB_MODE_FIRMWARE, timeout_ms=C.REGISTER_TIMEOUT_FIRMWARE) is None:
+        raise IOError("Failed to write Firmware to device")   # rt2800usb.c:253-258
     # kernel msleep(10) here — replay/HW needs no settle.
     t.register_write(C.H2M_MAILBOX_CSR, 0)
 

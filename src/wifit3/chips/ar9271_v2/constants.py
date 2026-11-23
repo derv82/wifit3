@@ -47,6 +47,7 @@ EP_REG_OUT = 0x04
 # [SRC] htc_hst.h:42-53,132-139,164-172.
 ENDPOINT0 = 0                          # the reserved HTC control endpoint
 ENDPOINT_MAX = 22
+HTC_PANIC_EPID = 0x99                  # [SRC] htc_hst.c:429
 ENDPOINT_UNUSED = -1
 
 HTC_MSG_READY_ID = 1                   # device->host: target ready (credits, credit_size)
@@ -57,6 +58,7 @@ HTC_MSG_CONFIG_PIPE_ID = 5
 HTC_MSG_CONFIG_PIPE_RESPONSE_ID = 6
 
 HTC_FRAME_HDR_LEN = 8                  # endpoint_id, flags, be16 payload_len, control[4]
+HTC_FLAGS_RECV_TRAILER = 1 << 1        # [SRC] htc_hst.h:57
 HTC_SERVICE_SUCCESS = 0                # [SRC] htc_hst.h:185
 
 # Service IDs: MAKE_SERVICE_ID(WMI_SERVICE_GROUP=1, index) [SRC] htc_hst.h:164-172.

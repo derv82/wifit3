@@ -13,7 +13,7 @@ USB_IDS_RTL8822CU = (
     (0x0BDA, 0xD820, "RTL8822CU", None, None),   # 21D USB multi-fuction
     (0x0BDA, 0xD82B, "RTL8822CU", None, None),   # 21D USB Single-fuction, WiFi only
     # (0x13B1, 0x0043, "RTL8822CU", None, None), # Alpha [SRC usb_intf.c:302]: 88x2bu claims it too
-    #   (rtl8822bu and rtl8822bu_dkms already declare it as the Linksys WUSB6400M).
+    #   (rtl8822bu_dkms already declares it as the Linksys WUSB6400M).
     # Stays active: device/manager.py resolve_driver() routes this shared id by USB descriptor
     # (bulk-IN 0x85 means Mediatek), searching THIS package's SUPPORTED_IDS for the RTL answer.
     (0x2357, 0x0137, "RTL8822CU", "FAST / TP-Link", "USB 802.11ac Adapter"),

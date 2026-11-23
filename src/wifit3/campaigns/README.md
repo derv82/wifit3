@@ -6,7 +6,6 @@ Attack implementations. Each takes a `WlanInterface` and a target from `models/`
 
 What lives here:
 - `campaign.py`: the radio-owning `Campaign` base every attack subclasses.
-- `auth_assoc.py`: the forged-client auth/assoc machinery the WEP and WPS attacks reuse.
 - `pmkid.py`: PMKID capture (passive and active).
 - `eviltwin/`: WPA2 twin that punts clients off a WPA3-transition AP to capture a crackable 4-way.
 - `decloak.py`: hidden-SSID reveal.

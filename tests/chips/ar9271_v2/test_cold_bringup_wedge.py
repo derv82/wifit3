@@ -1,5 +1,7 @@
 """A wedged chip mid-cold-bringup must surface a clean, actionable BringUpError."""
+import errno
 import logging
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,6 +9,7 @@ import pytest
 import usb.core
 
 from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
+from wifit3.chips.ar9271_v2.transport import AR9271Transport
 from wifit3.device.manager import DeviceManager
 from wifit3.errors import BringUpError
 
@@ -35,6 +38,8 @@ def _driver(mocker, original) -> tuple[AR9271V2Driver, MagicMock]:
     mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.dispose_resources")
     reader = MagicMock(start=MagicMock(), stop=AsyncMock())
     mocker.patch("wifit3.chips.ar9271_v2.driver.RxReaderThread", return_value=reader)
+    mocker.patch.object(AR9271Transport, "alloc_reg_in_urbs")
+    mocker.patch.object(AR9271Transport, "dealloc_reg_in_urbs")
     return driver, reader
 
 
@@ -75,6 +80,7 @@ async def test_cold_bringup_timeout_becomes_a_clean_replug_error_and_tears_down(
     assert _renders_cleanly(exc_info.value)
     reader.stop.assert_awaited_once()                  # torn down, not leaked
     assert driver._reader is None
+    AR9271Transport.dealloc_reg_in_urbs.assert_called_once()
     assert any("HTC/WMI init wedged" in r.message for r in caplog.records)
 
 
@@ -95,6 +101,7 @@ async def test_warm_reattach_failure_becomes_a_clean_replug_error(mocker, caplog
     assert exc_info.value.stage == "warm reattach"
     assert _renders_cleanly(exc_info.value)
     reader.stop.assert_awaited_once()                  # torn down, not leaked
+    AR9271Transport.dealloc_reg_in_urbs.assert_called_once()
     assert any("warm reattach failed" in r.message for r in caplog.records)
 
 
@@ -118,7 +125,8 @@ async def test_post_boot_handshake_double_failure_becomes_a_clean_replug_error(m
     assert _renders_cleanly(exc_info.value)
 
 
-def test_warm_probe_resyncs_pipes_before_reading(mocker):
+def test_warm_probe_leaves_the_pipe_toggles_alone(mocker):
+    # a rebooted chip ignores clear_halt, so a host-side reset desyncs REG_IN and HTC READY is lost
     calls: list[str] = []
     dev = SimpleNamespace(
         set_configuration=MagicMock(),
@@ -130,8 +138,85 @@ def test_warm_probe_resyncs_pipes_before_reading(mocker):
     mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.release_interface")
 
     assert driver._is_chip_warm() is True
-    assert calls[:4] == ["clear:1", "clear:130", "clear:131", "clear:4"]
-    assert calls[4] == "read"
+    assert not any(call.startswith("clear:") for call in calls)
+
+
+def _probe_dev(reads):
+    """bulk-IN returns ``reads`` in order (bytes, or None for a read timeout), then times out."""
+    reads = list(reads)
+
+    def read(ep, size, timeout):
+        result = reads.pop(0) if reads else None
+        if result is None:
+            raise usb.core.USBTimeoutError("Operation timed out")
+        return result
+
+    return SimpleNamespace(set_configuration=MagicMock(), clear_halt=lambda ep: None, read=read)
+
+
+HIF_RX = bytes([0, 0, 0, 0x4e])
+
+
+def test_warm_probe_ignores_what_a_rebooted_chip_left_in_the_fifo(mocker):
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.claim_interface")
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.release_interface")
+    driver = AR9271V2Driver(_probe_dev([HIF_RX, HIF_RX, None]))
+    assert driver._is_chip_warm() is False
+
+
+def test_warm_probe_sees_rx_that_keeps_streaming(mocker):
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.claim_interface")
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.release_interface")
+    driver = AR9271V2Driver(_probe_dev([HIF_RX, None, HIF_RX]))
+    assert driver._is_chip_warm() is True
+
+
+@pytest.mark.parametrize("adopted, removed, rebooted", [
+    (True, False, True), (True, True, False), (False, False, False)])
+async def test_close_reboots_to_the_bootloader_like_ath9k_hif_usb_disconnect(
+        mocker, adopted, removed, rebooted):
+    # hif_usb.c:1447-1450: only when the firmware was loaded and the device is still attached
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.dispose_resources")
+    driver = AR9271V2Driver(SimpleNamespace())
+    driver.wmi = object() if adopted else None
+    driver.transport.removed = removed
+    calls = []
+    mocker.patch.object(driver, "_ath9k_htc_stop", side_effect=lambda: calls.append("ath9k_htc_stop"))
+    mocker.patch.object(driver.transport, "reboot", side_effect=lambda: calls.append("reboot"))
+    await driver.close()
+    assert calls == (["ath9k_htc_stop", "reboot"] if rebooted else [])     # ath9k_htc_stop runs first
+
+
+async def test_close_asks_the_rx_reader_to_stop_before_stopping_rx(mocker):
+    # after WMI_STOP_RECV bulk-IN is silent, so a reader still reading would wait out its timeout
+    mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.dispose_resources")
+    driver = AR9271V2Driver(SimpleNamespace())
+    driver.wmi = object()
+    calls = []
+
+    async def reader_stop():
+        calls.append("reader stop")
+
+    driver._reader = SimpleNamespace(stop=reader_stop)
+    mocker.patch.object(driver, "_ath9k_htc_stop", side_effect=lambda: calls.append("ath9k_htc_stop"))
+    mocker.patch.object(driver.transport, "reboot")
+    await driver.close()
+    assert calls == ["reader stop", "ath9k_htc_stop"]
+    assert driver._reader is None
+
+
+async def test_close_finishes_when_the_device_goes_during_the_stop_commands(mocker):
+    # wmi.c:323-324: once AH_UNPLUGGED, ath9k_wmi_cmd returns 0 and ath9k_htc_stop carries on
+    dispose = mocker.patch("wifit3.chips.ar9271_v2.driver.usb.util.dispose_resources")
+    driver = AR9271V2Driver(SimpleNamespace())
+    driver.wmi = SimpleNamespace(
+        cmd_or_none=MagicMock(side_effect=usb.core.USBError("gone", errno=errno.ENODEV)))
+    driver.htc_tx = SimpleNamespace(tx_drain=MagicMock())
+    driver._operation_lock = threading.RLock()
+    mocker.patch.object(driver.transport, "reboot")
+    await driver.close()
+    driver.htc_tx.tx_drain.assert_called_once()
+    dispose.assert_called_once()
 
 
 def test_claim_exhausted_retries_becomes_a_clean_replug_error(mocker):

@@ -115,7 +115,7 @@ def _pcap_dates(lines: dict[str, Hc22000Line], pcaps: Iterable[Path]) -> dict[st
         hids_by_needle.setdefault(bytes.fromhex(line.pmkid_or_mic), []).append(hid)
     found: dict[str, set[int]] = {}
     for pcap in pcaps:
-        for frame, epoch in read_pcap(pcap):
+        for frame, timestamp in read_pcap(pcap):
             llc = frame.find(LLC_SNAP_EAPOL)
             if llc == -1:
                 continue
@@ -127,7 +127,7 @@ def _pcap_dates(lines: dict[str, Hc22000Line], pcaps: Iterable[Path]) -> dict[st
                 needles.append(frame[pmkid_start:pmkid_start + _PMKID_LEN])
             for needle in needles:
                 for hid in hids_by_needle.get(needle, ()):
-                    found.setdefault(hid, set()).add(epoch)
+                    found.setdefault(hid, set()).add(int(timestamp))
     return found
 
 

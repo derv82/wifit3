@@ -35,7 +35,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError, BringUpPermissionsError
+from wifit3.errors import BringUpError, BringUpPermissionsError, SetChannelError, is_device_gone
 
 from wifit3.dot11.parser import WlanFrameParser
 
@@ -80,7 +80,7 @@ class RTL8187Driver(Driver):
     """
 
     # rtl818x_channels: 2.4 GHz 1..14 (ch14 = 2484 MHz, its own CCK power table).
-    SUPPORTED_CHANNELS = list(range(1, 15))
+    SUPPORTED_CHANNELS = list(Driver.CHANNELS_2G)
     # FIXED_MAC: the 8187L auto-ACKs its own silicon MAC in monitor mode (bench 2026-07-16:
     # 111 ACKs / 100 injects to the silicon MAC), but has no active monitor to program a
     # forged MAC, so a spoofed source is never ACKed.
@@ -323,26 +323,18 @@ class RTL8187Driver(Driver):
         return
 
     # ---- channel tune (M4) -----------------------------------------------
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8187: channel {channel} not supported")
         if self._rf_setup is None or self._power is None:
-            logger.error("RTL8187 set_channel(%d): RF setup / EEPROM TX power not probed yet "
-                         "(read in connect()); connect() must run first", channel)
-            return False
-        try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, _config_channel, self.transport, self._rf_setup, channel, self._power,
-            )
-        except ValueError as e:
-            logger.warning("RTL8187 set_channel: %s", e)
-            return False
-        except (IOError, usb.core.USBError) as e:
-            logger.error("RTL8187 set_channel(%d) USB error: %s", channel, e)
-            return False
+            raise SetChannelError(f"RTL8187 set_channel({channel}): connect() must run first")
+        await asyncio.get_event_loop().run_in_executor(
+            None, _config_channel, self.transport, self._rf_setup, channel, self._power,
+        )
         self.current_channel = channel
-        return True
 
     # ---- TX inject (M5) --------------------------------------------------
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build tx_hdr + bulk-OUT ``frame_bytes`` once, over EP 0x02, with the chip's HW ACK-retry
         limit set to ``RETRY_COUNT`` (7). The 802.11 sequence number is already stamped
         by ``_stamp_tx_seq``."""
@@ -350,7 +342,9 @@ class RTL8187Driver(Driver):
         if max_packet_sizes is None or self.chip_variant is None:
             logger.error("RTL8187 inject_frame: bulk-OUT wMaxPacketSize / chip variant not set yet "
                          "(read in connect()); connect() must run first")
-            return False
+            return
+        if self.transport.removed:
+            raise usb.core.USBError("device removed", errno=errno.ENODEV)
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
@@ -359,12 +353,13 @@ class RTL8187Driver(Driver):
                                    self.chip_variant.is_rtl8187b),
             )
         except usb.core.USBError as e:
-            logger.error("RTL8187 inject_frame USBError: %s", e)
-            return False
+            if is_device_gone(e):
+                self.transport.removed = True
+                raise
+            return   # dev.c:318-321: a failed submit frees the frame, no log
         except ValueError as e:
             logger.warning("RTL8187 inject_frame bad frame: %s", e)
-            return False
-        return True
+            return
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Stamp an incrementing 802.11 sequence number (step 0x10, the number lives in seq_ctrl

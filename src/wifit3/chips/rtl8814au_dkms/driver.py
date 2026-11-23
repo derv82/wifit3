@@ -11,11 +11,7 @@ confirmed promiscuous in both directions (captures client->AP, incl. WPA M2/M4).
 power — ``set_channel`` tunes 2.4 GHz + 5 GHz with correct per-rate TX power). Pending:
 the ch153 spur notch (M5f, minor RX polish).
 
-``wlan/discovery.py`` selects this DKMS port for 0bda:8813 by DEFAULT; the mainline
-``rtw88_8814au`` port loads only when ``WIFIT3_RTL8814=mainline`` is set in the
-environment (the ``env_or_none(..., "mainline", RTL8814AUDriver) or Rtl8814auDkmsDriver``
-fallthrough). So ``beacon_watch`` / the app exercise THIS driver unless that env var
-is set; ``scripts/chips/rtl8814au_dkms/`` drives the bring-up + handlers directly.
+``scripts/chips/rtl8814au_dkms/`` drives the bring-up + handlers directly.
 """
 from __future__ import annotations
 
@@ -28,15 +24,13 @@ import usb.core
 import usb.util
 
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 from wifit3.dot11.parser import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw, set_rfe_reg_init
-from .constants import (
-    BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G_NON_DFS,
-)
+from .constants import BAND_MAX, BBSWING_DEFAULT
 from .dm import init_hal_dm
 from .watchdog import WATCHDOG_PERIOD_S, WatchdogState
 from .watchdog import tick as watchdog_tick
@@ -77,10 +71,8 @@ def _detect_super_speed(transport: Rtl8814auTransport) -> bool:
 
 
 class Rtl8814auDkmsDriver(Driver):
-    # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b select / M5c runtime / M5d TX
-    # power) — both bands tune with correct per-rate TX power for RX and inject. Non-DFS 5 GHz
-    # only in the advertised set; set_channel still tunes DFS, we just don't hop it.
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(CHANNELS_2G + CHANNELS_5G_NON_DFS)
+    # 2.4 GHz + 5 GHz, 20 MHz primary: both bands tune with correct per-rate TX power.
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: Rtl8814auTransport):
@@ -322,7 +314,7 @@ class Rtl8814auDkmsDriver(Driver):
         self._channel = channel
         return band
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz (band-switches on a crossing).
 
         Sets the per-rate TX power for the channel's band (M2e / M5d), so both RX and
@@ -336,6 +328,8 @@ class Rtl8814auDkmsDriver(Driver):
         self-heals, so it skips the pause), so it would otherwise wedge ~15 s until the DIG
         watchdog happens to re-kick RX. verify_pcap can't catch this — it replays the writes
         single-threaded with no concurrent reader. Mirrors the rtl8821cu_dkms fix."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8814AU: channel {channel} not supported")
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             reader = self._reader
@@ -349,7 +343,6 @@ class Rtl8814auDkmsDriver(Driver):
             finally:
                 if pause:
                     reader.resume()
-        return True
 
     def _inject(self, t, frame_bytes: bytes, *, hw_rate: int = DESC_RATE1M,
                 rate_id: int = RATEID_IDX_B) -> None:
@@ -371,7 +364,7 @@ class Rtl8814auDkmsDriver(Driver):
                                  bmc=bmc, gid=gid)
         t.bulk_out(desc + frame_bytes)
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Transmit one 802.11 management frame once (e.g. a deauth).
 
         The descriptor + bulk-OUT is ``_inject`` (shared with the pcap gate, which replays the
@@ -379,11 +372,10 @@ class Rtl8814auDkmsDriver(Driver):
         download uses, where the MGMT queue maps. Serialized with ``set_channel`` / the DIG
         watchdog via ``_io_lock`` so the frame is never emitted mid-retune."""
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
-            return False
+            return
         loop = asyncio.get_running_loop()
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self._inject, self.transport, frame_bytes)
-        return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Realtek HW assigns the 802.11 sequence number (the txdesc sets HWSEQ_EN), so the

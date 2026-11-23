@@ -13,8 +13,9 @@ injected-frame branch (info->flags & IEEE80211_TX_CTL_INJECTED) always taken; th
 HW-encap (802.3) and data-AC queue paths are not on wifit3's injection graph.
 
 Field masks/sizes come from constants.py (grepped from mt76_connac3_mac.h /
-mt76_connac.h). The monitor-vif context (wcid 19, omac 0, band_idx 0xff -> TGID 3,
-basic_rates_idx 15) is the fixed state mt7925/main.c:375-392 gives the monitor link.
+mt76_connac.h). The monitor-vif context (wcid 19, omac 0, band_idx 0xff -> TGID 3)
+is the fixed state mt7925/main.c:375-392 gives the monitor link; basic_rates_idx
+(TX_RATE) depends on the band, so the caller passes it.
 """
 import struct
 
@@ -68,8 +69,8 @@ def ieee80211_hdrlen(fc: int) -> int:
     return hdrlen
 
 
-def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
-               band_idx: int = MON_TX_BAND_IDX, rate_idx: int = MON_TX_RATE_IDX) -> bytes:
+def build_txwi(mpdu: bytes, *, wcid_idx: int, basic_rates_idx: int,
+               omac_idx: int = MON_TX_OMAC_IDX, band_idx: int = MON_TX_BAND_IDX) -> bytes:
     """Port of mt7925_mac_write_txwi (+ _write_txwi_80211) for a monitor-injected raw
     802.11 frame. Returns the 64-byte connac3 TXD (txwi[0..7] filled, [8..15] zero).
 
@@ -128,18 +129,18 @@ def build_txwi(mpdu: bytes, *, wcid_idx: int, omac_idx: int = MON_TX_OMAC_IDX,
     txwi[3] &= ~MT_TXD3_HW_AMSDU
 
     if txwi[1] & MT_TXD1_FIXED_RATE:
-        txwi[6] |= (rate_idx << 16) & MT_TXD6_TX_RATE
+        txwi[6] |= (basic_rates_idx << 16) & MT_TXD6_TX_RATE
         txwi[3] |= MT_TXD3_BA_DISABLE
 
     return struct.pack("<16I", *(w & 0xFFFFFFFF for w in txwi))
 
 
-def build_tx(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
+def build_tx(mpdu: bytes, *, wcid_idx: int, basic_rates_idx: int, **kw) -> bytes:
     """Full USB TX frame for one MPDU: [4B SDIO hdr][64B TXD][MPDU][pad].
 
     SDIO hdr tx_bytes = skb->len at add-hdr time = TXD + MPDU (USB, no pad, no hdr);
     pad = round_up(4+TXD+MPDU, 4) - that, +4 for USB (mt7925_usb_sdio_tx_prepare_skb)."""
-    txd = build_txwi(mpdu, wcid_idx=wcid_idx, **kw)
+    txd = build_txwi(mpdu, wcid_idx=wcid_idx, basic_rates_idx=basic_rates_idx, **kw)
     body = txd + mpdu
     hdr = struct.pack("<I", len(body) & MT792x_SDIO_HDR_TX_BYTES)   # pkt_type 0
     frame = hdr + body
@@ -151,11 +152,11 @@ def build_tx(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
 _TXWI3_OFF = SDIO_HDR_SIZE + 3 * 4
 
 
-def build_tx_no_ack(mpdu: bytes, *, wcid_idx: int, **kw) -> bytes:
+def build_tx_no_ack(mpdu: bytes, *, wcid_idx: int, basic_rates_idx: int, **kw) -> bytes:
     """Replay-only. The aireplay frames in the mt7925u TX capture set MT_TXD3_NO_ACK, which
     the production `build_tx` sets only for a group addr1 (a unicast addr1 HW-retries until
     ACKed). verify_pcap uses this to byte-match those exact captured frames.
     NOT an inject path: nothing in the driver calls it."""
-    frame = bytearray(build_tx(mpdu, wcid_idx=wcid_idx, **kw))
+    frame = bytearray(build_tx(mpdu, wcid_idx=wcid_idx, basic_rates_idx=basic_rates_idx, **kw))
     frame[_TXWI3_OFF] |= MT_TXD3_NO_ACK          # txwi[3] bit0 (little-endian low byte)
     return bytes(frame)

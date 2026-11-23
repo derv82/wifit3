@@ -13,7 +13,7 @@ from .firmware import MT7925AUFirmwareLoader
 from .constants import *
 from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError, is_device_gone
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +26,8 @@ class MT7925AUDriver(Driver):
     RX decode and TX are in progress.
     """
 
-    # Dual-band Wi-Fi 7 radio, 20 MHz primary. 2.4 GHz (1-14) + the 5 GHz 20 MHz
-    # channels the capture sweeps (main.log: 36..165).
-    SUPPORTED_CHANNELS = list(range(1, 15)) + [
-        36, 40, 44, 48, 149, 153, 157, 161, 165,
-    ]
+    # Dual-band Wi-Fi 7 radio, 20 MHz primary.
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
     FAKE_MAC = FakeMacSupport.SPOOFABLE
     LINUX_REPLUG_AFTER_MODPROBE = True
 
@@ -124,8 +121,19 @@ class MT7925AUDriver(Driver):
 
         if progress_cb:
             progress_cb(0.1, "Uploading MT7925AU firmware...")
-        if not await self.firmware.load_firmware():
-            raise BringUpError("firmware", "MT7925AU firmware load failed")
+        if not await self.firmware.power_on():
+            raise BringUpError("firmware", "MT7925AU power-on failed")
+        for _ in range(MT792x_MCU_INIT_RETRY_COUNT):          # mt7925_init_hardware, init.c:128-139
+            if await self.firmware.load_firmware():
+                break
+            try:
+                await self.firmware.init_reset()
+            except usb.core.USBError as e:
+                if is_device_gone(e):
+                    raise
+                raise BringUpError("firmware", "please unplug/replug the device and try again") from e
+        else:
+            raise BringUpError("firmware", "please unplug/replug the device and try again")
         self.transport.start_rx()
 
         if progress_cb:
@@ -143,19 +151,30 @@ class MT7925AUDriver(Driver):
                     self._channel, self.mac_address)
         return True
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 20 MHz channel via the monitor sniffer config (UNI SNIFFER, tag 1)."""
-        cmd, payload = mcu.config_sniffer(channel)
-        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
+        """Tune to a 20 MHz channel: sniffer enable then config (UNI SNIFFER, tags 0 and 1), each
+        waiting for the firmware's reply like mt7925_change_chanctx (mt7925/main.c:1780-1782)."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"MT7925AU: channel {channel} not supported")
+        for cmd, payload in (mcu.set_sniffer(True), mcu.config_sniffer(channel)):
+            if await self.transport.send_mcu_command(cmd, payload) is None:
+                # mt7925/mcu.c:21-26 resets the chip on a missed reply; not ported, the tune raises.
+                raise SetChannelError(f"MT7925AU: Message 0x{cmd:x} timeout")
         self._channel = channel
-        return True
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Build the connac3 TXWI for a raw 802.11 frame and send it once over the HCCA
         bulk-OUT (EP 0x09), the mgmt/PSD endpoint the mt76 xmit path routes injected
         frames to. The TXWI reads the 802.11 sequence from the frame itself."""
-        wire = tx.build_tx(frame_bytes, wcid_idx=self._tx_wcid)
-        return await self.transport.send_bulk_checked(wire, EP_OUT_HCCA)
+        # main.c:382-385 picks basic_rates_idx once, from the band when the vif is added (5 GHz in
+        # monitor mode, so Linux injects OFDM 6 on 2.4 GHz too). We pick it per tune: 2.4 GHz ->
+        # mt76_rates[0] CCK 1 Mbps, else mt76_rates[4] OFDM 6 Mbps (mac80211.c:160-172). MT7925AU.md.
+        if self._channel <= 14:
+            basic_rates_idx = MT792x_BASIC_RATES_TBL
+        else:
+            basic_rates_idx = MT792x_BASIC_RATES_TBL + 4
+        wire = tx.build_tx(frame_bytes, wcid_idx=self._tx_wcid, basic_rates_idx=basic_rates_idx)
+        await self.transport.send_bulk_checked(wire, EP_OUT_HCCA)
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Stamp an incrementing 12-bit 802.11 sequence into seq_ctrl (bytes 22-23),

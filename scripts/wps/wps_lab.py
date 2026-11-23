@@ -36,7 +36,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from wps_probe import discover_iface, find_ap, load_default_target, write_pcap
 
-from wifit3.campaigns.auth_assoc import (
+from wifit3.wlan.station import (
     Association, WlanTransport, random_client_mac, str_to_mac,
 )
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie

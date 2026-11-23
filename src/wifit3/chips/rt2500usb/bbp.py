@@ -15,7 +15,6 @@ override loop (words 0x0e-0x1d) is applied last.
 """
 from __future__ import annotations
 
-import logging
 import time
 
 from .constants import (
@@ -46,8 +45,6 @@ from .constants import (
 )
 from .transport import RT2500USBTransport, get_field16, set_field16
 
-logger = logging.getLogger(__name__)
-
 # Fixed BBP register defaults (rt2500usb.c:908-938), in write order.
 BBP_INIT_VALUES: list[tuple[int, int]] = [
     (3, 0x02), (4, 0x19), (14, 0x1c), (15, 0x30), (16, 0xac),
@@ -63,14 +60,12 @@ BBP_INIT_VALUES: list[tuple[int, int]] = [
 def bbp_write(t: RT2500USBTransport, word: int, value: int) -> None:
     """Write ``value`` to BBP register ``word`` (rt2500usb.c:122-143)."""
     available, _ = t.regbusy_read(PHY_CSR8, PHY_CSR8_BUSY)
-    if not available:
-        logger.warning("bbp_write(%d): BBP busy, dropping write", word)
-        return
-    reg = 0
-    reg = set_field16(reg, PHY_CSR7_DATA, value)
-    reg = set_field16(reg, PHY_CSR7_REG_ID, word)
-    reg = set_field16(reg, PHY_CSR7_READ_CONTROL, 0)
-    t.write16(PHY_CSR7, reg)
+    if available:
+        reg = 0
+        reg = set_field16(reg, PHY_CSR7_DATA, value)
+        reg = set_field16(reg, PHY_CSR7_REG_ID, word)
+        reg = set_field16(reg, PHY_CSR7_READ_CONTROL, 0)
+        t.write16(PHY_CSR7, reg)
 
 
 def bbp_read(t: RT2500USBTransport, word: int) -> int:

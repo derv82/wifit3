@@ -1,10 +1,16 @@
 """rtl8192fu core.c port: filter, queue priority, EFUSE decode, CFO watchdog."""
+import pytest
+
 from wifit3.chips.rtl8192fu import constants as C
 from wifit3.chips.rtl8192fu.core import (
     MONITOR_FILTER_FLAGS,
+    RF_A,
     rtl8xxxu_config_endpoints_no_sie,
     rtl8xxxu_configure_filter,
+    rtl8xxxu_init_mac,
+    rtl8xxxu_init_phy_regs,
     rtl8xxxu_init_queue_priority,
+    rtl8xxxu_init_rf_regs,
     rtl8xxxu_read_efuse,
     rtl8xxxu_watchdog_callback,
 )
@@ -74,3 +80,37 @@ def test_watchdog_steps_crystal_cap_toward_default():
     assert priv.cfo_tracking.atc_status
     written = [address for address, _, _ in transport.writes()]
     assert written == [C.REG_AFE_PLL_CTRL, C.REG_AFE_XTAL_CTRL, C.REG_OFDM1_CFO_TRACKING]
+
+
+def test_init_mac_warns_and_fails_on_a_failed_write(caplog):
+    priv, transport = make_priv()
+    transport.write8 = lambda address, value: None
+    with pytest.raises(OSError):
+        rtl8xxxu_init_mac(priv)
+    assert "Failed to initialize MAC (reg: " in caplog.text
+
+
+def test_init_phy_regs_warns_and_stops_the_table_at_a_failed_write(caplog):
+    priv, transport = make_priv()
+    written = []
+
+    def write32(address, value):
+        written.append(address)
+        return None if address == 0x804 else 4
+    transport.write32 = write32
+    rtl8xxxu_init_phy_regs(priv, ((0x800, 1), (0x804, 2), (0x808, 3), (0xFFFF, 0xFFFFFFFF)))
+    assert written == [0x800, 0x804]
+    assert "Failed to initialize PHY" in caplog.text
+
+
+def test_init_rf_regs_warns_and_stops_the_table_at_a_failed_write(caplog):
+    priv, transport = make_priv()
+    written = []
+
+    def write32(address, value):
+        written.append(address)
+        return None
+    transport.write32 = write32
+    rtl8xxxu_init_rf_regs(priv, ((0x00, 1), (0x01, 2), (0xFF, 0xFFFFFFFF)), RF_A)
+    assert len(written) == 1
+    assert "Failed to initialize RF" in caplog.text

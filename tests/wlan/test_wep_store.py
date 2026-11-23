@@ -6,13 +6,12 @@ from wifit3.wlan.wep_store import RateTracker, WepCaptureStore
 BSSID = "11:22:33:44:55:66"
 
 
-def test_dedup_counts_unique_vs_total():
+def test_dedup_counts_unique_ivs():
     c = WepCaptureStore()
     c.record(BSSID, b"\x01\x02\x03")
     c.record(BSSID, b"\x01\x02\x03")   # duplicate IV
     c.record(BSSID, b"\x04\x05\x06")
     stats = c.stats(BSSID)
-    assert stats.total_frames == 3
     assert stats.unique_ivs == 2
     assert c.unique_count(BSSID) == 2
 

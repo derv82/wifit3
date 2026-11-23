@@ -33,16 +33,8 @@ repo-wide; lint with `ruff check` and match the surrounding style by hand.
 
 ## Porting a chipset
 
-With Claude Code, type `/port <chip>`: the skill walks the whole process. With another agent, or
-by hand, follow [`docs/porting/METHODOLOGY.md`](docs/porting/METHODOLOGY.md); it's the same
-playbook. The short version: port from the vendor/kernel C, keep the C names (a matching name is
-its own cross-reference: add a `file:line` only when it can't carry the link), verify each
-milestone against the cold-boot pcap, and ship the chip's `<CHIP>.md` reference. Code style is
-[`docs/porting/CODE-STYLE.md`](docs/porting/CODE-STYLE.md); the chip-doc template is
-[`docs/porting/CHIP-DOC.md`](docs/porting/CHIP-DOC.md).
-
-Your PR should include the `<CHIP>.md` reference, evidence it works (at minimum the offline pcap
-verification), and credits for the upstream driver's authors in docs/CREDITS.md.
+Follow [`docs/porting/METHODOLOGY.md`](docs/porting/METHODOLOGY.md). Before opening the PR, complete
+every item in [`docs/porting/FINAL-CHECKLIST.md`](docs/porting/FINAL-CHECKLIST.md).
 
 ## Commits & pull requests
 

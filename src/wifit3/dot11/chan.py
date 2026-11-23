@@ -1,5 +1,5 @@
-"""Channel helpers shared by the dot11 IE builders: 802.11 operating class and band from a channel
-number (IEEE 802.11-2020 Annex E global operating classes)."""
+"""Channel helpers: 802.11 operating class, band and DFS from a channel number
+(IEEE 802.11-2020 Annex E global operating classes)."""
 
 
 def channel_operating_class(channel: int) -> int:
@@ -18,6 +18,11 @@ def channel_operating_class(channel: int) -> int:
     if 149 <= channel <= 177:
         return 125
     raise ValueError(f"no operating class mapping for channel {channel}")
+
+
+def is_dfs_channel(channel: int) -> bool:
+    """True for a 5 GHz DFS channel (UNII-2 52-64, UNII-2e 100-144), where radar rules apply."""
+    return 52 <= channel <= 64 or 100 <= channel <= 144
 
 
 def same_band(channel_a: int, channel_b: int) -> bool:

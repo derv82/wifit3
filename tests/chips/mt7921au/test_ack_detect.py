@@ -92,7 +92,7 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     d = _driver()
     d.transport.send_bulk_checked = AsyncMock(return_value=True)
     frame = _mgmt_frame()
-    assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
+    await d.inject_frame(frame)   # base entry -> _stamp_tx_seq -> _inject_frame
     d.transport.send_bulk_checked.assert_awaited_once()
     wire = d.transport.send_bulk_checked.await_args.args[0]
     txd3 = int.from_bytes(wire[16:20], "little")           # txwi[3]: [SDIO 4B][txwi 3*4B]

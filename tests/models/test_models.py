@@ -1,3 +1,4 @@
+from wifit3.dot11.packet import EapolPacket
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.models.jobs import JobAction, ToolResult, ToolStatus
@@ -56,7 +57,6 @@ def _eapol(msg_num: int, replay: int) -> HandshakeMessage:
         replay_hex=replay.to_bytes(8, "big").hex(),
         nonce=bytes([msg_num]) * 32,
         mic=b"\x11" * 16,
-        key_data_len=0,
         eapol_payload=bytes(120),
     )
 
@@ -80,7 +80,6 @@ def test_handshake_add_deduplicates_and_bounds_history():
             replay_hex=index.to_bytes(8, "big").hex(),
             nonce=b"",
             mic=b"",
-            key_data_len=0,
         ))
 
     assert Handshake.RETAINED_MESSAGES <= len(hs.messages) <= Handshake.MAX_MESSAGES
@@ -99,7 +98,6 @@ def test_handshake_prune_keeps_the_best_pair_over_newer_ones():
             replay_hex=replay.to_bytes(8, "big").hex(),
             nonce=nonce.to_bytes(32, "big"),
             mic=b"\x11" * 16,
-            key_data_len=0,
             eapol_payload=bytes(120),
         )
 
@@ -140,6 +138,21 @@ def test_handshake_is_complete():
     # A matching M2 (same replay counter) completes the pair
     hs.messages.append(_eapol(2, replay=5))
     assert hs.is_complete
+
+
+def test_handshake_message_from_packet_copies_every_field():
+    packet = EapolPacket(
+        type="eapol", type_id=2, subtype_id=8, bssid="02:00:00:00:00:01", source="02:00:00:00:00:02",
+        dest="02:00:00:00:00:01", to_ds=True, from_ds=False, rssi=-40, raw=b"frame",
+        msg_num=2, replay_counter=bytes.fromhex("0000000000000005"), nonce=b"\x22" * 32,
+        mic=b"\x11" * 16, payload=b"payload", akm=6, akm_selection_rejected=True,
+        mdid=b"md", r0khid=b"r0", r1khid=b"r1",
+    )
+    assert HandshakeMessage.from_packet(packet, 2, 100.25) == HandshakeMessage(
+        raw=b"frame", msg_num=2, replay_hex="0000000000000005", nonce=b"\x22" * 32,
+        mic=b"\x11" * 16, eapol_payload=b"payload", timestamp=100.25, akm=2,
+        akm_selection_rejected=True, mdid=b"md", r0khid=b"r0", r1khid=b"r1",
+    )
 
 
 def test_vendor_akm_disqualifies_eap_only_and_no_passphrase():

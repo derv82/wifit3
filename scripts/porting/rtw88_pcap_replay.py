@@ -8,8 +8,7 @@ values, the port must emit byte-identical writes and bulk packets or a divergenc
 is raised at the first mismatching op — verifying a milestone with NO hardware.
 
 FAMILY-SPECIFIC: vendor register access is bRequest 0x05, the Realtek rtw88 USB
-convention (RTL8814AU / RTL8821AU / RTL8812AU / RTL8822BU, both mainline-derived
-and DKMS/PHYDM ports). It is NOT the convention for MT76 (MediaTek), ath9k_htc
+convention (RTL8814AU / RTL8821AU / RTL8812AU / RTL8822BU DKMS/PHYDM ports). It is NOT the convention for MT76 (MediaTek), ath9k_htc
 (Atheros), or rt2x00 (Ralink RT2800/RT3070) — those ports must not reach for this
 module. The bRequest, the submit/completion data-field layout, and the 0x40/0xC0
 write/read direction split are all rtw88-USB-specific.
@@ -257,12 +256,15 @@ class ReplayTransport:
 
     def write8(self, a, v):
         self._write(a, 1, v & 0xFF)
+        return True
 
     def write16(self, a, v):
         self._write(a, 2, v & 0xFFFF)
+        return True
 
     def write32(self, a, v):
         self._write(a, 4, v & 0xFFFFFFFF)
+        return True
 
     def writeN(self, addr, data):
         """Arbitrary-length control write (e.g. the 196/8-byte FW page chunks).
@@ -279,12 +281,13 @@ class ReplayTransport:
             raise Divergence(
                 f"op#{self.i - 1} frame {op['frame']}: writeN payload differs at "
                 f"byte {diff} (0x{addr:04x}, {len(data)}B)")
+        return True
 
     def write_block(self, addr, data):
-        """Alias for writeN: the rtl8xxxu transports (8188eus / 8187) name the wide
+        """Alias for writeN: the rtl8xxxu transports (8188eus) name the wide
         control write ``write_block`` where rtw88 names it ``writeN`` -- same op on the
         wire. Lets those ports' FW-page uploads replay against this transport unchanged."""
-        self.writeN(addr, data)
+        return self.writeN(addr, data)
 
     def bulk_out(self, data):
         op = self._next(f"bulk[{len(data)}B]")

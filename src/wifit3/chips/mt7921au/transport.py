@@ -1,4 +1,8 @@
+import errno
+
 import usb.core
+
+from wifit3.errors import is_device_gone
 import logging
 import asyncio
 import struct
@@ -28,6 +32,7 @@ class MT7921AUTransport:
     """
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
+        self.removed = False   # MT76_REMOVED
         self._rx: Optional[RxReaderThread] = None
         self._mcu_rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._callback = None
@@ -116,6 +121,8 @@ class MT7921AUTransport:
         PyUSB on Windows can return a partial byte count without raising on timeout,
         so we have to check it explicitly.
         """
+        if self.removed:
+            raise usb.core.USBError("device removed", errno=errno.ENODEV)
         try:
             written = await self._loop.run_in_executor(
                 None, lambda: self.dev.write(ep, data, timeout=timeout)
@@ -125,6 +132,9 @@ class MT7921AUTransport:
                 return False
             return True
         except usb.core.USBError as e:
+            if is_device_gone(e):          # MT76_REMOVED, as usb.c:36-37 / :898-899 set it
+                self.removed = True
+                raise
             logger.debug(f"Bulk write failed on EP {hex(ep)}: {e}")
             return False
 

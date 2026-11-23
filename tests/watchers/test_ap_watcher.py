@@ -25,7 +25,6 @@ def _ef(msg, rc, nonce, ts):
         replay_hex=rc.to_bytes(8, "big").hex(),
         nonce=nonce,
         mic=b"\x11" * 16,
-        key_data_len=0,
         eapol_payload=bytes(120),
         timestamp=ts,
     )
@@ -52,17 +51,30 @@ def test_handshake_reported_per_instance_and_once_more_when_authorized():
 
     _m1_m2(hs)
     events = det.poll(ap, _CLIENT, hs)
-    assert [e.pair_label for e in events] == ["M1+M2"]
+    assert [e.messages_label for e in events] == ["M1+M2"]
     assert events[0].channel == 6
     # Its M3 makes the instance authorized: one more event, so the M2+M3 gets saved.
     hs.messages.append(_ef(3, 6, b"\xaa" * 32, 100.2))
-    assert [e.pair_label for e in det.poll(ap, _CLIENT, hs)] == ["M2+M3"]
+    assert [e.messages_label for e in det.poll(ap, _CLIENT, hs)] == ["M1+M2+M3"]
     # An M3 retransmit of the same instance: nothing.
     hs.messages.append(_ef(3, 6, b"\xaa" * 32, 100.3))
     assert det.poll(ap, _CLIENT, hs) == []
     # A fresh ANonce is a new instance.
     hs.messages += [_ef(1, 9, b"\xbb" * 32, 200.0), _ef(2, 9, b"\x22" * 32, 200.1)]
     assert len(det.poll(ap, _CLIENT, hs)) == 1
+
+
+def test_handshake_reported_once_more_when_an_authorized_instance_gains_its_m4():
+    det = HandshakeDetector()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X", channel=6)
+    hs = _hs_with(ap)
+
+    hs.messages += [_ef(2, 5, b"\x11" * 32, 100.0), _ef(3, 6, b"\xaa" * 32, 100.1)]
+    assert [e.messages_label for e in det.poll(ap, _CLIENT, hs)] == ["M2+M3"]
+    hs.messages.append(_ef(4, 6, b"\x00" * 32, 100.2))
+    events = det.poll(ap, _CLIENT, hs)
+    assert [e.messages_label for e in events] == ["M2+M3+M4"]
+    assert events[0].authorized
 
 
 def test_handshake_reported_when_the_beacon_arrives_after_the_frames():

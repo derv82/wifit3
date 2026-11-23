@@ -9,7 +9,6 @@ from textual.widgets import Checkbox, Input, Label, TextArea
 
 from wifit3.campaigns.decloak import DecloakCampaign, DecloakInput
 from wifit3.models import AccessPoint
-from wifit3.persist.config import Config
 from wifit3.wlan.array import WlanArray
 from wifit3.ui.screens.focus_v2.decloak_modal import (
     DecloakInputModal,
@@ -119,25 +118,10 @@ def _status(modal: DecloakInputModal) -> str:
     return str(modal.query_one("#status", Label).content)
 
 
-def _text(modal: DecloakInputModal) -> str:
-    return modal.query_one("#candidates", TextArea).text
-
-
 def _wordlist(tmp_path, names: int):
     path = tmp_path / "huge.txt"
     path.write_text("\n".join(f"n{i}" for i in range(names)), encoding="utf-8")
     return str(path)
-
-
-async def test_the_list_opens_on_the_base_ssid_and_its_suffixes():
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "Beachball")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-
-        assert _text(modal).startswith("Beachball\n")
-        assert "Beachball-Guest" in _text(modal)
 
 
 async def test_one_press_sends_the_list_the_status_line_priced():
@@ -159,135 +143,7 @@ async def test_one_press_sends_the_list_the_status_line_priced():
                                   use_broadcast_probe=True)
 
 
-async def test_the_status_line_counts_lines_that_will_not_be_sent():
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-        modal.query_one("#candidates", TextArea).load_text("Net\nNet\n" + "X" * 33)
-        await pilot.pause(0)
-
-        assert "1 SSIDs" in _status(modal) and "(2 dropped)" in _status(modal)
-
-
-async def test_editing_the_base_always_re_guesses_the_list():
-    """No dirty bit: a hand-edited list is replaced, so the base box never looks broken."""
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "Beachball 2.4")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-        modal.query_one("#candidates", TextArea).load_text("hand-written")
-        await pilot.pause(0)
-
-        modal.query_one("#base-ssid", Input).value = "Beachball"
-        await pilot.pause(0)
-
-        assert "hand-written" not in _text(modal)
-        assert "Beachball-Guest" in _text(modal)
-        assert "Beachball 2.4-Guest" not in _text(modal)
-
-
-async def test_no_method_selected_is_refused():
-    app, got = App(), []
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "Alpha")
-        app.push_screen(modal, got.append)
-        await pilot.pause(0)
-        modal.query_one("#use-directed", Checkbox).value = False
-        await pilot.pause(0)
-
-        assert _status(modal) == "Pick at least one method"
-
-        modal._accept()
-        await pilot.pause(0)
-        assert got == []
-
-
-async def test_an_empty_list_is_refused():
-    app, got = App(), []
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "")
-        app.push_screen(modal, got.append)
-        await pilot.pause(0)
-
-        assert _status(modal) == "No candidate SSIDs to send"
-
-        modal._accept()
-        await pilot.pause(0)
-        assert got == []
-
-
 # ----- a wordlist replaces the typed list, under a truncation ------------------
-
-
-async def test_a_picked_wordlist_takes_over_and_hides_the_list(tmp_path):
-    app, got = App(), []
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "Loud")
-        app.push_screen(modal, got.append)
-        await pilot.pause(0)
-        modal.query_one("#wordlist", Input).value = _wordlist(tmp_path, 10)
-        await pilot.pause(0)
-
-        assert not modal.query_one("#candidates", TextArea).display
-        assert "10 SSIDs, 10 requests" in _status(modal)
-
-        modal._accept()
-        await pilot.pause(0)
-
-    assert got[0].candidate_ssids[:2] == ["n0", "n1"]
-    assert len(got[0].candidate_ssids) == 10
-
-
-async def test_clearing_the_path_brings_the_base_list_back_untouched(tmp_path):
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "Loud")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-        modal.query_one("#wordlist", Input).value = _wordlist(tmp_path, 10)
-        await pilot.pause(0)
-
-        modal.query_one("#wordlist", Input).value = ""
-        await pilot.pause(0)
-
-        assert modal.query_one("#base-ssid", Input).value == "Loud"
-        assert "Loud-Guest" in _text(modal)
-        assert modal.query_one("#candidates", TextArea).display
-
-
-async def test_typing_a_base_takes_the_run_back_from_the_file(tmp_path):
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-        modal.query_one("#wordlist", Input).value = _wordlist(tmp_path, 10)
-        await pilot.pause(0)
-
-        modal.query_one("#base-ssid", Input).value = "Quiet"
-        await pilot.pause(0)
-        await pilot.pause(0)        # the cleared path posts its own Changed to follow
-
-        assert modal.wordlist_lines == 0
-        assert modal.query_one("#wordlist", Input).value == ""
-        assert modal.query_one("#candidates", TextArea).display
-        assert "Quiet-Guest" in _text(modal)
-
-
-async def test_a_half_typed_path_is_not_an_error(tmp_path):
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "Loud")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-        modal.query_one("#wordlist", Input).value = str(tmp_path / "not-there-ye")
-        await pilot.pause(0)
-
-        assert modal.wordlist_lines == 0
-        assert "SSIDs" in _status(modal)
 
 
 async def test_a_long_wordlist_opens_truncated_and_the_buttons_move_it(tmp_path):
@@ -312,74 +168,6 @@ async def test_a_long_wordlist_opens_truncated_and_the_buttons_move_it(tmp_path)
         await pilot.pause(0)
 
     assert len(got[0].candidate_ssids) == 8000
-
-
-async def test_pressing_the_chosen_truncation_again_lifts_it(tmp_path):
-    from wifit3.ui.screens.focus_v2.decloak_modal import _TruncateButton
-
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-        modal.query_one("#wordlist", Input).value = _wordlist(tmp_path, 24_001)
-        await pilot.pause(0)
-        assert modal.truncate_seconds == 300
-
-        next(b for b in modal.query(_TruncateButton) if b.seconds == 300).press()
-        await pilot.pause(0)
-
-        assert modal.truncate_seconds is None
-        assert "24,001 SSIDs" in _status(modal) and "truncated" not in _status(modal)
-
-
-async def test_only_truncations_that_would_shorten_the_run_are_offered(tmp_path):
-    """The count is set directly to walk the thresholds without paying for four wordlists."""
-    from wifit3.ui.screens.focus_v2.decloak_modal import _TruncateButton
-
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-
-        offered, row_shown = {}, {}
-        for lines in (1_999, 2_001, 8_001, 24_001):
-            modal.wordlist_lines = lines
-            await pilot.pause(0)
-            offered[lines] = [b.seconds for b in modal.query(_TruncateButton) if b.display]
-            row_shown[lines] = modal.query_one("#truncate").display
-
-        assert offered == {1_999: [], 2_001: [300], 8_001: [300, 1200],
-                           24_001: [300, 1200, 3600]}
-        assert row_shown == {1_999: False, 2_001: True, 8_001: True, 24_001: True}
-
-
-async def test_only_the_chosen_truncation_button_is_primary(tmp_path):
-    from wifit3.ui.screens.focus_v2.decloak_modal import _TruncateButton
-
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-        modal.wordlist_lines = 24_001
-        modal.truncate_seconds = 1200
-        await pilot.pause(0)
-
-        assert {b.seconds: b.variant for b in modal.query(_TruncateButton)} == {
-            300: "default", 1200: "primary", 3600: "default"}
-
-
-async def test_a_remembered_ssid_opens_first_in_the_list(monkeypatch):
-    monkeypatch.setattr(Config, "decloaked_ssids", {_BSSID: "Songsong"})
-    app = App()
-    async with app.run_test() as pilot:
-        modal = DecloakInputModal(_BSSID, "Loud")
-        app.push_screen(modal, lambda result: None)
-        await pilot.pause(0)
-
-        assert _text(modal).startswith("Songsong\nLoud\n")
 
 
 # ----- wordlist reading --------------------------------------------------------

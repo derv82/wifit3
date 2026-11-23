@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Dict, Optional, Set
+from typing import TYPE_CHECKING, Dict, Optional
 
 if TYPE_CHECKING:
     from wifit3.id import Fingerprint
@@ -14,9 +14,8 @@ if TYPE_CHECKING:
 class Client:
     """A wireless client (e.g. a phone or laptop)."""
     mac: str
-    bssid: Optional[str] = None  # The AP it is currently connected to or probing for
+    bssid: Optional[str] = None  # AP of its latest (Re)Association Request or data frame
     packets: int = 0
-    probed_ssids: Set[str] = field(default_factory=set)  # SSIDs this client is actively searching for
     # AKM from the latest (Re)Association Request to `bssid`; cleared when that association ends.
     akm_selected: Optional[int] = None
     # Smoothed RSSI per receiving card (card name -> dBm), written by WlanSink.

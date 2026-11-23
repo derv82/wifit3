@@ -42,7 +42,7 @@ def main() -> int:
         print(f"[note] set_configuration: {e}")
 
     # short per-read timeout so a wedged chip doesn't hang the probe
-    t = RT3070Transport(dev, timeout_ms=300)
+    t = RT3070Transport(dev)
 
     print("=== direct register reads (control xfer) ===")
     csr0, line = _r(t, C.MAC_CSR0, "MAC_CSR0")

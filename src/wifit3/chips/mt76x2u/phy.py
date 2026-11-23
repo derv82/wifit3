@@ -44,6 +44,8 @@ from .constants import (
     MT_BBP_CORE_R34,
     MT_BBP_RXO_R14,
     MT_BBP_RXO_R18,
+    MT_BBP_DFS_R31,
+    MT_BBP_DFS_R32,
     MT_BBP_TXBE_R5,
     MT_ED_CCA_TIMER,
     MT_RX_STAT_1,
@@ -490,11 +492,11 @@ def phy_set_gain_val(transport: MT76x2UTransport,
                      agc_gain_adjust: int,
                      has_ext_lna: bool,
                      band_2g: bool,
-                     bw_40plus: bool) -> None:
+                     bw_40plus: bool,
+                     chan_radar: bool) -> None:
     """`mt76x2_phy_set_gain_val` — [SRC] mt76x2/phy.c:244-272. Writes BBP
-    AGC 8 + 9 with a width/LNA-dependent base value + per-chain gain. DFS
-    adjust path (`mt76x02_phy_dfs_adjust_agc`) is omitted — we never tune
-    to DFS channels."""
+    AGC 8 + 9 with a width/LNA-dependent base value + per-chain gain.
+    ``chan_radar`` is the channel's IEEE80211_CHAN_RADAR flag (a DFS channel)."""
     g0 = agc_gain_cur[0] - agc_gain_adjust
     g1 = agc_gain_cur[1] - agc_gain_adjust
 
@@ -514,6 +516,28 @@ def phy_set_gain_val(transport: MT76x2UTransport,
         base | ((g1 & 0x7F) << MT_BBP_AGC_GAIN_SHIFT),
     )
 
+    if chan_radar:
+        phy_dfs_adjust_agc(transport)
+
+
+def phy_dfs_adjust_agc(transport: MT76x2UTransport) -> None:
+    """`mt76x02_phy_dfs_adjust_agc`, mt76x2 branch — [SRC] mt76x02_dfs.c:795-821."""
+    agc_r8 = transport.read32(MT_BBP_AGC_R8)
+    agc_r4 = transport.read32(MT_BBP_AGC_R4)
+
+    val_r8 = (agc_r8 & 0x00007E00) >> 9
+    val_r4 = agc_r4 & ~0x1F000000
+    val_r4 = (val_r4 + (((val_r8 + 1) >> 1) << 24)) & 0xFFFFFFFF
+    transport.write32(MT_BBP_AGC_R4, val_r4)
+
+    dfs_r31 = (val_r4 & MT_BBP_AGC_LNA_HIGH_GAIN_MASK) >> MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT
+    dfs_r31 += val_r8
+    dfs_r31 -= (agc_r8 & 0x00000038) >> 3
+    dfs_r31 = ((dfs_r31 << 16) | 0x00000307) & 0xFFFFFFFF
+    transport.write32(MT_BBP_DFS_R31, dfs_r31)
+
+    transport.write32(MT_BBP_DFS_R32, 0x00040071)
+
 
 def update_channel_gain(
     transport: MT76x2UTransport,
@@ -522,6 +546,7 @@ def update_channel_gain(
     band_2g: bool,
     bw_40plus: bool,
     has_ext_lna: bool,
+    chan_radar: bool,
     rssi_thresh: int,
     low_rssi_thresh: int,
     avg_rssi_all: int = -75,
@@ -556,7 +581,7 @@ def update_channel_gain(
         if changed:
             phy_set_gain_val(
                 transport, cal.agc_gain_cur, cal.agc_gain_adjust,
-                has_ext_lna, band_2g, bw_40plus,
+                has_ext_lna, band_2g, bw_40plus, chan_radar,
             )
         return
 
@@ -599,7 +624,7 @@ def update_channel_gain(
     cal.agc_gain_cur = (g0, g1)
     phy_set_gain_val(
         transport, cal.agc_gain_cur, cal.agc_gain_adjust,
-        has_ext_lna, band_2g, bw_40plus,
+        has_ext_lna, band_2g, bw_40plus, chan_radar,
     )
 
     # Clear false-CCA counter so the next adjust_vga_gain reads fresh data.

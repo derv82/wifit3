@@ -27,10 +27,29 @@ from .constants import (
     MT_MCU_MEMMAP_RF,
     MT_MCU_MEMMAP_WLAN,
     MT_RF,
+    MT_TX_ALC_CFG_0,
+    MT_TX_ALC_CFG_0_CH_INIT_0,
+    MT_TX_ALC_CFG_0_CH_INIT_1,
+    MT_TX_PWR_CFG_0,
+    MT_TX_PWR_CFG_1,
+    MT_TX_PWR_CFG_2,
+    MT_TX_PWR_CFG_3,
+    MT_TX_PWR_CFG_4,
+    MT_TX_PWR_CFG_7,
+    MT_TX_PWR_CFG_8,
+    MT_TX_PWR_CFG_9,
     MT_WLAN_FUN_CTRL,
     RF_A_BAND,
     RF_BW_20,
     RF_G_BAND,
+    WORLD_REGDOM_MAX_EIRP,
+)
+from .eeprom import (
+    EEPROMCache,
+    MT76x02RatePower,
+    mt76x0_get_power_info,
+    mt76x0_get_tx_power_per_rate,
+    s8,
 )
 from .initvals_bbp import BBP_INIT_TAB, DCOC_TAB, filter_bbp_switch_tab
 from .initvals_rf import (
@@ -846,15 +865,90 @@ def phy_set_chan_rf_params(
         transport.write32(MT_TX_ALC_CFG_1, cur & 0x890400FF)
 
 
+def mt76x02_get_max_rate_power(r: MT76x02RatePower) -> int:
+    """[SRC] mt76x02_phy.c:62-72."""
+    ret = 0
+    for rates in r.all():
+        for val in rates:
+            ret = max(ret, val)
+    return ret
+
+
+def mt76x02_limit_rate_power(r: MT76x02RatePower, limit: int) -> None:
+    """[SRC] mt76x02_phy.c:74-82."""
+    for rates in r.all():
+        for i in range(len(rates)):
+            if rates[i] > limit:
+                rates[i] = limit
+
+
+def mt76x02_add_rate_power_offset(r: MT76x02RatePower, offset: int) -> None:
+    """[SRC] mt76x02_phy.c:84-91. The entries are s8 and wrap."""
+    for rates in r.all():
+        for i in range(len(rates)):
+            rates[i] = s8(rates[i] + offset)
+
+
+def mt76x02_tx_power_mask(v1: int, v2: int, v3: int, v4: int) -> int:
+    """[SRC] mt76x02_phy.c:50-60."""
+    return (v1 & 0x3F) | (v2 & 0x3F) << 8 | (v3 & 0x3F) << 16 | (v4 & 0x3F) << 24
+
+
+def mt76x02_phy_set_txpower(
+    transport: MT76x0UTransport, t: MT76x02RatePower, txp_0: int, txp_1: int,
+) -> None:
+    """[SRC] mt76x02_phy.c:93-121. Each mt76_rmw_field is a read and an unconditional write on USB
+    (usb.c:147-156)."""
+    val = transport.read32(MT_TX_ALC_CFG_0)
+    transport.write32(MT_TX_ALC_CFG_0, (val & ~MT_TX_ALC_CFG_0_CH_INIT_0) | (txp_0 & MT_TX_ALC_CFG_0_CH_INIT_0))
+    val = transport.read32(MT_TX_ALC_CFG_0)
+    transport.write32(MT_TX_ALC_CFG_0, (val & ~MT_TX_ALC_CFG_0_CH_INIT_1) | ((txp_1 << 8) & MT_TX_ALC_CFG_0_CH_INIT_1))
+
+    transport.write32(MT_TX_PWR_CFG_0, mt76x02_tx_power_mask(t.cck[0], t.cck[2], t.ofdm[0], t.ofdm[2]))
+    transport.write32(MT_TX_PWR_CFG_1, mt76x02_tx_power_mask(t.ofdm[4], t.ofdm[6], t.ht[0], t.ht[2]))
+    transport.write32(MT_TX_PWR_CFG_2, mt76x02_tx_power_mask(t.ht[4], t.ht[6], t.ht[8], t.ht[10]))
+    transport.write32(MT_TX_PWR_CFG_3, mt76x02_tx_power_mask(t.ht[12], t.ht[14], t.ht[0], t.ht[2]))
+    transport.write32(MT_TX_PWR_CFG_4, mt76x02_tx_power_mask(t.ht[4], t.ht[6], 0, 0))
+    transport.write32(MT_TX_PWR_CFG_7, mt76x02_tx_power_mask(t.ofdm[7], t.vht[0], t.ht[7], t.vht[1]))
+    transport.write32(MT_TX_PWR_CFG_8, mt76x02_tx_power_mask(t.ht[14], 0, t.vht[0], t.vht[1]))
+    transport.write32(MT_TX_PWR_CFG_9, mt76x02_tx_power_mask(t.ht[7], 0, t.vht[0], t.vht[1]))
+
+
+def mt76x0_chan_max_power(cache: EEPROMCache, channel: int) -> int:
+    """`chan->max_power` in dBm: `mt76x0_init_txpower` (mt76x0/init.c:216-234), capped by the world
+    regdom's max_reg_power (net/wireless/reg.c:1819). mac80211 hands it to the driver as power_level."""
+    t = mt76x0_get_tx_power_per_rate(cache, channel)
+    # init.c:227 passes the stale dev->rate_power, still zero at register time.
+    zero = MT76x02RatePower(cck=[0] * 4, ofdm=[0] * 8, ht=[0] * 16, vht=[0] * 2)
+    tp = mt76x0_get_power_info(cache, channel, zero)
+    total = mt76x02_get_max_rate_power(t) + tp
+    # C int division truncates toward zero.
+    orig_mpwr = total // 2 if total >= 0 else -(-total // 2)
+    return min(WORLD_REGDOM_MAX_EIRP, orig_mpwr)
+
+
+def mt76x0_phy_set_txpower(
+    transport: MT76x0UTransport, cache: EEPROMCache, channel: int, txpower_conf: int,
+) -> None:
+    """[SRC] mt76x0/phy.c:844-859. txpower_cur (:854) only feeds mac80211's reported txpower, and
+    target_power (:857) only the TXWI power adjust, which is 0 for an inject (mt76x02_mac.c:347-395)."""
+    t = mt76x0_get_tx_power_per_rate(cache, channel)
+    info = mt76x0_get_power_info(cache, channel, t)
+
+    mt76x02_add_rate_power_offset(t, info)
+    mt76x02_limit_rate_power(t, txpower_conf)
+    mt76x02_add_rate_power_offset(t, -info)
+
+    mt76x02_phy_set_txpower(transport, t, info, info)
+
+
 def set_channel_20mhz(
     transport: MT76x0UTransport, mcu: MCUChannel, channel: int,
     efuse_full=None, is_mt7630: bool = False,
 ) -> dict:
     """Port of `mt76x0_phy_set_channel` for 20 MHz monitor RX.
 
-    [SRC] mt76x0/phy.c:913-1016. Steps 1-7 + channel-14 BBP bit only.
-    Steps 8-9 (set_chan_rf_params, set_chan_bbp_params), VCO enable,
-    AGC init, calibrate, set_txpower are DEFERRED to M4a.2 / M4a.3.
+    [SRC] mt76x0/phy.c:913-1016.
 
     For a 20 MHz channel:
       - ch_group_index = 0
@@ -949,8 +1043,11 @@ def set_channel_20mhz(
     phy_calibrate(transport, mcu, channel=channel, power_on=False,
                   is_mt7630=is_mt7630)
 
-    # Step 17 SKIPPED: mt76x0_phy_set_txpower — TX path only.
-    logger.debug("set_channel_20mhz: M4a complete (TX power deferred - RX-only)")
+    # Step 17: mt76x0_phy_set_txpower. Linux runs it with the previous channel's cap, then again on
+    # mac80211's CHANGE_POWER with this channel's (mt76x0/main.c:70-77): one run with this cap ends the same.
+    if efuse_full is not None:
+        txpower_conf = mt76x0_chan_max_power(efuse_full.cache, channel) * 2   # mt76x0/main.c:72
+        mt76x0_phy_set_txpower(transport, efuse_full.cache, channel, txpower_conf)
 
     # Read post-state for assertions.
     from .constants import MT_BBP_TXBE

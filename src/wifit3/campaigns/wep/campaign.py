@@ -63,7 +63,7 @@ class WepCampaign(Campaign):
 
     @classmethod
     def visible(cls, ap) -> bool:
-        return (getattr(ap, "encryption", None) or "").upper() == "WEP"
+        return (ap.encryption or "").upper() == "WEP"
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
@@ -118,16 +118,16 @@ class WepCampaign(Campaign):
             f"[bold green]ARP Replay starting[/bold green] on "
             f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
         )
-        # The lease arms active monitor (random STA for SPOOFABLE, the card's own for FIXED_MAC),
+        # The lease enters active monitor (random STA for SPOOFABLE, the card's own for FIXED_MAC),
         # registers that STA as own and holds it for the whole run. fake-auth, replay and chopchop
         # share this MAC.
         self._lease = self.array.lease(channel=self.target.channel, fake_mac=SPOOFABLE,
                                        bssid=self.target.bssid, iface=self.iface)
         await self._lease.acquire()
-        if self._lease.mac:
-            source_mac = str_to_mac(self._lease.mac)
+        if self._lease.active_monitor_mac:
+            source_mac = str_to_mac(self._lease.active_monitor_mac)
         else:
-            # A card that can't active-monitor: the lease armed/registered nothing, so pick a random
+            # A card that can't active-monitor: the lease registered nothing, so pick a random
             # STA and register it ourselves to keep the own-TX (fixed-IV) drop for the whole replay.
             source_mac = random_client_mac()
             self._own_fallback = self.array.register_own_mac(source_mac)
@@ -184,7 +184,7 @@ class WepCampaign(Campaign):
             self.chop.stop()
             self.chop = None
             self._log("[dim]· ChopChop stopped (Generate IVs ended)[/dim]")
-        # Stop replay (TX) before releasing the lease that disarms the card.
+        # Stop replay (TX) before releasing the lease that exits active monitor.
         self.replay.stop()
         self.fake_auth.stop()
         if self._own_fallback is not None:
@@ -250,13 +250,13 @@ class WepCampaign(Campaign):
 
     def status_headlines(self, vault) -> list[str]:
         from wifit3.crack.wep import CRACK_READY_THRESHOLD
-        n_ivs = self.target.wep.unique_ivs if getattr(self.target, "wep", None) else 0
-        cracker_samples = getattr(self.cracker, "sample_count", 0)
+        n_ivs = self.target.wep.unique_ivs if self.target.wep else 0
+        cracker_samples = self.cracker.sample_count
 
         if self.chop_active:
             action = "Chopping a packet"
         else:
-            state = getattr(self.replay, "state", None)
+            state = self.replay.state
             action = {
                 "replaying": "Replaying ARP",
                 "testing": "Testing a packet",

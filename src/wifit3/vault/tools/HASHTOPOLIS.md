@@ -6,9 +6,9 @@ wordlist runs out. A recovered key is saved to the Vault, the same as with CPU C
 
 ## Server versions
 
-The tool uses the legacy User API (`/api/user.php`), not API v2:
-- API v2 is turned off by default on 0.14.x servers.
-- API v2 tokens only exist since 1.0.0-rainbow6 (2026-04).
+A JWT access key uses API v2 (`/api/v2`). Any other key uses the legacy User API (`/api/user.php`).
+- API v2 tokens exist since 1.0.0-rainbow6 (2026-04). On 1.1.0 the User API is deprecated.
+- 0.14.x keeps API v2 off by default, so those servers still need a User API key.
 
 Tested live:
 
@@ -21,11 +21,11 @@ Every User API call the tool makes exists since 0.12.0, going by the server's gi
 
 ## Setup
 
-1. **Access key.** Open the *legacy* UI on the backend port (usually `:8080`, not the `:4200` UI):
-   Users → API Management → Create New Api Key. Choose a user and an API group that can create
-   hashlists and tasks; "Administrators" works.
-2. **Key lifetime.** A new key expires after 30 days. The key's edit page in API Management can
-   change that. An expired key fails jobs with "Expired access key!".
+1. **Access key.** In the new UI: Account → API Keys → New API Key. Paste the token (shown once)
+   as the access key. It needs to read files, access groups and crackers, and to create hashlists
+   and tasks. A legacy key from the old UI (Users → API Management, on the backend port) still works.
+2. **Key lifetime.** Set it when creating the key. A legacy key expires after 30 days unless its
+   edit page changes that. An expired key fails the job with the server's message.
 3. **Configure in wifit3.** Open the Hashtopolis modal from the Vault or from Preferences (≡ next to
    the auto-crack dropdown). Enter:
    - the server URL, e.g. `http://192.168.1.10:8080`

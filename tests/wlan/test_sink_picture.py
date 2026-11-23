@@ -62,7 +62,7 @@ def test_real_client_creates_handshake_with_eapol_frames():
     client = "12:22:33:44:55:66"
     s.update(pkt({"type": "eapol", "bssid": b, "source": b, "dest": client, "rssi": -45,
                   "raw": b"\x00" * 100, "eapol_msg_num": 1, "eapol_replay_counter": b"\x00" * 8,
-                  "eapol_nonce": b"\x01" * 32, "eapol_mic": b"\x00" * 16, "eapol_key_data_len": 0,
+                  "eapol_nonce": b"\x01" * 32, "eapol_mic": b"\x00" * 16,
                   "eapol_payload": b"\x00" * 99}), W0)
     assert client in s.clients
     assert len(s.access_points[b].handshakes[client].messages) == 1
@@ -98,7 +98,7 @@ def test_transition_pmkid_only_classified_via_assoc():
                       "rssi": -45, "assoc_akm": client_akm}), W0)
         s.update(pkt({"type": "eapol", "bssid": b, "source": b, "dest": client, "rssi": -45,
                       "raw": b"\x00" * 100, "eapol_msg_num": 1, "eapol_replay_counter": b"\x00" * 8,
-                      "eapol_nonce": b"\x01" * 32, "eapol_mic": b"\x00" * 16, "eapol_key_data_len": 0,
+                      "eapol_nonce": b"\x01" * 32, "eapol_mic": b"\x00" * 16,
                       "eapol_payload": b"\x00" * 99, "eapol_pmkid": b"\x07" * 16}), W0)
         hs = s.access_points[b].handshakes[client]
         assert hs.pmkid == b"\x07" * 16 and hs.pmkid_akm == client_akm
@@ -115,7 +115,7 @@ def test_pmkid_records_m1_key_descriptor_version():
     s.update(pkt({"type": "eapol", "bssid": b, "source": b, "dest": client, "rssi": -45,
                   "raw": bytes(100), "eapol_msg_num": 1, "eapol_replay_counter": bytes(8),
                   "eapol_nonce": bytes.fromhex("01" * 32), "eapol_mic": bytes(16),
-                  "eapol_key_data_len": 0, "eapol_payload": bytes(99), "eapol_key_info": 0x008B,
+                  "eapol_payload": bytes(99), "eapol_key_info": 0x008B,
                   "eapol_pmkid": bytes.fromhex("07" * 16)}), W0)
     hs = s.access_points[b].handshakes[client]
     assert hs.pmkid_key_descriptor_version == 3

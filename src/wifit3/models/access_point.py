@@ -18,9 +18,8 @@ _NO_PASSPHRASE_AKM_SUITES = ENTERPRISE_AKM_SUITES | {AKM_OWE}
 
 @dataclass
 class WepStats:
-    """WEP IV counters for one AP: unique IVs and total WEP frames seen."""
+    """WEP IV counter for one AP: unique IVs seen."""
     unique_ivs: int = 0
-    total_frames: int = 0
 
 
 class CaptureType(StrEnum):
@@ -68,7 +67,6 @@ class AccessPoint:
     vendor_akm_offered: bool = False  # an AKM outside 00-0F-AC (DPP, OSEN, ...)
     pairwise_cipher: Optional[str] = None
     beacons: int = 0
-    first_seen: float = field(default_factory=time.time)
     # Most recent beacon/probe-resp timestamp.
     last_seen: float = field(default_factory=time.time)
     wpa3: bool = False

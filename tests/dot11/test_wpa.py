@@ -4,7 +4,7 @@ import hmac
 import pytest
 
 from wifit3.dot11.eapol import AES_128_CMAC, HMAC_MD5_RC4, HMAC_SHA1_AES, MIC_OFFSET
-from wifit3.dot11.wpa import build_eapol_m2, derive_pmk, derive_ptk
+from wifit3.dot11.wpa import build_eapol_m2, derive_pmk, derive_ptk, is_valid_psk
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.packet import EapolPacket
 
@@ -67,3 +67,15 @@ def test_build_eapol_m2_mic_follows_the_key_descriptor_version(key_descriptor_ve
 def test_build_eapol_m2_rejects_an_unsupported_key_descriptor_version():
     with pytest.raises(ValueError):
         build_eapol_m2(bytes(6), bytes(6), bytes(32), b"\xaa" * 16, key_descriptor_version=AES_128_CMAC)
+
+
+def test_is_valid_psk_length_bounds():
+    assert not is_valid_psk("a" * 7)
+    assert is_valid_psk("a" * 8)
+    assert is_valid_psk("a" * 63)
+    assert not is_valid_psk("a" * 64)
+
+
+def test_is_valid_psk_counts_utf8_bytes():
+    assert not is_valid_psk("é" * 32)
+    assert is_valid_psk("é" * 31)

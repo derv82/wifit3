@@ -18,12 +18,13 @@ from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, NONCE_LEN, data_header, eapol_key
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic_hmac_md5
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, ToolName
-from wifit3.persist.config import Config
+from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.meta import meta_path, read_meta, update_meta
 from wifit3.persist.pcap import write_pcap
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
 from tests.hashline_dates import write_hashline_dates
+from tests.persist.test_pcap import _beacon, _m1_m2
 
 
 _PMKID_AND_EAPOL_LINES = (f"WPA*01*{'00' * 16}*001122334403*aabbccddeeff*4e6574***\n"
@@ -48,7 +49,7 @@ def _ef(msg_num: int, nonce: bytes, key_data_len: int = 0,
     mic = b"\xAA" * 16
     return HandshakeMessage(
         raw=b"\x00" * 24, msg_num=msg_num, replay_hex=(5).to_bytes(8, "big").hex(),
-        nonce=nonce, mic=mic, key_data_len=key_data_len,
+        nonce=nonce, mic=mic,
         eapol_payload=_eapol_payload(mic=payload_mic or mic, key_data_len=key_data_len),
     )
 
@@ -235,6 +236,38 @@ def test_save_handshake_and_pmkid_cached_and_summarized(tmp_path):
     assert v.save_pmkid(ap, "11:22:33:44:55:66").was_new
     assert {c.type for c in v.persisted(ap.bssid)} == {"HS", "PMKID"}
     assert v.summary() == "1 handshake, 1 PMKID"
+
+
+def test_save_handshake_writes_a_pcap_only_when_save_pcap_is_on(tmp_path, monkeypatch):
+    v = Vault()
+    monkeypatch.setattr(Config, "save_pcap", False)
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    assert list(tmp_path.glob("*_handshake.pcap")) == []
+    monkeypatch.setattr(Config, "save_pcap", True)
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    assert len(list(tmp_path.glob("*_handshake.pcap"))) == 1
+
+
+def test_save_handshake_indexes_its_new_pcap(tmp_path):
+    v = Vault()
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    [pcap] = tmp_path.glob("*_handshake.pcap")
+    assert str(pcap) in [c.path for c in v.persisted("aa:bb:cc:dd:ee:ff")]
+
+
+def test_pcap_handshakes_is_dropped_on_notify_changed(tmp_path):
+    bssid = "02:00:00:00:00:01"
+    write_pcap(tmp_path / "HomeNet_02-00-00-00-00-01_1700000000_handshake.pcap",
+               [(_beacon(), 999.0), *_m1_m2(1, 1000.0)])
+    v = Vault()
+    handshakes = v.pcap_handshakes(bssid)
+    assert len(handshakes) == 1
+    assert v.pcap_handshakes(bssid) is handshakes
+    v.notify_changed(bssid)
+    assert v.pcap_handshakes(bssid) is not handshakes
+    handshakes = v.pcap_handshakes(bssid)
+    v.notify_changed(None)
+    assert v.pcap_handshakes(bssid) is not handshakes
 
 
 # ---- known_psk / has_psk: session fields OR a prior-session WPS file ---------
@@ -554,7 +587,7 @@ def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
     ap = _ap_with_hs(pmkid=b"\x11" * 16)
 
     v.save_handshake(ap, _CLIENT)
-    assert [_submitted(c) for c in v.manager.submit_job.call_args_list] == [_auto_crack_call(v.persisted(ap.bssid)[0])]
+    assert [_submitted(c) for c in v.manager.submit_job.call_args_list] == [_auto_crack_call(v.ap_state(ap.bssid).hashline_capture)]
 
     ap.handshakes[_CLIENT].messages[0] = _ef(1, nonce=b"\xA1" + b"\x00" * 31,
                                              payload_mic=b"\x00" * 16)
@@ -563,7 +596,7 @@ def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
 
     v.save_pmkid(ap, _CLIENT)
     assert v.manager.submit_job.call_count == 2
-    assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(v.persisted(ap.bssid)[0])
+    assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(v.ap_state(ap.bssid).hashline_capture)
 
 
 def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
@@ -575,7 +608,7 @@ def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
     v.save_handshake(_ap_with_hs(), _CLIENT)
     probed_ssids.add("Later_SSID")
 
-    capture = v.persisted(_ap_with_hs().bssid)[0]
+    capture = v.ap_state(_ap_with_hs().bssid).hashline_capture
     assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(capture, ["Alpha_SSID", "Zeta_SSID"])
 
 
@@ -742,7 +775,7 @@ def test_save_submits_to_the_chosen_tool_with_its_saved_settings(tmp_path, mocke
 
     v.save_handshake(_ap_with_hs(), _CLIENT)
 
-    capture = v.persisted(_ap_with_hs().bssid)[0]
+    capture = v.ap_state(_ap_with_hs().bssid).hashline_capture
     assert v.manager.submit_job.call_args == (
         ("hashcat", capture, {"hashcat_exe": "/usr/bin/hashcat", "wordlists": ["/lists/a.txt"],
                               "hashcat_args": "-w 3", "default_passwords": True,
@@ -988,3 +1021,48 @@ def test_a_key_typed_in_is_not_verified_until_a_live_check_accepts_it(tmp_path, 
     v.record_live_verification(typed_key, correct=True)
 
     assert v.ap_state(typed.bssid).key_statuses[typed_key.id] is PasswordStatus.CURRENT
+
+
+_NICKNAMED_BSSID = "02:00:00:00:00:60"
+
+
+@pytest.fixture
+def nickname_meta(tmp_path, monkeypatch) -> Path:
+    """A captured AP whose .meta holds a nickname, with Config not yet holding any and saving to tmp_path."""
+    monkeypatch.setattr("wifit3.persist.config._PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "nicknames", None)
+    (tmp_path / "Den_02-00-00-00-00-60_1700000001_wpa_psk.txt").write_text(
+        "SSID: Den\nBSSID: x\nPSK: pw\n", encoding="utf-8")
+    return update_meta("Den", _NICKNAMED_BSSID, nickname="kitchen")
+
+
+def test_move_nicknames_to_config_saves_the_nickname_and_drops_the_meta_key(tmp_path, nickname_meta):
+    Vault().move_nicknames_to_config()
+    assert Config.nickname(_NICKNAMED_BSSID) == "kitchen"
+    assert "[nicknames]\n'02:00:00:00:00:60' = 'kitchen'" in (tmp_path / "config.toml").read_text("utf-8")
+    assert "nickname" not in read_meta(nickname_meta)
+
+
+def test_move_nicknames_to_config_saves_an_empty_table_when_there_are_none(tmp_path, nickname_meta):
+    update_meta("Den", _NICKNAMED_BSSID, nickname=None)
+    Vault().move_nicknames_to_config()
+    assert Config.nicknames == {}
+    assert "[nicknames]\n" in (tmp_path / "config.toml").read_text("utf-8")
+
+
+def test_move_nicknames_to_config_keeps_the_meta_key_when_config_fails_to_save(
+        tmp_path, monkeypatch, nickname_meta):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    monkeypatch.setattr("wifit3.persist.config._PATH", blocker / "config.toml")
+    with pytest.raises(ConfigError):
+        Vault().move_nicknames_to_config()
+    assert read_meta(nickname_meta)["nickname"] == "kitchen"
+
+
+def test_move_nicknames_to_config_does_nothing_once_config_has_the_table(tmp_path, nickname_meta):
+    Config.nicknames = {}
+    Vault().move_nicknames_to_config()
+    assert Config.nicknames == {}
+    assert not (tmp_path / "config.toml").exists()
+    assert read_meta(nickname_meta)["nickname"] == "kitchen"

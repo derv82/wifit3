@@ -37,7 +37,7 @@ from wifit3.dot11.pmf import PmfPosture
 from wifit3.dot11.rsn import AKM_PSK
 
 from .campaign import Campaign
-from .auth_assoc import Association
+from wifit3.wlan.station import Association
 
 logger = logging.getLogger(__name__)
 
@@ -72,19 +72,19 @@ class PmkidHarvestAttack(Campaign):
     def visible(cls, ap) -> bool:
         """Shown when the AP's RSN element advertises a harvestable (PSK) AKM, OR when its
         encryption isn't confirmed yet. Hidden for WPA1: the PMKID is an RSN KDE."""
-        akms = set(getattr(ap, "akm_suites", None) or ())
+        akms = set(ap.akm_suites)
         if set(_HARVESTABLE_AKMS) & akms and ap.rsn_valid:
             return True   # confirmed harvestable PSK
         if akms:
             return False  # confirmed AKM(s), none harvestable
-        return getattr(ap, "encryption", None) in (None, "Unknown")  # unconfirmed → disabled
+        return ap.encryption in (None, "Unknown")  # unconfirmed → disabled
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
         """None (enabled) once a PSK AKM is confirmed and the SSID is known."""
         if ap.is_hidden:
             return "hidden SSID: can't associate"
-        if set(_HARVESTABLE_AKMS) & set(getattr(ap, "akm_suites", None) or ()):
+        if set(_HARVESTABLE_AKMS) & set(ap.akm_suites):
             return None
         return "encryption not confirmed yet (no beacon RSN)"
 
@@ -185,11 +185,11 @@ class PmkidHarvestAttack(Campaign):
             for attempt in range(1, self.attempts + 1):
                 if self.stopped:
                     return
-                arm = self.array.lease(fake_mac=self.source_mac, bssid=self.bssid_bytes,
+                active_monitor_lease = self.array.lease(fake_mac=self.source_mac, bssid=self.bssid_bytes,
                                        iface=iface)
-                async with arm:
-                    if arm.mac:
-                        self.source_mac = str_to_mac(arm.mac)
+                async with active_monitor_lease:
+                    if active_monitor_lease.active_monitor_mac:
+                        self.source_mac = str_to_mac(active_monitor_lease.active_monitor_mac)
                     logger.info(
                         f"[PMKID] Attempt {attempt}/{self.attempts}: Auth + Assoc Req to "
                         f"{self.target.bssid} as {mac_to_str(self.source_mac)}"
@@ -199,7 +199,8 @@ class PmkidHarvestAttack(Campaign):
                     assoc = Association(iface, self.target.bssid, self.target.ssid or "",
                                         self.target.channel, our_mac=self.source_mac,
                                         assoc_trailer_ies=self._assoc_rsn_ie,
-                                        should_stop=lambda: self.stopped)
+                                        should_stop=lambda: self.stopped,
+                                        beacon_frame=self.target.last_beacon_frame)
                     assoc.start()
                     try:
                         await assoc.associate()

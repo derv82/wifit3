@@ -6,7 +6,7 @@ from dataclasses import replace
 import wifit3.device.manager as manager
 from wifit3.chips.driver import DeviceID
 from wifit3.device.manager import DeviceManager, Status
-from wifit3.errors import BringUpError, BringUpPermissionsError
+from wifit3.errors import BringUpError, BringUpPermissionsError, SetChannelError
 from wifit3.setup.base import SetupResult
 
 _DEV = DeviceID(0x0BDA, 0x8813, "RTL8814AU (Alfa AWUS1900)")
@@ -152,6 +152,19 @@ async def test_second_connect_fault_after_install(monkeypatch):
                   FakeInterface(exc=BringUpError("init", "no RX")))
     res = await _mgr(setup=FakeSetup(install=True)).bringup(_DEV)
     assert res.status is Status.FAILED and "init" in res.message
+
+
+async def test_other_connect_exception_is_failed_not_raised(monkeypatch):
+    _queue_builds(monkeypatch, FakeInterface(exc=SetChannelError("Message 0x20024 timeout")))
+    res = await _mgr().bringup(_DEV)
+    assert res.status is Status.FAILED and "0x20024" in res.message
+
+
+async def test_other_connect_exception_after_install_is_failed_not_raised(monkeypatch):
+    _queue_builds(monkeypatch, FakeInterface(exc=BringUpPermissionsError("open", "x")),
+                  FakeInterface(exc=SetChannelError("Message 0x20024 timeout")))
+    res = await _mgr(setup=FakeSetup(install=True)).bringup(_DEV)
+    assert res.status is Status.FAILED and "0x20024" in res.message
 
 
 async def test_card_absent_is_failed(monkeypatch):

@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.models import AccessPoint
@@ -56,14 +56,6 @@ async def _always_associated() -> bool:
 class ArpReplayStats:
     injected: int = 0
     cycles: int = 0
-    last_gain: int = 0           # unique IVs gained in the last burst cycle
-    effective_pps: float = 0.0   # injected / full cycle (incl. RX window)
-    raw_pps: float = 0.0         # injected / burst-only (the hardware cap tell)
-    burst_size: int = 0          # current adaptive burst size
-    candidates_tried: int = 0
-    candidates_failed: int = 0
-    has_winner: bool = False
-    started_at: float = field(default_factory=time.time)
 
 
 class WepArpReplay:
@@ -198,8 +190,6 @@ class WepArpReplay:
         self._trial_started = time.time()
         self._stall_started = 0.0
         self._reauth_requested = False
-        if cand is not self._winner:
-            self.stats.candidates_tried += 1
         self._log(
             f"[bold green]ARP Replay:[/bold green] Testing candidate packet "
             f"({len(cand)} B)…"
@@ -292,7 +282,6 @@ class WepArpReplay:
             self._failed.add(cand)
             self._current = None
             return 0
-        ivs_before = self.collector.unique_count(self.bssid)
         echoes_before = self._echoes
         t0 = time.time()
         sent = 0
@@ -312,11 +301,6 @@ class WepArpReplay:
         await asyncio.sleep(max(0.0, self._WINDOW_S - send_dt))  # listen: RX airtime for the echoes
         window_dt = max(1e-3, time.time() - t0)
         self.stats.cycles += 1
-        self.stats.raw_pps = sent / send_dt           # card's burst speed
-        self.stats.effective_pps = sent / window_dt   # over the full window
-        self.stats.burst_size = sent
-        gain = self.collector.unique_count(self.bssid) - ivs_before
-        self.stats.last_gain = gain
         echo_gain = self._echoes - echoes_before
         self._last_echo_rate = echo_gain / window_dt  # the controller's objective
         return echo_gain
@@ -343,7 +327,6 @@ class WepArpReplay:
             if stalled > self._STALL_DEMOTE_AFTER:
                 self._winner = None
                 self._current = None
-                self.stats.has_winner = False
                 self._reset_rate_search()   # don't leave the next search pinned at a high rate
             return
 
@@ -351,7 +334,6 @@ class WepArpReplay:
         self._set_state("testing")
         if self._trial_gain >= self._MIN_TRIAL_GAIN:
             self._winner = self._current
-            self.stats.has_winner = True
             self._failed.discard(self._current)
             self._log(treelog.branch_ok(
                 f"Candidate packet ({len(self._current)} B) is "
@@ -364,7 +346,6 @@ class WepArpReplay:
             failed_len = len(self._current)
             self._failed.add(self._current)
             self._failed_at = time.time()
-            self.stats.candidates_failed = len(self._failed)
             self._current = None
             self._log(treelog.leaf_fail(
                 f"[yellow]failed to replay ({failed_len} B)[/yellow] "

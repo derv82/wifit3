@@ -9,7 +9,6 @@ AUTHKEY = bytes.fromhex("11" * wc.AUTHKEY_LEN)
 PKE = bytes.fromhex("22" * wc.PUBKEY_LEN)
 PKR = bytes.fromhex("33" * wc.PUBKEY_LEN)
 E_NONCE = bytes.fromhex("44" * wc.NONCE_LEN)
-MAC = bytes.fromhex("aabbccddeeff")
 
 
 def _bundle(pin: str, e_s1: bytes, e_s2: bytes) -> PixieBundle:
@@ -21,7 +20,6 @@ def _bundle(pin: str, e_s1: bytes, e_s2: bytes) -> PixieBundle:
         e_hash2=wc.e_or_r_hash(AUTHKEY, e_s2, psk2, PKE, PKR),
         e_nonce=E_NONCE,
         authkey=AUTHKEY,
-        enrollee_mac=MAC,
     )
 
 
@@ -120,7 +118,7 @@ def _bundle_for(pin, es1, es2, e_nonce):
         pke=PKE, pkr=PKR,
         e_hash1=wc.e_or_r_hash(AUTHKEY, es1, psk1, PKE, PKR),
         e_hash2=wc.e_or_r_hash(AUTHKEY, es2, psk2, PKE, PKR),
-        e_nonce=e_nonce, authkey=AUTHKEY, enrollee_mac=MAC,
+        e_nonce=e_nonce, authkey=AUTHKEY,
     )
 
 
@@ -128,6 +126,14 @@ def test_ralink_mode_recovers_pin():
     pin = pins.full_pin("1357", "246")
     stream = pixie_prng.ralink_forward_stream(0x12345678, 48)
     bundle = _bundle_for(pin, stream[0:16], stream[16:32], stream[32:48])
+    result = recover_pin(bundle, modes=(PixieMode.RALINK,))
+    assert result.found and result.pin == pin and result.mode is PixieMode.RALINK
+
+
+def test_ralink_mode_recovers_forward_secrets():
+    pin = pins.full_pin("1357", "246")
+    stream = pixie_prng.ralink_forward_stream(0x12345678, 64)
+    bundle = _bundle_for(pin, stream[32:48], stream[48:64], stream[16:32])
     result = recover_pin(bundle, modes=(PixieMode.RALINK,))
     assert result.found and result.pin == pin and result.mode is PixieMode.RALINK
 
@@ -197,6 +203,24 @@ def test_ecos_simple_mode_recovers_pin():
     bundle = _bundle_for(pin, es1, es2, nonce)
     result = recover_pin(bundle, modes=(PixieMode.ECOS_SIMPLE,), ecos_max_counter=1000)
     assert result.found and result.pin == pin and result.mode is PixieMode.ECOS_SIMPLE
+
+
+def test_ecos_simplest_mode_recovers_pin_when_explicitly_bounded():
+    pin = pins.full_pin("8642", "097")
+    nonce, es1, es2 = pixie_prng.ecos_simplest_model(137)
+    bundle = _bundle_for(pin, es1, es2, nonce)
+    result = recover_pin(
+        bundle, modes=(PixieMode.ECOS_SIMPLEST,), ecos_simplest_max_counter=1_000,
+    )
+    assert result.found and result.pin == pin and result.mode is PixieMode.ECOS_SIMPLEST
+
+
+def test_ecos_knuth_mode_recovers_pin_when_explicitly_bounded():
+    pin = pins.full_pin("8642", "097")
+    nonce, es1, es2 = pixie_prng.ecos_knuth_model(137)
+    bundle = _bundle_for(pin, es1, es2, nonce)
+    result = recover_pin(bundle, modes=(PixieMode.ECOS_KNUTH,), ecos_knuth_max_counter=1_000)
+    assert result.found and result.pin == pin and result.mode is PixieMode.ECOS_KNUTH
 
 
 def test_empty_device_password_recovered():

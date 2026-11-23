@@ -3,6 +3,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+import usb.core
 import usb.util
 
 import wifit3.chips.rtl8192fu.driver as drv
@@ -52,6 +54,26 @@ async def test_set_channel_tunes_once_and_skips_current(monkeypatch):
     await driver.set_channel(6)
     assert tuned == [6]
     assert driver.current_channel == 6
+    await driver._stop_tasks()
+
+
+async def test_a_failed_tune_does_not_skip_the_retune_to_the_previous_channel(monkeypatch):
+    calls: list[str] = []
+    driver = _driver(monkeypatch, calls)
+    await driver.connect()
+    tuned: list[int] = []
+
+    def failing_config(_priv, _channel):
+        raise usb.core.USBError("timeout")
+
+    monkeypatch.setattr(drv, "rtl8xxxu_config", lambda priv, channel: tuned.append(channel))
+    await driver.set_channel(6)
+    monkeypatch.setattr(drv, "rtl8xxxu_config", failing_config)
+    with pytest.raises(usb.core.USBError):
+        await driver.set_channel(11)
+    monkeypatch.setattr(drv, "rtl8xxxu_config", lambda priv, channel: tuned.append(channel))
+    await driver.set_channel(6)
+    assert tuned == [6, 6]
     await driver._stop_tasks()
 
 

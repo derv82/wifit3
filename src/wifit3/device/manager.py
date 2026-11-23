@@ -11,16 +11,15 @@ import errno
 import functools
 import importlib
 import logging
-import os
 import pkgutil
 import sys
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, List, NamedTuple, NoReturn, Optional, Tuple
 
-import libusb_package
 import usb.core
 
+from wifit3.device.backend import UsbBackend, usb_backend
 from wifit3.device.zerocd import ZeroCdEjector
 from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError, is_device_gone
 from wifit3.models.device_id import DeviceID
@@ -70,15 +69,6 @@ class Claim(NamedTuple):
 
 
 @dataclass(frozen=True)
-class DkmsFamily:
-    """Env var picks the DKMS ``default`` or the ``mainline`` package."""
-    key: str
-    default: str
-    mainline: Optional[str] = None
-    env: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class VidPidFamily:
     """Distinct chips on one vid:pid; ``resolve(dev)`` routes by live device."""
     default: str
@@ -96,19 +86,16 @@ def _resolve_2357_0137(dev: usb.core.Device) -> str:
     return "rtl8822cu"
 
 
-# One chip, two driver packages; an env var picks the winner. Keyed by every dir a family owns.
-_DKMS_BY_DIR: dict[str, DkmsFamily] = {
-    d: fam
-    for fam in (
-        DkmsFamily(key="ar9271",     default="ar9271_v2"),
-        DkmsFamily(key="rtl8821cu",  default="rtl8821cu_dkms"),
-        DkmsFamily(key="rtl8188eus", default="rtl8188eus_dkms", mainline="rtl8188eus",   env="WIFIT3_RTL8188"),
-        DkmsFamily(key="rtl8812au",  default="rtl8812au_dkms",  mainline="rtl8812au",    env="WIFIT3_RTL8812"),
-        DkmsFamily(key="rtl8821au",  default="rtl8821au_dkms",  mainline="rtl8821au",    env="WIFIT3_RTL8821"),
-        DkmsFamily(key="rtl8814au",  default="rtl8814au_dkms",  mainline="rtw88_8814au", env="WIFIT3_RTL8814"),
-        DkmsFamily(key="rtl8822bu",  default="rtl8822bu_dkms",  mainline="rtl8822bu",    env="WIFIT3_RTL8822"),
-    )
-    for d in (fam.default, fam.mainline) if d
+# Driver dirs whose setup key is not the dir name.
+_SETUP_KEY_BY_DIR: dict[str, str] = {
+    "ar9271_v2":       "ar9271",
+    "rtl8821cu_dkms":  "rtl8821cu",
+    "rtl8188eus_dkms": "rtl8188eus",
+    "rtl8188ftv_dkms": "rtl8188ftv",
+    "rtl8812au_dkms":  "rtl8812au",
+    "rtl8821au_dkms":  "rtl8821au",
+    "rtl8814au_dkms":  "rtl8814au",
+    "rtl8822bu_dkms":  "rtl8822bu",
 }
 
 def _resolve_148f_760a(dev: usb.core.Device) -> str:
@@ -137,28 +124,17 @@ _VIDPID_FAMILIES: dict[VidPid, VidPidFamily] = {
 }
 
 
-def _winner_dir(fam: DkmsFamily) -> str:
-    """Driver dir: env var opts into ``mainline``, else ``default``."""
-    if fam.mainline and os.environ.get(fam.env or "", "").strip().lower() == "mainline":
-        return fam.mainline
-    return fam.default
-
-
 @functools.cache
 def supported_ids() -> dict[VidPid, Claim]:
     """``{(vid, pid): Claim}`` for every supported vid:pid."""
     from wifit3 import chips as chips_pkg
 
-    winners = {fam.key: _winner_dir(fam) for fam in set(_DKMS_BY_DIR.values())}
     mapping: dict[VidPid, Claim] = {}
     for mod_info in pkgutil.iter_modules(chips_pkg.__path__, chips_pkg.__name__ + "."):
         if not mod_info.ispkg:
             continue
         dir_name = mod_info.name.rsplit(".", 1)[-1]
-        fam = _DKMS_BY_DIR.get(dir_name)
-        if fam is not None and dir_name != winners[fam.key]:
-            continue  # a DKMS family's losing package
-        key = fam.key if fam is not None else dir_name
+        key = _SETUP_KEY_BY_DIR.get(dir_name, dir_name)
         mod = importlib.import_module(mod_info.name)
         for entry in getattr(mod, "SUPPORTED_IDS", None) or ():
             slot = (entry.vid, entry.pid)
@@ -167,16 +143,14 @@ def supported_ids() -> dict[VidPid, Claim]:
                 continue  # a shared vid:pid's non-default chip
             assert slot not in mapping, (
                 f"VID:PID {slot[0]:#06x}:{slot[1]:#06x} claimed by two packages; "
-                f"add a DkmsFamily or VidPidFamily to disambiguate")
+                f"add a VidPidFamily to disambiguate")
             mapping[slot] = Claim(entry, key, mod.import_driver)
     return mapping
 
 
 @functools.cache
 def zerocd_ids() -> frozenset[VidPid]:
-    """Every ZeroCD (mass-storage stub) VID:PID any driver opts into, merged across all packages.
-    Unlike ``supported_ids`` this keeps both members of a DKMS pair: the stub needs ejecting whichever
-    driver ultimately wins."""
+    """Every ZeroCD (mass-storage stub) VID:PID any driver opts into, merged across all packages."""
     from wifit3 import chips as chips_pkg
 
     ids: set[VidPid] = set()
@@ -240,22 +214,29 @@ def _raise_usblib_fatal(cause: Exception) -> NoReturn:
     raise WifiteFatalError("USB backend unavailable", message) from cause
 
 
-def _bus_devices(backend) -> List[usb.core.Device]:
+def _bus_devices(backend: UsbBackend) -> List[usb.core.Device]:
     # The raw bus enumeration, turning pyusb's opaque NoBackendError into a WifiteFatalError.
     try:
-        return list(usb.core.find(find_all=True, backend=backend))
+        return list(backend.enumerate())
+    except usb.core.NoBackendError as exc:
+        _raise_usblib_fatal(exc)
+
+
+def _require_backend() -> UsbBackend:
+    try:
+        return usb_backend()
     except usb.core.NoBackendError as exc:
         _raise_usblib_fatal(exc)
 
 
 def raw_devices() -> List[usb.core.Device]:
     """Every ``usb.core.Device`` on the bus right now, unfiltered (the ZeroCD ejector's view)."""
-    return _bus_devices(libusb_package.get_libusb1_backend())
+    return _bus_devices(_require_backend())
 
 
 def devices() -> List[DeviceID]:
     """Every supported device present on the USB bus right now."""
-    backend = libusb_package.get_libusb1_backend()
+    backend = _require_backend()
     smap = supported_ids()
     out: List[DeviceID] = []
     seen: set[VidPid] = set()
@@ -303,26 +284,19 @@ def device(device_id: DeviceID) -> Optional[DeviceID]:
 
 
 def linux_node_path(device_id: DeviceID) -> Optional[str]:
-    """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (Linux),
-    or None if it isn't on the bus. Honors the (bus, address) instance when set, so the right node is
-    returned with identical siblings plugged in. The path the udev rule / chgrp acts on."""
-    backend = libusb_package.get_libusb1_backend()
-    want_instance = device_id.bus is not None and device_id.address is not None
-    for dev in _bus_devices(backend):
-        if (dev.idVendor, dev.idProduct) != (device_id.vid, device_id.pid):
-            continue
-        if want_instance and (dev.bus, dev.address) != (device_id.bus, device_id.address):
-            continue
-        return f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
-    return None
+    """The usbfs node ``/dev/bus/usb/BBB/DDD`` of the present card matching ``device_id`` (desktop
+    Linux), or None when the platform has no usbfs node or the card isn't on the bus. Honors the
+    (bus, address) instance when set, so identical siblings resolve to the right node."""
+    backend = _require_backend()
+    dev = backend.find(device_id.vid, device_id.pid,
+                       bus=device_id.bus, address=device_id.address)
+    return backend.node_path(dev) if dev is not None else None
 
 
 def _live_dev(device_id: DeviceID) -> Optional[usb.core.Device]:
-    backend = libusb_package.get_libusb1_backend()
-    if device_id.bus is not None and device_id.address is not None:
-        return usb.core.find(idVendor=device_id.vid, idProduct=device_id.pid,
-                             bus=device_id.bus, address=device_id.address, backend=backend)
-    return usb.core.find(idVendor=device_id.vid, idProduct=device_id.pid, backend=backend)
+    backend = _require_backend()
+    return backend.find(device_id.vid, device_id.pid,
+                        bus=device_id.bus, address=device_id.address)
 
 
 def wlan_iface(device_id: DeviceID, name: str = "wlan0") -> Optional[WlanInterface]:
@@ -433,6 +407,9 @@ class DeviceManager:
         except OSError as e:
             logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
+        except Exception as e:
+            logger.exception("%s: bring-up failed", device_id.chipset)
+            return BringupResult.failed(f"{device_id.chipset}: bring-up failed: {e}")
 
         device_id = await self.setup.install(device_id, self.prompter)
         if device_id is None:
@@ -447,6 +424,9 @@ class DeviceManager:
         except OSError as e:
             logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
+        except Exception as e:
+            logger.exception("%s: bring-up failed", device_id.chipset)
+            return BringupResult.failed(f"{device_id.chipset}: bring-up failed: {e}")
 
     async def uninstall(self, device_id) -> SetupResult:
         """Reverse a prior setup for ``device_id`` (the splash's ✕ button). Shows the progress modal

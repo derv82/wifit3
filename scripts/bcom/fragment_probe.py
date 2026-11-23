@@ -26,7 +26,7 @@ sys.path.insert(0, str(_HERE.parent))  # scripts/ for dev.py
 
 from dev import select_device
 
-from wifit3.campaigns.auth_assoc import Association, WlanTransport, build_client_leaving
+from wifit3.wlan.station import Association, WlanTransport, build_client_leaving
 from wifit3.campaigns.probe.broadcom_wps import RESPONSE_TIMEOUT, WpsImplementation, enter_wps, send_fragment
 from wifit3.device.manager import wlan_close, wlan_ifaces
 from wifit3.dot11 import str_to_mac
@@ -130,9 +130,7 @@ async def run(args) -> int:
             print(f"[*] Target {bssid}  CH{channel}  {ap.signal} dBm  ssid={ssid!r}  enc={ap.encryption}")
         rows.append(("WPS advertised", "not seen" if ap is None else ("yes" if ap.wps else "no")))
         bssid_b = str_to_mac(bssid)
-        if not await iface.set_channel(channel):
-            print(f"[-] set_channel({channel}) failed.", file=sys.stderr)
-            return 1
+        await iface.set_channel(channel)
 
         fake_mac = await iface.set_fake_mac(None, bssid_b)
         if fake_mac is None:

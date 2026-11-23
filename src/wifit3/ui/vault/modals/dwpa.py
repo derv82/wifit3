@@ -1,3 +1,4 @@
+import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Optional
@@ -7,11 +8,13 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label
 
-from wifit3.models import PersistedCapture
 from wifit3.persist.config import Config, ConfigError
+from wifit3.persist.pcap import FourWayHandshake
+from wifit3.ui.screens.vault.handshakes import handshake_prompt
 from wifit3.vault.tools.dwpa_api import (DwpaError, PotfileEntry, is_valid_user_key,
                                          network_leaked, retrieve_cracked, split_on_known_ssid,
                                          upload_capture)
@@ -22,7 +25,7 @@ _NOT_LEAKED = "[dim]Not found on DWPA[/]"
 
 
 class DwpaConfigModal(ModalScreen[bool]):
-    """Server URL and key for uploads; dismisses True once the capture is accepted, else None."""
+    """Server URL and key for uploads; dismisses True once the handshake is accepted, else None."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -48,7 +51,7 @@ class DwpaConfigModal(ModalScreen[bool]):
         color: $accent;
         margin-bottom: 1;
     }
-    #dwpa-capture { color: $text-muted; }
+    #dwpa-handshake { color: $text-muted; }
     .dwpa-label { margin-top: 1; }
     #dwpa-query-row { height: auto; margin-top: 1; }
     #dwpa-query, #dwpa-retrieve { min-width: 0; width: auto; }
@@ -56,11 +59,11 @@ class DwpaConfigModal(ModalScreen[bool]):
     #dwpa-buttons { align: right middle; height: auto; }
     """
 
-    def __init__(self, capture: PersistedCapture, bssid: str, ssid: Optional[str],
+    def __init__(self, handshake: FourWayHandshake, bssid: str, ssid: Optional[str],
                  save_keys: Optional[Callable[[Sequence[PotfileEntry]], None]] = None) -> None:
         """``save_keys`` stores the networks a Retrieve gets from the server."""
         super().__init__()
-        self.capture = capture
+        self.handshake = handshake
         self.bssid = bssid
         self.ssid = ssid
         self._save_keys = save_keys
@@ -70,7 +73,8 @@ class DwpaConfigModal(ModalScreen[bool]):
         with Vertical(id="dwpa-dialog"):
             with VerticalScroll(id="dwpa-body"):
                 yield Label("DWPA", id="dwpa-title")
-                yield Label(f"Capture: {escape(Path(self.capture.path).name)}", id="dwpa-capture")
+                yield Label(Content.assemble("Handshake: ", handshake_prompt(self.handshake, True, False, 0)),
+                            id="dwpa-handshake")
                 yield Label("Server URL:", classes="dwpa-label")
                 yield Input(settings.url or "", id="dwpa-url")
                 yield Label("Key:")
@@ -203,7 +207,10 @@ class DwpaConfigModal(ModalScreen[bool]):
     @work(thread=True, exclusive=True, group="dwpa-upload")
     def _upload(self, url: str, user_key: str) -> None:
         try:
-            upload_capture(url, user_key, self.capture.path)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "handshake.pcap"
+                self.handshake.write(path)
+                upload_capture(url, user_key, str(path))
         except DwpaError as e:
             self.app.call_from_thread(self._show_failure, str(e))
             return

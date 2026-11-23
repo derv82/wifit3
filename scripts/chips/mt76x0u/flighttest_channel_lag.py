@@ -169,9 +169,9 @@ async def workload_bare(driver: MT76x0UDriver) -> None:
                       ("A3: set_channel(1)", 1)]:
         print(f"\n--- {label} ---")
         p = T.phase_start(label)
-        ok = await driver.set_channel(ch)
+        await driver.set_channel(ch)
         T.phase_end(p)
-        print(f"  ok={ok}  duration={p['duration_ms']:.0f}ms  "
+        print(f"  duration={p['duration_ms']:.0f}ms  "
               f"mcu_cmds={p['mcu_count']}  "
               f"loop_blocks={p['loop_blocks_count']}  "
               f"loop_blocked_total={p['loop_blocks_total_ms']:.0f}ms")

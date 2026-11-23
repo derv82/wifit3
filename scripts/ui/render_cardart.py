@@ -53,6 +53,9 @@ _LABELS = {
 
     # TP-Link
     "tpwn722nv23":     "TP-Link TL-WN722N",
+    "tpwn821nv56":     "TP-Link TL-WN821N",
+    "tpwn822nv4":      "TP-Link TL-WN822N",
+    "tpwn823nv23":     "TP-Link TL-WN823N",
     "archert2u":       "TP-Link Archer T2U",
     "archert2uplus":   "TP-Link Archer T2U Plus",
     "archert2unano":   "TP-Link Archer T2U Nano",
@@ -83,6 +86,7 @@ _STACKS = {
     "stack-rtl8821au": ["card-awus036acs", "card-archert2uplus", "card-archert2u"],
     "stack-rtl8822au": ["card-archert3uplus", "card-archert4uplus"],
     "stack-rt3070":    ["card-awus036nh", "card-dlinkdwa140"],
+    "stack-rtl8192eu": ["card-tpwn823nv23", "card-tpwn821nv56", "card-tpwn822nv4"],
 }
 
 

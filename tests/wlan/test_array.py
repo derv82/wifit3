@@ -7,7 +7,10 @@ into the shared sink, STACK set_channel, SPREAD hop partitioning, and member-los
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from wifit3.chips.driver import FakeMacSupport
+from wifit3.errors import SetChannelError
 from wifit3.wlan.array import WlanArray
 
 from tests.frames import pkt
@@ -19,6 +22,7 @@ class FakeIface:
     def __init__(self, name, channels, fake_mac=FakeMacSupport.SPOOFABLE, description="fake"):
         self.name = name
         self.description = description
+        self.chipset = name
         self._channels = list(channels)
         self.current_channel = channels[0]
         self.driver = SimpleNamespace(FAKE_MAC=fake_mac, SUPPORTED_CHANNELS=list(channels))
@@ -43,7 +47,6 @@ class FakeIface:
     async def set_channel(self, ch, scan=False):
         self.current_channel = ch
         self.tuned.append(ch)
-        return True
 
     async def start_hopping(self, channels=None, interval=0.5):
         self.hop_calls.append(list(channels) if channels else None)
@@ -236,10 +239,10 @@ async def test_set_channel_stack_only_capable_members():
     two4 = FakeIface("wlan0", [1, 6, 11])
     five = FakeIface("wlan1", [36, 44])
     a = _pool(two4, five)
-    ok = await a.set_channel(6)
-    assert ok is True
+    await a.set_channel(6)
     assert two4.tuned == [6] and five.tuned == []   # 2.4-only card stays put
-    assert await a.set_channel(100) is False        # nobody can reach it
+    with pytest.raises(SetChannelError):            # nobody can reach it
+        await a.set_channel(100)
 
 
 async def test_start_hopping_spread_partitions_channels():
@@ -277,6 +280,36 @@ async def test_partition_5ghz_first_keeps_cards_on_band():
     await a.start_hopping([1, 6, 11, 36, 44])
     assert two4.hop_calls[0] == [1, 6, 11]
     assert dual.hop_calls[0] == [36, 44]             # dual took only 5 GHz; no 2.4 spillover onto it
+
+
+
+async def test_start_hopping_without_dfs_channels_drops_them():
+    dual = FakeIface("wlan0", [6, 36, 52, 100, 149])
+    a = _pool(dual)
+    await a.start_hopping(include_dfs_channels=False)
+    assert dual.hop_calls == [[6, 36, 149]]
+
+
+async def test_attach_while_hopping_without_dfs_channels_keeps_them_out():
+    a = WlanArray()
+    a.attach(FakeIface("wlan0", [1, 6, 11]))
+    await a.start_hopping(interval=0.25, include_dfs_channels=False)
+    five = FakeIface("wlan1", [36, 52, 100, 149])
+    a.attach(five)                                # a 5 GHz card joins a 2.4 GHz hop
+    await asyncio.sleep(0.05)
+    assert five.hop_calls[-1] == [36, 149]
+
+
+async def test_claim_restores_hopping_without_dfs_channels():
+    a = WlanArray()
+    m1 = FakeIface("wlan0", [6, 36, 52])
+    m2 = FakeIface("wlan1", [6, 36, 52])
+    a.attach(m1)
+    a.attach(m2)
+    await a.start_hopping(interval=0.25, include_dfs_channels=False)
+    async with a.claim(m1):
+        assert m2.hop_calls[-1] == [6, 36]
+    assert 52 not in m1.hop_calls[-1] + m2.hop_calls[-1]
 
 
 # ----- member loss -----------------------------------------------------------
@@ -364,13 +397,25 @@ async def test_member_lost_closes_the_dead_card():
 async def test_set_channel_logs_a_failing_card_and_tunes_the_rest():
     class _Boom(FakeIface):
         async def set_channel(self, ch, scan=False):
-            raise RuntimeError("tune failed")
+            self.current_channel = None
+            raise SetChannelError("tune failed")
 
     good = FakeIface("wlan0", [1, 6, 11])
     bad = _Boom("wlan1", [1, 6, 11])
     a = _pool(good, bad)
-    ok = await a.set_channel(6)
-    assert ok is True and good.tuned == [6]        # one card failing doesn't abort the others
+    await a.set_channel(6)                         # one card failing doesn't abort the others
+    assert good.tuned == [6] and bad.current_channel is None
+
+
+async def test_set_channel_raises_when_every_card_fails():
+    class _Boom(FakeIface):
+        async def set_channel(self, ch, scan=False):
+            self.current_channel = None
+            raise SetChannelError("tune failed")
+
+    a = _pool(_Boom("wlan0", [1, 6, 11]), _Boom("wlan1", [1, 6, 11]))
+    with pytest.raises(SetChannelError):
+        await a.set_channel(6)
 
 
 async def test_claim_single_card_suspends_and_restores_hopping():

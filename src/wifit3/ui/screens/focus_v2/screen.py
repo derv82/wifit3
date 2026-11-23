@@ -50,7 +50,9 @@ from wifit3.campaigns.verify import VERIFY_CAMPAIGNS
 from wifit3.campaigns.verify.campaign import VerifyCampaign, VerifyOutcome
 from wifit3.campaigns.wps.registrar import PinResult
 from wifit3.crack.handshake import handshake_uncrackable_label
+from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.pmf import PmfPosture
+from wifit3.errors import SetChannelError
 from wifit3.models import CREDENTIAL_NAMES, AccessPoint, IdSource
 from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.persist.ap_state import Key, PasswordStatus, epoch_sort_key
@@ -60,8 +62,9 @@ from wifit3.ui import focus_model as fm, pmkid_log
 from wifit3.ui.capture_log import DECLOAK_METHOD_LABELS, saved_psk_chip, short_sta
 from wifit3.ui.eapol_aggregate import EapolAggregator
 from wifit3.ui.encryption_format import psk_capture_supported, wep_key_hex_and_ascii
+from wifit3.ui.modals.nickname import NicknameModal
 from wifit3.ui.screens.focus_v2.eviltwin_modal import EvilTwinInputModal, _can_host
-from wifit3.ui.screens.vault_item import key_text
+from wifit3.ui.screens.vault.key_row import key_text
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
 from wifit3.watchers.ap_watcher import (
     ApDecloaked, ApEvent, EapolFrameSeen, HandshakeCaptured, PmkidCaptured,
@@ -155,14 +158,15 @@ class FocusViewV2(Screen):
     # Attack hotkeys come from the campaign registry
     BINDINGS = [
         Binding("escape", "go_back", "Back", show=True),
-        Binding("d", "deauth_all", "Deauth", show=True),
+        Binding("q", "app.quit", "Quit", show=True),
         *[Binding(cls.hotkey[0], f"campaign('{cls.key}')", cls.hotkey[1], show=True)
           for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
         Binding("c", "campaign('chop')", "ChopChop", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
+        Binding("d", "deauth_all", "Deauth", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("s", "silence", "Silence", show=True),
         Binding("s", "unsilence", "unSilence", show=True),
-        Binding("q", "app.quit", "Quit", show=True),
     ]
 
     _DEAUTH_SEL_ROUNDS = 10
@@ -361,15 +365,7 @@ class FocusViewV2(Screen):
 
     async def _tune_to_target(self, array, ap: AccessPoint) -> None:
         await array.stop_hopping()
-        try:
-            ok = await array.set_channel(ap.channel, scan=False)
-        except Exception:
-            logger.exception("Focus v2 channel tune failed")
-            ok = False
-        if ok:
-            self._log(f"Tuned to [cyan]channel {ap.channel}[/cyan]")
-        else:
-            self._log(f"[yellow]Tried to tune to channel {ap.channel}[/yellow]")
+        await self._tune_array_to(array, ap.channel)
 
     async def _repin_to_target(self, array, target: AccessPoint) -> None:
         await array.stop_hopping()
@@ -377,8 +373,24 @@ class FocusViewV2(Screen):
         # Not while a campaign runs: it owns its cards' channels (EvilTwin's twin sits off-target).
         if self._any_campaign_active():
             return
-        ok = await array.set_channel(target.channel, scan=False)
-        logger.info("[FOCUS] re-pin: bssid=%s ch=%s -> %s", target.bssid, target.channel, ok)
+        await self._tune_array_to(array, target.channel)
+
+    async def _tune_array_to(self, array, channel: int) -> None:
+        members_to_tune = []
+        for m in array.members:
+            if channel in m.supported_channels and m.current_channel != channel:
+                members_to_tune.append(m)
+        try:
+            await array.set_channel(channel, scan=False)
+        except SetChannelError:
+            self._log(f"[red]No device could tune to channel {channel}; go back to Scanner to retune[/red]")
+            return
+        failed = [m for m in members_to_tune if m.current_channel is None]
+        if failed:
+            names = ", ".join(m.chipset for m in failed)
+            self._log(f"[yellow]{names} failed to tune to channel {channel}[/yellow]")
+        else:
+            self._log(f"Tuned to [cyan]channel {channel}[/cyan]")
 
     def on_resize(self) -> None:
         self._distribute()
@@ -416,6 +428,9 @@ class FocusViewV2(Screen):
             guessid = self.app.guessid(ap)
             if guessid:
                 essid = f"{fm.truncate_ssid(guessid)}?"
+        nickname = Config.nickname(ap.bssid)
+        if nickname:
+            essid = fm.truncate_ssid(f"{nickname} ({essid})")
         rate, _ = fm.beacon_rate(ap, self._beacon_samples, time.time())
         return dict(essid=essid, bssid=ap.bssid, channel=ap.channel,
                     power_dbm=ap.signal, signal=rate,
@@ -500,7 +515,7 @@ class FocusViewV2(Screen):
             if running:
                 btn.label, btn.variant, btn.disabled, reason = cls.run_label, cls.run_variant, False, ""
             else:
-                reason = fm.campaign_blocked(cls, ap)
+                reason = fm.campaign_blocked(cls, ap, self.app.array)
                 btn.label, btn.variant = Content(cls.button_label(ap)), cls.idle_variant
                 btn.disabled = reason is not None
             if probing and not running:
@@ -531,7 +546,7 @@ class FocusViewV2(Screen):
             btn.variant = "error"
             btn.label = "Stopping…" if stopping else "Stop PBC"
         elif ap.wps_pbc_active:
-            reason = fm.campaign_blocked(WpsPbcCampaign, ap)
+            reason = fm.campaign_blocked(WpsPbcCampaign, ap, self.app.array)
             btn.display = True
             btn.disabled = reason is not None or probing
             btn.variant = "primary"
@@ -559,7 +574,7 @@ class FocusViewV2(Screen):
         else:
             btn.label = "Verify ▾" if len(keys) > 1 else "Verify"
             btn.variant = "success"
-            reason = fm.campaign_blocked(VerifyCampaign, ap)
+            reason = fm.campaign_blocked(VerifyCampaign, ap, self.app.array)
             if probing:
                 reason = "Disabled while probing"
             btn.disabled = reason is not None or current is not None
@@ -617,7 +632,10 @@ class FocusViewV2(Screen):
         self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] {ap.bssid}"))
         if array:
-            self._log(treelog.leaf(f"Tuning to [cyan]channel {ap.channel}[/cyan]…"))
+            channel_text = f"[cyan]channel {ap.channel}[/cyan]"
+            if is_dfs_channel(ap.channel):
+                channel_text += " [dim](DFS)[/dim]"
+            self._log(treelog.leaf(f"Tuning to {channel_text}…"))
             self.run_worker(self._tune_to_target(array, ap), group="tune", exclusive=True)
         else:
             self._log(treelog.leaf("[yellow]no interface: passive view only[/yellow]"))
@@ -727,7 +745,7 @@ class FocusViewV2(Screen):
         self.query_one("#router", RouterEndpoint).update(**self._router_values())
         clients = self.query_one("#clients", ClientsList)
         clients.sync(self._client_list())
-        clients.set_deauth_enabled(not fm.deauth_blocked(ap))
+        clients.set_deauth_enabled(not fm.deauth_blocked(ap, self.app.array))
         self.refresh_buttons()
         self._balance_status()
         self._sync_bindings()
@@ -1053,11 +1071,11 @@ class FocusViewV2(Screen):
             active = Campaign.active
             if active is not None and active.key == key and cls.stoppable:
                 return True
-            return None if fm.campaign_blocked(cls, ap) is not None else True
+            return None if fm.campaign_blocked(cls, ap, self.app.array) is not None else True
         if action == "deauth_all":
             if ap is None:
                 return False
-            return None if fm.deauth_blocked(ap) else True
+            return None if fm.deauth_blocked(ap, self.app.array) else True
         if action == "silence":
             return False if (ap is not None and Config.is_silenced(ap.bssid)) else True
         if action == "unsilence":
@@ -1076,12 +1094,12 @@ class FocusViewV2(Screen):
             def _disabled(cls) -> bool:
                 if active is not None and active.key == cls.key and cls.stoppable:
                     return False
-                return fm.campaign_blocked(cls, ap) is not None
+                return fm.campaign_blocked(cls, ap, self.app.array) is not None
 
             btn_sig = tuple((cls.key, cls.visible(ap), True if probing else _disabled(cls))
                             for cls in fm.BUTTON_CAMPAIGNS)
             sig = (btn_sig,
-                   True if probing else fm.deauth_blocked(ap),
+                   True if probing else fm.deauth_blocked(ap, self.app.array),
                    Config.is_silenced(ap.bssid),
                    probing)
         if sig != self._binding_sig:
@@ -1119,6 +1137,11 @@ class FocusViewV2(Screen):
 
     def action_unsilence(self) -> None:
         self._toggle_silence()
+
+    def action_set_nickname(self) -> None:
+        if self._target_ap is None:
+            return
+        self.app.push_screen(NicknameModal(self._target_ap.ssid, self._target_ap.bssid))
 
     def _toggle_silence(self) -> None:
         """Flip the focused AP's silenced state (campaigns off, handshakes/PMKIDs ignored)."""

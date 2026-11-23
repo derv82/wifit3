@@ -206,29 +206,25 @@ def is_rf_ported(rf_type: int) -> bool:
     return rf_type in _RF_TABLES
 
 
-def rf_write(t: RT2500USBTransport, word: int, value: int) -> bool:
+def rf_write(t: RT2500USBTransport, word: int, value: int) -> None:
     """Serially program RF register ``word`` with a 20-bit ``value``
-    (rt2500usb.c:179-206). Returns False if the RF stayed busy.
+    (rt2500usb.c:179-206).
 
     PHY_CSR9 takes the low 16 bits; PHY_CSR10 takes bits 16-19 plus the
     20-bit-count + RF_BUSY trigger. ``word`` is not transmitted to the
     chip (RF has no addressing here); it's kept only to mirror the kernel
-    call shape and aid logging.
+    call shape.
     """
     available, _ = t.regbusy_read(PHY_CSR10, PHY_CSR10_RF_BUSY)
-    if not available:
-        logger.warning("rf_write(RF[%d]=0x%05x): RF stayed busy", word, value)
-        return False
+    if available:
+        t.write16(PHY_CSR9, set_field16(0, PHY_CSR9_RF_VALUE, value & 0xFFFF))
 
-    t.write16(PHY_CSR9, set_field16(0, PHY_CSR9_RF_VALUE, value & 0xFFFF))
-
-    reg = 0
-    reg = set_field16(reg, PHY_CSR10_RF_VALUE, (value >> 16) & 0xFF)
-    reg = set_field16(reg, PHY_CSR10_RF_NUMBER_OF_BITS, 20)
-    reg = set_field16(reg, PHY_CSR10_RF_IF_SELECT, 0)
-    reg = set_field16(reg, PHY_CSR10_RF_BUSY, 1)
-    t.write16(PHY_CSR10, reg)
-    return True
+        reg = 0
+        reg = set_field16(reg, PHY_CSR10_RF_VALUE, (value >> 16) & 0xFF)
+        reg = set_field16(reg, PHY_CSR10_RF_NUMBER_OF_BITS, 20)
+        reg = set_field16(reg, PHY_CSR10_RF_IF_SELECT, 0)
+        reg = set_field16(reg, PHY_CSR10_RF_BUSY, 1)
+        t.write16(PHY_CSR10, reg)
 
 
 def config_channel(
@@ -236,7 +232,7 @@ def config_channel(
     rf_type: int,
     channel: int,
     txpower: int = DEFAULT_TXPOWER,
-) -> bool:
+) -> None:
     """Tune the RF to ``channel`` (rt2500usb.c:582-611).
 
     ``rf_type`` is the per-card EEPROM RF chip (EEPROM_ANTENNA_RF_TYPE); each
@@ -244,8 +240,6 @@ def config_channel(
     set (a chip the kernel itself doesn't know) falls back to the RF2525 table
     and logs once — a "give it a shot" instead of a hard failure. Only RF2525E
     gets the half-band pre-tune below, so the fallback stays plain-write.
-
-    Returns True if every RF write completed without an RF_BUSY timeout.
     """
     table = _RF_TABLES.get(rf_type)
     if table is None:
@@ -265,26 +259,24 @@ def config_channel(
     txp = max(MIN_TXPOWER, min(MAX_TXPOWER, txpower))
     rf3 = set_field16(rf3, RF3_TXPOWER, txp)
 
-    ok = True
     # RF2525E: pre-tune RF[2] half a band higher, then RF[4] (584-604).
     if rf_type == RF2525E:
-        ok &= rf_write(t, 2, RF2525E_HALFBAND[channel])
+        rf_write(t, 2, RF2525E_HALFBAND[channel])
         if rf4:
-            ok &= rf_write(t, 4, rf4)
+            rf_write(t, 4, rf4)
 
-    ok &= rf_write(t, 1, rf1)
-    ok &= rf_write(t, 2, rf2)
-    ok &= rf_write(t, 3, rf3)
+    rf_write(t, 1, rf1)
+    rf_write(t, 2, rf2)
+    rf_write(t, 3, rf3)
     if rf4:
-        ok &= rf_write(t, 4, rf4)
-    return ok
+        rf_write(t, 4, rf4)
 
 
 def config_txpower(
     t: RT2500USBTransport,
     txpower: int = DEFAULT_TXPOWER,
     rf3: int = 0,
-) -> bool:
+) -> None:
     """Set TX power without retuning (rt2500usb_config_txpower, 613-621).
 
     The first ``rt2x00mac_config`` after radio-on runs CONF_CHANGE_POWER with
@@ -293,18 +285,7 @@ def config_txpower(
     TX power in RF[3] themselves, so this standalone call happens just once.
     """
     txp = max(MIN_TXPOWER, min(MAX_TXPOWER, txpower))
-    return rf_write(t, 3, set_field16(rf3, RF3_TXPOWER, txp))
-
-
-def set_channel(
-    t: RT2500USBTransport,
-    rf_type: int,
-    channel: int,
-    txpower: int = DEFAULT_TXPOWER,
-) -> bool:
-    """Public channel-tune entry point. Thin wrapper over config_channel
-    so the driver/UI has a stable name."""
-    return config_channel(t, rf_type, channel, txpower)
+    rf_write(t, 3, set_field16(rf3, RF3_TXPOWER, txp))
 
 
 def antenna_defaults(antenna_word: int) -> tuple[int, int]:

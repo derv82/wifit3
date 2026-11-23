@@ -206,6 +206,7 @@ def test_update_channel_gain_first_call_takes_gain_change_branch():
         band_2g=True,
         bw_40plus=False,
         has_ext_lna=False,
+        chan_radar=False,
         rssi_thresh=C.MT76X2_RSSI_GAIN_THRESH_2G,
         low_rssi_thresh=C.MT76X2_LOW_RSSI_GAIN_THRESH_2G,
         avg_rssi_all=-75,
@@ -231,6 +232,7 @@ def test_update_channel_gain_second_call_with_stable_gain_takes_adjust_branch():
         band_2g=True,
         bw_40plus=False,
         has_ext_lna=False,
+        chan_radar=False,
         rssi_thresh=C.MT76X2_RSSI_GAIN_THRESH_2G,
         low_rssi_thresh=C.MT76X2_LOW_RSSI_GAIN_THRESH_2G,
         avg_rssi_all=-30,    # high RSSI → low_gain = 2 (unchanged)
@@ -239,6 +241,23 @@ def test_update_channel_gain_second_call_with_stable_gain_takes_adjust_branch():
     # Adjust branch with no CCA change → no BBP writes at all.
     assert C.MT_BBP_RXO_R14 not in addrs
     assert C.MT_BBP_RXO_R18 not in addrs
+
+
+
+def test_set_gain_val_on_radar_channel_runs_dfs_adjust_agc():
+    """mt76x02_phy_dfs_adjust_agc: AGC4 bits 24-28 += (AGC8[14:9] + 1) / 2, then DFS 31 / 32."""
+    t = FakeTransport({C.MT_BBP_AGC_R8: 0x2A << 9 | 0x5 << 3, C.MT_BBP_AGC_R4: 0x1F2A0000})
+    phy.phy_set_gain_val(t, (0x20, 0x21), 0, False, False, False, True)
+    writes = dict(t.writes)
+    assert writes[C.MT_BBP_AGC_R4] == 0x152A0000      # 0x2A0000 + ((0x2A + 1) >> 1) << 24
+    assert writes[C.MT_BBP_DFS_R31] == 0x004F0307     # (0x2A + 0x2A - 5) << 16 | 0x307
+    assert writes[C.MT_BBP_DFS_R32] == 0x00040071
+
+
+def test_set_gain_val_on_non_radar_channel_skips_dfs_adjust_agc():
+    t = FakeTransport()
+    phy.phy_set_gain_val(t, (0x20, 0x21), 0, False, False, False, False)
+    assert [a for a, _ in t.writes] == [C.MT_BBP_AGC_R8, C.MT_BBP_AGC_R9]
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,6 @@ from wifit3.persist.common import (
     safe_ssid,
 )
 from wifit3.persist.config import Config
-from wifit3.persist.pcap import write_pcap
 
 
 @dataclass(frozen=True)
@@ -32,7 +31,7 @@ class SaveResult:
     was_new: bool
 
 
-def _fresh_path(captures_dir: Path, ssid: str | None, bssid: str, suffix: str) -> Path:
+def fresh_path(captures_dir: Path, ssid: str | None, bssid: str, suffix: str) -> Path:
     """Build captures_dir/<safe_ssid>_<bssid-dashed>_<epoch><suffix>, bumping to
     the smallest free epoch. Distinct content saved in the same second would
     otherwise collide. Dedupe only catches identical content, so structurally
@@ -62,23 +61,6 @@ def _existing(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
 
 
 # ----- Handshake / PMKID ----------------------------------------------------
-
-def _pcap_records_for(ap: AccessPoint, client_mac: str) -> list[tuple[bytes, float]]:
-    """Beacon (once, if available) + every EAPOL frame for the client, each
-    paired with its capture timestamp for the pcap. The beacon has no
-    per-frame time, so it's placed first and stamped with the earliest EAPOL
-    timestamp (or the AP's last-seen beacon time when there's none)."""
-    hs = ap.handshakes.get(client_mac)
-    if hs is None:
-        return []
-    eapol = [(f.raw, f.timestamp) for f in hs.messages]
-    records: list[tuple[bytes, float]] = []
-    if hs.beacon_frame:
-        beacon_ts = min((ts for _, ts in eapol if ts > 0), default=ap.last_seen)
-        records.append((hs.beacon_frame, beacon_ts))
-    records.extend(eapol)
-    return records
-
 
 def _read_anonces(path: Path) -> dict[str, bool]:
     """Each EAPOL line's ANonce, and whether any line for it is authorized (M3/M4)."""
@@ -253,11 +235,6 @@ def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
         return SaveResult(path=existing_path, was_new=False)
 
     target_path = hc.write_handshake(lines)
-
-    if Config.save_pcap:
-        pcap_path = _fresh_path(hc.captures_dir, ap.ssid, ap.bssid, "_handshake.pcap")
-        write_pcap(pcap_path, _pcap_records_for(ap, client_mac))
-
     return SaveResult(path=target_path, was_new=True)
 
 
@@ -330,7 +307,7 @@ def save_wep_key(ap: AccessPoint, key: bytes) -> Optional[SaveResult]:
             return SaveResult(path=p, was_new=False)
 
     captures_dir.mkdir(parents=True, exist_ok=True)
-    path = _fresh_path(captures_dir, ap.ssid, ap.bssid, "_wep_key.txt")
+    path = fresh_path(captures_dir, ap.ssid, ap.bssid, "_wep_key.txt")
     lines = [
         f"SSID:  {ap.ssid or '<hidden>'}",
         f"BSSID: {ap.bssid}",
@@ -361,7 +338,7 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: Optional[str]) -> Optional[Save
             return SaveResult(path=p, was_new=False)
 
     captures_dir.mkdir(parents=True, exist_ok=True)
-    path = _fresh_path(captures_dir, ap.ssid, ap.bssid, "_wps_pin.txt")
+    path = fresh_path(captures_dir, ap.ssid, ap.bssid, "_wps_pin.txt")
     body = (
         f"SSID: {ap.ssid or ''}\n"
         f"BSSID: {ap.bssid}\n"
@@ -398,7 +375,7 @@ def _save_psk(ssid: str | None, bssid: str, psk: str, suffix: str) -> Optional[S
             return SaveResult(path=p, was_new=False)
 
     captures_dir.mkdir(parents=True, exist_ok=True)
-    path = _fresh_path(captures_dir, ssid, bssid, suffix)
+    path = fresh_path(captures_dir, ssid, bssid, suffix)
     body = (
         f"SSID: {ssid or ''}\n"
         f"BSSID: {bssid}\n"

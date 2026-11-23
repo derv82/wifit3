@@ -18,10 +18,12 @@ idx=0.
 """
 from __future__ import annotations
 
+import errno
 import logging
-from typing import Sequence, Union
 
 import usb.core
+
+from wifit3.errors import is_device_gone
 
 from .constants import (
     RTL8187_REQ_GET_REG,
@@ -46,6 +48,8 @@ class RTL8187Transport:
     def __init__(self, dev: usb.core.Device, timeout_ms: int = _DEFAULT_TIMEOUT_MS):
         self.dev = dev
         self.timeout_ms = timeout_ms
+        self.removed = False
+        self._io_dmabuf = bytearray(4)   # priv->io_dmabuf: a failed read returns what is left in it
 
     # ---- register reads -------------------------------------------------
     def read8(self, addr: int, idx: int = 0) -> int:
@@ -59,19 +63,9 @@ class RTL8187Transport:
         b = self._read(addr, 4, idx)
         return b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)
 
-    def read_bytes(self, addr: int, length: int, idx: int = 0) -> bytes:
-        return self._read(addr, length, idx)
-
     def _read(self, addr: int, length: int, idx: int) -> bytes:
-        data = self.dev.ctrl_transfer(
-            RTL8187_REQT_READ,
-            RTL8187_REQ_GET_REG,
-            addr,
-            idx & 0x03,
-            length,
-            self.timeout_ms,
-        )
-        return bytes(data)
+        self.usb_control_msg(RTL8187_REQT_READ, RTL8187_REQ_GET_REG, addr, idx & 0x03, length)
+        return bytes(self._io_dmabuf[:length])
 
     # ---- register writes -----------------------------------------------
     def write8(self, addr: int, val: int, idx: int = 0) -> None:
@@ -92,23 +86,28 @@ class RTL8187Transport:
             idx,
         )
 
-    def write_block(self, addr: int, data: Union[bytes, Sequence[int]], idx: int = 0) -> None:
-        self._write(addr, data, idx)
-
     def _write(self, addr: int, payload, idx: int) -> None:
-        sent = self.dev.ctrl_transfer(
-            RTL8187_REQT_WRITE,
-            RTL8187_REQ_SET_REG,
-            addr,
-            idx & 0x03,
-            payload,
-            self.timeout_ms,
-        )
-        if sent != len(payload):
-            raise IOError(
-                f"control write short: sent {sent}, expected {len(payload)} "
-                f"(addr=0x{addr:04x}, idx={idx})"
-            )
+        self.usb_control_msg(RTL8187_REQT_WRITE, RTL8187_REQ_SET_REG, addr, idx & 0x03, payload)
+
+    def usb_control_msg(self, request_type: int, request: int, value: int, index: int,
+                        data_or_length) -> None:
+        """usb_control_msg through priv->io_dmabuf, one try, result ignored like every rtl8187
+        caller (rtl8225.c:22-113, :183-186). ENODEV marks the device removed and raises."""
+        if self.removed:
+            raise usb.core.USBError("device removed", errno=errno.ENODEV)
+        is_read = isinstance(data_or_length, int)
+        if not is_read:
+            self._io_dmabuf[:len(data_or_length)] = bytes(data_or_length)
+        try:
+            data = self.dev.ctrl_transfer(request_type, request, value, index, data_or_length,
+                                          self.timeout_ms)
+        except usb.core.USBError as e:
+            if is_device_gone(e):
+                self.removed = True
+                raise
+            return
+        if is_read:
+            self._io_dmabuf[:len(data)] = bytes(data)
 
     # ---- read/modify/write helpers -------------------------------------
     def write8_set(self, addr: int, mask: int, idx: int = 0) -> None:

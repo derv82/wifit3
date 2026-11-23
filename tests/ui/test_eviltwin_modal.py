@@ -34,6 +34,14 @@ def test_multi_card_keeps_decoy_channel_and_target_bssid():
     assert m._default_bssid() == "94:83:c4:8c:3f:78"
 
 
+
+def test_multi_card_offers_no_dfs_channel_but_the_target_channel():
+    target = SimpleNamespace(channel=56, bssid="02:00:00:00:00:01")
+    m = _modal(False, target)
+    twin = SimpleNamespace(supported_channels=[6, 36, 52, 56, 100, 149])
+    assert m._channel_options(twin) == [("6", 6), ("36", 36), ("56 (target)", 56), ("149", 149)]
+    assert m._default_channel(twin) == 36                       # CSA decoy is never a DFS channel
+
 def test_plus_one_bumps_last_nibble():
     assert _plus_one("94:83:c4:8c:3f:78") == "94:83:c4:8c:3f:79"
     assert _plus_one("94:83:c4:8c:3f:7f") == "94:83:c4:8c:3f:70"   # wraps f -> 0

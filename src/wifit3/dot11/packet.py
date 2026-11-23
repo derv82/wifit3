@@ -97,7 +97,6 @@ class EapolPacket(Packet):
     replay_counter: Optional[bytes] = None
     nonce: Optional[bytes] = None
     mic: Optional[bytes] = None
-    key_data_len: int = 0
     payload: bytes = b""
     pmkid: Optional[bytes] = None
     akm: Optional[int] = None
@@ -119,7 +118,6 @@ class EapPacket(Packet):
 class WepDataPacket(Packet):
     """A WEP-encrypted Data frame: the IV + leading ciphertext the WEP suite feeds on."""
     iv: Optional[bytes] = None
-    keyid: Optional[int] = None
     cipher: Optional[bytes] = None
 
 

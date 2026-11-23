@@ -1,7 +1,8 @@
 """RTL8822BU USB transport — Realtek rtw88-family vendor control transfers, with
 the 8822b/8821c/8822c register-page-switch mirror.
 
-Every register access is one bRequest 0x05 vendor control transfer: read uses
+Every register access is a bRequest 0x05 vendor control transfer, tried up to
+MAX_USBCTRL_VENDORREQ_TIMES times (usbctrl_vendorreq): read uses
 bmRequestType 0xC0, write 0x40, the 16-bit register address in wValue, wIndex 0.
 [SRC] include/usb_ops.h:19-31, os_dep/linux/usb_ops_linux.c:26-201.
 
@@ -15,9 +16,15 @@ drive the real transport unchanged and byte-check the mirror against the capture
 """
 from __future__ import annotations
 
+import errno
+import logging
+
 import usb.core
 import usb.util
 
+from wifit3.errors import is_device_gone
+
+from .rx import RXDESC_SIZE
 from .constants import (
     MAX_VENDOR_REQ_CMD_SIZE,
     ON_SEC_RANGES,
@@ -28,7 +35,12 @@ from .constants import (
     REG_PAGE_SWITCH_CONFIRM,
 )
 
-CTRL_TIMEOUT_MS = 500
+logger = logging.getLogger(__name__)
+
+CTRL_TIMEOUT_MS = 500  # [SRC] include/usb_ops_linux.h:22
+MAX_USBCTRL_VENDORREQ_TIMES = 10  # [SRC] include/usb_ops_linux.h:29-31, autoconf.h:237-238
+MAX_CONTINUAL_IO_ERR = 4          # [SRC] include/rtw_io.h:265-266
+FW_START_ADDRESS = 0x1000         # [SRC] include/usb_ops_linux.h:19
 RX_BUF_SIZE = 0x8000        # >= the RX-DMA aggregation ceiling
 RX_TIMEOUT_MS = 200
 _BULK_TIMEOUT_MS = 1000
@@ -45,22 +57,77 @@ class Rtl8822buTransport:
         self.dev = dev
         self._bulk_out_ep = bulk_out_ep
         self._in_ep = None  # bulk-IN (RX) endpoint, probed lazily
+        self.continual_io_error = 0
+        self.surprise_removed = False
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---
+    def usbctrl_vendorreq(self, reqtype: int, addr: int, pdata: bytearray) -> None:
+        """[SRC] os_dep/linux/usb_ops_linux.c:26-205: up to 10 tries (one from 0x1000 up), each failure
+        logged, then the 0x4E0 mirror. ENODEV or 5 failures in a row mark the device removed and raise."""
+        if self.surprise_removed:  # RTW_CANNOT_IO, :58-61
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
+        value = addr & 0xFFFF
+        is_read = reqtype == REALTEK_USB_VENQT_READ
+        length = len(pdata)
+        for vendorreq_times in range(1, MAX_USBCTRL_VENDORREQ_TIMES + 1):
+            io_buf = bytearray(length) if is_read else bytearray(pdata)
+            try:
+                result = self.dev.ctrl_transfer(reqtype, REALTEK_USB_VENQT_CMD_REQ, value,
+                                                REALTEK_USB_VENQT_CMD_IDX,
+                                                length if is_read else pdata, CTRL_TIMEOUT_MS)
+            except usb.core.USBError as e:
+                status = -(e.errno or errno.EIO)
+                if is_device_gone(e):
+                    self.surprise_removed = True
+            else:
+                status = len(result) if is_read else result
+                if is_read and status > 0:
+                    io_buf[:status] = bytes(result)
+                if status == length:
+                    if is_read:
+                        pdata[:] = io_buf
+                    self.continual_io_error = 0
+                    break
+            if length in (1, 2, 4):
+                logger.info("reg 0x%x, usb %s %u fail, status:%d value=0x%x, vendorreq_times:%d",
+                            value, "read" if is_read else "write", length, status,
+                            int.from_bytes(pdata, "little"), vendorreq_times)
+            else:
+                logger.info("reg 0x%x, usb %s %u fail, status:%d, vendorreq_times:%d", value,
+                            "read" if is_read else "write", length, status, vendorreq_times)
+            if is_read and status > 0:
+                pdata[:] = io_buf
+            self.continual_io_error += 1
+            if self.continual_io_error > MAX_CONTINUAL_IO_ERR:
+                logger.info("[ERROR] continual_io_error:%d > %d", self.continual_io_error,
+                            MAX_CONTINUAL_IO_ERR)  # core/rtw_io.c:470
+                self.surprise_removed = True
+                break
+            if value >= FW_START_ADDRESS:
+                break
+        if _is_on_sec(value):
+            self._mirror(io_buf[0])
+        if self.surprise_removed and status != length:
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
+
     def _mirror(self, low_byte: int) -> None:
         """The post-access write to 0x4E0. 0x4E0 is not itself ON-section, so it
         does not recurse. [SRC] os_dep/linux/usb_ops_linux.c:183-200."""
-        self.dev.ctrl_transfer(REALTEK_USB_VENQT_WRITE, REALTEK_USB_VENQT_CMD_REQ,
-                               REG_PAGE_SWITCH_CONFIRM, REALTEK_USB_VENQT_CMD_IDX,
-                               bytes([low_byte & 0xFF]), CTRL_TIMEOUT_MS)
+        try:
+            status = self.dev.ctrl_transfer(REALTEK_USB_VENQT_WRITE, REALTEK_USB_VENQT_CMD_REQ,
+                                            REG_PAGE_SWITCH_CONFIRM, REALTEK_USB_VENQT_CMD_IDX,
+                                            bytes([low_byte & 0xFF]), CTRL_TIMEOUT_MS)
+        except usb.core.USBError as e:
+            status = -(e.errno or errno.EIO)
+        if status == 1:
+            self.continual_io_error = 0
+        else:
+            logger.info("reg 0x%x, usb write 1 fail, status:%d", REG_PAGE_SWITCH_CONFIRM, status)
 
     def _read(self, addr: int, length: int) -> bytes:
-        ret = bytes(self.dev.ctrl_transfer(
-            REALTEK_USB_VENQT_READ, REALTEK_USB_VENQT_CMD_REQ,
-            addr & 0xFFFF, REALTEK_USB_VENQT_CMD_IDX, length, CTRL_TIMEOUT_MS))
-        if _is_on_sec(addr):
-            self._mirror(ret[0] if ret else 0)
-        return ret
+        pdata = bytearray(length)
+        self.usbctrl_vendorreq(REALTEK_USB_VENQT_READ, addr, pdata)
+        return bytes(pdata)
 
     def read8(self, addr: int) -> int:
         return int.from_bytes(self._read(addr, 1), "little")
@@ -75,11 +142,7 @@ class Rtl8822buTransport:
         data = bytes(data)
         if len(data) > MAX_VENDOR_REQ_CMD_SIZE:
             raise ValueError(f"vendor write {len(data)} > {MAX_VENDOR_REQ_CMD_SIZE} B")
-        self.dev.ctrl_transfer(
-            REALTEK_USB_VENQT_WRITE, REALTEK_USB_VENQT_CMD_REQ,
-            addr & 0xFFFF, REALTEK_USB_VENQT_CMD_IDX, data, CTRL_TIMEOUT_MS)
-        if _is_on_sec(addr):
-            self._mirror(data[0] if data else 0)
+        self.usbctrl_vendorreq(REALTEK_USB_VENQT_WRITE, addr, bytearray(data))
 
     def write8(self, addr: int, val: int) -> None:
         self.writeN(addr, (val & 0xFF).to_bytes(1, "little"))
@@ -92,7 +155,22 @@ class Rtl8822buTransport:
 
     # --- bulk OUT (FW/TX) / bulk IN (RX) -------------------------------------
     def bulk_out(self, data: bytes) -> None:
+        """usb_write_port_not_xmitframe (FW download, H2C). [SRC] hal/rtl8822b/usb/rtl8822bu_halmac.c:57-128."""
+        if self.surprise_removed:  # not in the C, which has no RTW_CANNOT check here
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
         self.dev.write(self._bulk_out_ep, data, _BULK_TIMEOUT_MS)
+
+    def usb_write_port(self, data: bytes) -> None:
+        """TX: a failed write drops the frame. [SRC] os_dep/linux/usb_ops_linux.c:567-700."""
+        if self.surprise_removed:  # RTW_CANNOT_TX, :581-589
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
+        try:
+            self.dev.write(self._bulk_out_ep, data, _BULK_TIMEOUT_MS)
+        except usb.core.USBError as e:
+            logger.info("usb_write_port, status=%d", -(e.errno or errno.EIO))  # :673
+            if is_device_gone(e):
+                self.surprise_removed = True
+                raise
 
     def _bulk_in_ep(self) -> int:
         if self._in_ep is not None:
@@ -110,8 +188,10 @@ class Rtl8822buTransport:
     def bulk_in(self, size: int = RX_BUF_SIZE, timeout: int = RX_TIMEOUT_MS):
         """One blocking bulk-IN read. None on a benign timeout (quiet channel).
         WinUSB reports errno 10060 with no 'timeout' substring, so catch the type."""
+        if self.surprise_removed:  # RTW_CANNOT_RX. usb_ops_linux.c:1012
+            raise usb.core.USBError("surprise removed", errno=errno.ENODEV)
         try:
-            return bytes(self.dev.read(self._bulk_in_ep(), size, timeout))
+            data = bytes(self.dev.read(self._bulk_in_ep(), size, timeout))
         except usb.core.USBTimeoutError:
             return None
         except usb.core.USBError as e:
@@ -119,6 +199,9 @@ class Rtl8822buTransport:
                     or "timed out" in str(e).lower() or "timeout" in str(e).lower()):
                 return None
             raise
+        if len(data) >= RXDESC_SIZE:  # usb_read_port_complete. usb_ops_linux.c:945
+            self.continual_io_error = 0
+        return data
 
     def close(self) -> None:
         usb.util.dispose_resources(self.dev)

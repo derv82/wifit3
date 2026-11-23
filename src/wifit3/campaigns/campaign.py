@@ -75,7 +75,7 @@ class Campaign:
             try:
                 if self.array is not None and self.iface is None:
                     logger.warning("campaign %r: no card can reach channel %s; aborting",
-                                   self.key, getattr(self.ap, "channel", "?"))
+                                   self.key, self.ap.channel)
                 else:
                     await self._loop()
             except asyncio.CancelledError:

@@ -14,6 +14,7 @@ from wifit3.ui.screens.focus_v2.art import display_name
 from wifit3.campaigns.eviltwin import (
     EvilTwinInput, PuntMode, default_punt_modes, csa_target_channel,
 )
+from wifit3.dot11.chan import is_dfs_channel
 from wifit3.dot11.pmf import PmfPosture
 
 _MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
@@ -146,7 +147,12 @@ class EvilTwinInputModal(ModalScreen[Optional[EvilTwinInput]]):
         if self._single:                        # locked to the target: one card can't host off-channel
             return [(self._channel_label(self.target.channel), self.target.channel)]
         chans = twin.supported_channels if twin else [self.target.channel]
-        return [(self._channel_label(c), c) for c in chans]
+        options = []
+        for c in chans:
+            if is_dfs_channel(c) and c != self.target.channel:   # DFS: only where the target AP transmits
+                continue
+            options.append((self._channel_label(c), c))
+        return options
 
     def _channel_label(self, channel: int) -> str:
         return f"{channel} (target)" if channel == self.target.channel else str(channel)

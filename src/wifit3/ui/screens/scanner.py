@@ -31,10 +31,13 @@ from wifit3.watchers.ap_watcher import (
 
 from ..capture_log import DECLOAK_METHOD_LABELS, saved_psk_markup
 from ..encryption_format import EncryptionSummary, wep_key_hex_and_ascii
+from wifit3.dot11.chan import is_dfs_channel
+from wifit3.wlan.array import WlanArray
 from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
 from .filter import FilterBar, ScanFilter
+from ..modals.nickname import NicknameModal
 
 if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
@@ -76,7 +79,7 @@ class _ChannelReadout(HeaderClock):
     def _poll(self) -> None:
         array = self.app.array
         members = array.members if array else []
-        channels = " | ".join(f"CH:{m.current_channel:>3}" for m in members)
+        channels = " | ".join(f"CH:{str(m.current_channel or ''):>3}" for m in members)
         if channels != self.channels:
             self.channels = channels
             self.parent.update_channel_layout(channels)
@@ -136,7 +139,7 @@ class ScannerView(Screen):
     app: "WifiteApp"
 
     HORIZONTAL_BREAKPOINTS = [
-        (0, "-narrow"), (67, "-compact"), (71, "-medium"), (76, "-large"), (83, "-wide"),
+        (0, "-narrow"), (76, "-compact"), (84, "-medium"), (89, "-large"), (98, "-wide"),
     ]
 
     CSS = """
@@ -147,19 +150,27 @@ class ScannerView(Screen):
     ScannerView.-narrow #filter-channels-label { display: none; }
     ScannerView.-compact #filter-channels-label,
     ScannerView.-medium #filter-channels-label { width: 2; }
+    ScannerView.-narrow #filter-power-label,
+    ScannerView.-compact #filter-power-label,
+    ScannerView.-medium #filter-power-label,
+    ScannerView.-large #filter-power-label { display: none; }
+    ScannerView.-medium #filter-power-short-label,
+    ScannerView.-large #filter-power-short-label { display: block; }
     """
 
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
-        Binding("c", "change_channel", "Channel Filter", show=True),
+        Binding("v", "open_vault", "Vault", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("e", "focus_encryption", "Encryption", show=True),
-        Binding("s", "cycle_sort", "Sort Col", show=True),
-        Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
+        Binding("c", "change_channel", "Channels", show=True),
+        Binding("p", "focus_power", "Power", show=True),
         Binding("f", "focus_filter", "Filter", show=True),
         Binding("/", "focus_filter", "Filter", show=False),
-        Binding("l", "toggle_log", "Toggle Log", show=True),
-        Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
-        Binding("v", "open_vault", "Vault", show=True),
+        Binding("s", "cycle_sort", "Sort Col", show=True),
+        Binding("o", "toggle_sort_dir", "Sort Order", show=True),
+        Binding("l", "toggle_log", "Toggle Log", show=False),
+        Binding("w", "wps_pbc_mode", "WPS PBC", show=False),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
         Binding("g", "scroll_home", "Top", show=False, priority=True),
@@ -241,7 +252,8 @@ class ScannerView(Screen):
         if self.app.screen is not self:
             return
         await array.start_hopping(
-            channels=self._channel_filter, interval=0.25
+            channels=self._channel_filter, interval=0.25,
+            include_dfs_channels=Config.enable_dfs_channels,
         )
 
     # ----- Per-tick refresh --------------------------------------------------
@@ -314,6 +326,7 @@ class ScannerView(Screen):
         row = APRow(
             bssid=ap.bssid,
             ssid=ap.ssid,
+            nickname=Config.nickname(ap.bssid),
             guessid=guessid,
             channel=ap.channel,
             signal=ap.signal,
@@ -357,7 +370,7 @@ class ScannerView(Screen):
             ap.wps, ap.wps_locked, ap.identity.summary,
             wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
             clients, is_stale, beacon_flash, guessid,
-            vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
+            vault.revision(ap.bssid), Config.is_silenced(ap.bssid), Config.nickname(ap.bssid),
         )
 
     def _evict_expired_aps(self) -> None:
@@ -393,7 +406,7 @@ class ScannerView(Screen):
         ap_label = escape(ev.ssid or ev.bssid)
         if isinstance(ev, HandshakeCaptured):
             msg = (
-                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
+                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.messages_label}) on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, UncrackableHandshakeSeen):
@@ -552,6 +565,12 @@ class ScannerView(Screen):
         self.app.target_ap = ap
         self.app.push_screen(self.app.focus_view)
 
+    def action_set_nickname(self) -> None:
+        ap = self.selected_ap()
+        if ap is None:
+            return
+        self.app.push_screen(NicknameModal(ap.ssid, ap.bssid))
+
     def action_open_vault(self) -> None:
         self.app.action_toggle_vault()
 
@@ -560,6 +579,9 @@ class ScannerView(Screen):
 
     def action_focus_encryption(self) -> None:
         self.query_one(FilterBar).focus_encryption()
+
+    def action_focus_power(self) -> None:
+        self.query_one(FilterBar).focus_power()
 
     def action_cycle_sort(self) -> None:
         table = self.query_one("#ap-table", APTable)
@@ -591,13 +613,13 @@ class ScannerView(Screen):
             self._write_log("[bold red][!] No active interface.[/bold red]")
             return
 
-        supported = array.supported_channels
+        supported = self._selectable_channels(array)
         if not supported:
             self._write_log("[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]")
             return
 
         dialog = ChannelFilterDialog(
-            supported_channels=list(supported),
+            supported_channels=supported,
             current_filter=self._channel_filter,
         )
         self.app.push_screen(dialog, self._on_channel_filter_result)
@@ -612,16 +634,26 @@ class ScannerView(Screen):
         self.query_one(FilterBar).set_channels(self._channel_filter)
         self.query_one("#ap-table", APTable).focus()
 
+    @staticmethod
+    def _selectable_channels(array: WlanArray) -> List[int]:
+        """The array's channels, without DFS channels unless the DFS pref is on."""
+        channels = []
+        for ch in array.supported_channels:
+            if Config.enable_dfs_channels or not is_dfs_channel(ch):
+                channels.append(ch)
+        return channels
+
     async def _apply_channel_filter(self, channels: List[int]) -> None:
         """Re-point the hopper; a full-band pick becomes None so hotplug keeps re-spreading it."""
         array = self.app.array
         if not array:
             return
-        full_band = set(channels) == set(array.supported_channels)
+        full_band = set(channels) == set(self._selectable_channels(array))
         self._channel_filter = None if full_band else channels
         await array.stop_hopping()
         dropped = self._prune_aps_outside(channels)
-        await array.start_hopping(channels=self._channel_filter, interval=0.25)
+        await array.start_hopping(channels=self._channel_filter, interval=0.25,
+                                  include_dfs_channels=Config.enable_dfs_channels)
 
         pieces = [
             f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"

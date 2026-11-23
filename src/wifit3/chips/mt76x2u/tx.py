@@ -21,6 +21,10 @@ from __future__ import annotations
 import logging
 import struct
 
+import usb.core
+
+from wifit3.errors import is_device_gone
+
 from .constants import EP_OUT_AC_VO
 from .transport import MT76x2UTransport
 
@@ -235,7 +239,7 @@ def stamp_seq_ctrl(frame: bytearray, seqno: int) -> int:
 
 
 async def inject_frame(transport: MT76x2UTransport, frame_802_11: bytes,
-                       ack: bool = False, channel: int = 0) -> bool:
+                       ack: bool = False, channel: int = 0) -> None:
     """Send a raw 802.11 frame via bulk-OUT EP 0x07 (AC_VO).
 
     `channel` is the currently-tuned channel; it selects the TXWI rate band (OFDM
@@ -248,10 +252,11 @@ async def inject_frame(transport: MT76x2UTransport, frame_802_11: bytes,
             EP_OUT_AC_VO, blob, timeout_ms=500,
         )
     except Exception as e:
+        if isinstance(e, usb.core.USBError) and is_device_gone(e):
+            raise
         logger.error("TX inject failed: %s", e)
-        return False
+        return
     if written != len(blob):
         logger.error("TX inject short write %d/%d", written, len(blob))
-        return False
+        return
     logger.debug("TX inject sent %d bytes on EP 0x%02x", written, EP_OUT_AC_VO)
-    return True

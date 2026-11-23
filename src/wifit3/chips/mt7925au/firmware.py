@@ -12,6 +12,7 @@ connac3-specific bits live in mcu.py (txd[1]) and mcu.init_download (the extra
 import asyncio
 import logging
 import struct
+import time
 from pathlib import Path
 
 import usb.core
@@ -58,8 +59,8 @@ class MT7925AUFirmwareLoader:
             logger.debug(f"vendor-interface claim: {e}")
         return None
 
-    async def load_firmware(self) -> bool:
-        logger.debug("Starting MT7925AU firmware upload...")
+    async def power_on(self) -> bool:
+        """mt7925u_probe after the warm check: MCU power-on and DMA init, run once per bring-up."""
         iface = self._claim_vendor_interface()
         logger.debug(f"Claimed vendor-specific interface {iface}")
         await asyncio.sleep(0.2)
@@ -101,7 +102,11 @@ class MT7925AUFirmwareLoader:
         # precedes dma_init) so a read is posted on EP 0x84 when RX_DMA comes up.
         self.transport.start_rx()
         self._dma_init()
+        return True
 
+    async def load_firmware(self) -> bool:
+        """mt7925u_mcu_init's firmware download; mt7925_init_hardware retries it after init_reset."""
+        logger.debug("Starting MT7925AU firmware upload...")
         # mt7925u_mcu_init: mt76_set(MT_UDMA_TX_QSEL, MT_FW_DL_EN) before any MCU cmd.
         self.transport.set_bits(MT_UDMA_TX_QSEL, MT_FW_DL_EN)
 
@@ -209,6 +214,29 @@ class MT7925AUFirmwareLoader:
             self.transport.write_reg32(MT_SSUSB_EPCTL_CSR_EP_RST_OPT,
                                        v & ~MT_EPCTL_EP_RST_OPT_MASK)
 
+    def wfsys_reset(self) -> None:
+        """mt792xu_wfsys_reset (mt792x_usb.c:237-267): reset the WiFi subsystem."""
+        t = self.transport
+        self._epctl_rst_opt()
+        val = t.read_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST)
+        t.write_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST, val | MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH)
+        time.sleep(0.00002)                                                # usleep_range(10, 20)
+        val = t.read_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST)
+        t.write_reg32_uhw(MT_CBTOP_RGU_WF_SUBSYS_RST, val & ~MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH)
+        t.write_reg32_uhw(MT_UDMA_CONN_INFRA_STATUS_SEL, 0)
+
+        for _ in range(MT792x_WFSYS_INIT_RETRY_COUNT):
+            if t.read_reg32_uhw(MT_UDMA_CONN_INFRA_STATUS) & MT_UDMA_CONN_WFSYS_INIT_DONE:
+                return
+            time.sleep(0.1)
+        raise BringUpError("WFSYS reset", "please unplug/replug the device and try again")
+
+    async def init_reset(self) -> None:
+        """mt792xu_init_reset (mt792x_usb.c:270-285)."""
+        await self.transport.stop_rx()
+        self.wfsys_reset()
+        self.transport.start_rx()
+
     def dma_need_reinit(self) -> bool:
         """mt792x_dma_need_reinit (mt792x.h:357): True when the WFDMA NEED_REINIT latch is
         CLEAR. `_dma_init` sets it, so a warm chip whose firmware is still running reads it
@@ -237,6 +265,13 @@ class MT7925AUFirmwareLoader:
         resp = await self.transport.send_mcu_command(*mcu.patch_sem_ctrl(get=True))
         if resp is None:
             logger.error("PATCH_SEM_CONTROL get: no response")
+            return False
+        sem = resp[MT7925_RXD_STATUS_OFF]
+        if sem == PATCH_IS_DL:
+            logger.debug("ROM patch already loaded.")
+            return True
+        if sem != PATCH_NOT_DL_SEM_SUCCESS:
+            logger.error("Failed to get patch semaphore")
             return False
 
         try:

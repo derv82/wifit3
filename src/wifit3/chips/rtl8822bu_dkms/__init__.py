@@ -1,7 +1,4 @@
-"""RTL8822BU vendor/DKMS driver package: its VID:PIDs, readable without importing driver.py.
-
-VID:PID set kept in lockstep with the mainline sibling ``chips/rtl8822bu`` (all one silicon).
-"""
+"""RTL8822BU vendor/DKMS driver package: its VID:PIDs, readable without importing driver.py."""
 from wifit3.models.device_id import DeviceID
 from wifit3.chips.products import ASUS, Buffalo, CCandC, DLink, Edimax, Elecom, Hawking, Linksys, LiteOn, Mercusys, Netgear, TPLink, TRENDnet
 

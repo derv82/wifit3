@@ -49,6 +49,7 @@ USB_MODE_AUTORUN = 17   # 0x11 — rt2800usb_autorun_detect probe (IN read of fw
 # Vendor-request timeouts. [SRC] rt2x00usb.h:30-31
 REGISTER_TIMEOUT_MS = 100
 REGISTER_TIMEOUT_FIRMWARE_MS = 1000
+EEPROM_TIMEOUT_MS = 2000
 
 # ----------------------------------------------------------------------
 # rt2800 silicon IDs returned by MAC_CSR0[31:16].  [SRC] rt2x00.h:149-165
@@ -219,8 +220,10 @@ MAC_SYS_CTRL_RESET_BBP = 1 << 1
 MAC_SYS_CTRL_ENABLE_TX = 1 << 2
 MAC_SYS_CTRL_ENABLE_RX = 1 << 3
 
-# Busy-loop budgets (kernel uses REGISTER_BUSY_COUNT = 100, sleep 1ms).
+# rt2x00.h:1041-1043. rt2x00usb_regbusy_read polls REGISTER_USB_BUSY_COUNT times.
 REGISTER_BUSY_COUNT = 100
+REGISTER_USB_BUSY_COUNT = 20
+REGISTER_BUSY_DELAY = 100       # us
 
 # ----------------------------------------------------------------------
 # Register addresses used by M2b-2 (rt2800_init_registers).  All from

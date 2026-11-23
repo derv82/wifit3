@@ -14,6 +14,7 @@ def _isolate_config(_test_dir, monkeypatch):
     Config.scanner_sort = "signal"
     Config.scanner_sort_reverse = True
     Config.silenced_bssids = []
+    Config.nicknames = None
     Config.hide_silenced = False
     Config.wps_auto_pbc = True
     Config.auto_crack = ToolName.CPU_CRACK

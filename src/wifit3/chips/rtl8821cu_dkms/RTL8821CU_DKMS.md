@@ -31,6 +31,9 @@ to the Wi-Fi PID `0bda:c820` before any driver binds — so a freshly-plugged ca
 Wifit3 finds nothing until the discovery layer handles the switch (a manager-level gap that hits most
 Realtek USB adapters). The offline port and gate are unaffected; the pcap was captured in Wi-Fi mode.
 
+**DFS channels need no extra DIG path.** phydm's DFS DIG bounds (`phydm_dig_dfs_mode_en`) only engage
+with DFS master on [SRC] phydm_dig.c:1328, an AP-mode feature; monitor mode never takes them.
+
 **`_dc_cancellation` is deliberately not called** (`dm.phy_init_haldm`). The cal stops then restarts
 the 320 MHz BB clock (`_stop_ck320`, `0x8b4[6]`) for its DC measurement, and that restart
 intermittently fails to re-lock the demod → `RXFF_PTR=0`, OFDM false-alarm flood, dead RX on both

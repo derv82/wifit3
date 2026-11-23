@@ -118,6 +118,15 @@ MT_WL_TX_EN          = 0x00800000   # BIT(23), :449
 MT_SSUSB_EPCTL_CSR_EP_RST_OPT = 0x74011890
 MT_EPCTL_EP_RST_OPT_MASK      = (0x3F << 4) | (0x7 << 20)   # 0x007003f0
 
+# mt792xu_wfsys_reset (mt792x_usb.c:237-267) and mt7925_init_hardware's retry (init.c:128-139).
+MT_CBTOP_RGU_WF_SUBSYS_RST               = 0x70002600
+MT_CBTOP_RGU_WF_SUBSYS_RST_WF_WHOLE_PATH = 1 << 0
+MT_UDMA_CONN_INFRA_STATUS                = 0x74000a20
+MT_UDMA_CONN_INFRA_STATUS_SEL            = 0x74000a24
+MT_UDMA_CONN_WFSYS_INIT_DONE             = 1 << 22
+MT792x_WFSYS_INIT_RETRY_COUNT            = 2
+MT792x_MCU_INIT_RETRY_COUNT              = 10
+
 # ===========================================================================
 # Firmware download (mt7925_run_firmware -> mt792x_load_firmware ->
 # mt76_connac2_load_patch / mt76_connac2_load_ram). Container = connac2 format.
@@ -279,12 +288,9 @@ MT_TX_NORMAL = 0
 
 # Monitor-vif TX context (mt7925/main.c:375-392, mt792x_mac.c). The monitor link is
 # vif idx 0: omac_idx 0, band_idx 0xff (masked to TGID=3), wcid = MT792x_WTBL_RESERVED
-# (19). basic_rates_idx = MT792x_BASIC_RATES_TBL + 4 because the phy's default chandef
-# lands on 5 GHz (the last band with world-enabled channels; mac80211.c:395-418), so
-# main.c:382 takes the non-2.4GHz branch. Constant for the monitor vif's lifetime.
+# (19). basic_rates_idx is per band (main.c:382-385): driver._inject_frame.
 MON_TX_OMAC_IDX  = 0
 MON_TX_BAND_IDX  = 0xff
-MON_TX_RATE_IDX  = 11 + 4   # MT792x_BASIC_RATES_TBL(mt792x.h:36) + 4 = 15
 
 # ===========================================================================
 # Post-boot init (mt7925_mac_init, mt792x_mac_init_band). Addresses/bits verbatim

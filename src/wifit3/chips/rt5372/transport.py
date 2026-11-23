@@ -32,15 +32,15 @@ import time
 
 import usb.core
 
+from wifit3.errors import is_device_gone
+
 from ..log_trace import TRACE
 from . import constants as C
 from .constants import get_field, set_field
 
 logger = logging.getLogger(__name__)
 
-_LIBUSB_NO_DEVICE = -4        # LIBUSB_ERROR_NO_DEVICE
 _TRANSPORT_FILE = os.path.normcase(__file__)
-_VENDOR_REQ_MAX_ATTEMPTS = 3  # kernel does ~2 (each usb_control_msg blocks); we DON'T busy-spin
 
 
 def _trace_caller() -> str:
@@ -73,58 +73,56 @@ def _trace_xfer(request, requesttype, value, index, data, result) -> None:
         logger.trace("[%-20s] EEPROM <%dB>", caller, len(bytes(result)))
 
 
-def _is_device_gone(err: usb.core.USBError) -> bool:
-    """True only when the device is *truly* gone — retry everything else.
-
-    Mirrors the kernel's intent (rt2x00usb_check_usb_error stops on a removed device)
-    but mapped to libusb reality: only ``LIBUSB_ERROR_NO_DEVICE (-4)`` / ``ENODEV`` mean
-    physically-gone. NOT ``LIBUSB_ERROR_NOT_FOUND (-5)`` / ``ENOENT`` — on Windows/WinUSB
-    that's a *transient* stale-handle / mid-enumeration hiccup, not a removed device, so
-    retrying it through the deadline is what recovers a warm bring-up (the kernel's literal
-    ``-ENOENT`` is a URB-unlink, a different beast). Matches chips/mt76x0u's
-    ``_is_fatal_usb_error``; unknown codes default to transient (the deadline bounds it)."""
-    if getattr(err, "errno", None) == errno.ENODEV:
-        return True
-    return getattr(err, "backend_error_code", None) == _LIBUSB_NO_DEVICE
-
-
 class RT5372Transport:
-    def __init__(self, dev: usb.core.Device, timeout_ms: int = C.REGISTER_TIMEOUT_FIRMWARE):
+    def __init__(self, dev: usb.core.Device):
         self.dev = dev
-        self.timeout_ms = timeout_ms
+        self.device_present = True   # DEVICE_STATE_PRESENT
+        self.device_started = False  # DEVICE_STATE_STARTED, set once bring-up is done
+        self.num_proto_errs = 0
 
     # =====================================================================
     # rt2x00usb USB layer  [SRC rt2x00usb.c, rt2x00usb.h]
     # =====================================================================
-    def _vendor_request(self, requesttype, request, value, index, data_or_length):
-        """One vendor control transfer with a small, BOUNDED transient-error retry
-        [SRC rt2x00usb.c:45-80 rt2x00usb_vendor_request]. The kernel loops until a
-        deadline, but each ``usb_control_msg`` BLOCKS ~timeout on a NAK, so it only
-        does ~2 tries. pyusb/libusb *fast-fails* on a pipe/IO error, so a deadline
-        loop becomes a busy-spin (565 retries in 1 s, observed wedging a chip — we may
-        have been machine-gunning a struggling endpoint into the hard WPDMA fault).
-        So: cap at ``_VENDOR_REQ_MAX_ATTEMPTS`` with real backoff, never spin. Recovers
-        the warm-boot NAK (the extra capture-2/3 boot signal) without the hammering.
-        Under the pcap gate the replay never errors, so attempt 0 returns immediately."""
-        last: usb.core.USBError | None = None
-        for attempt in range(_VENDOR_REQ_MAX_ATTEMPTS):
+    def rt2x00usb_check_usb_error(self, error: usb.core.USBError) -> bool:
+        """[SRC rt2x00usb.c:23-40]. libusb has no kernel -ENOENT (its NOT_FOUND is a transient
+        Windows stale handle) and reports -EPROTO as EIO."""
+        if is_device_gone(error):
+            return True
+        if not self.device_started:
+            return False
+        if getattr(error, "errno", None) in (errno.EIO, errno.ETIMEDOUT):
+            self.num_proto_errs += 1
+        else:
+            self.num_proto_errs = 0
+        return self.num_proto_errs > 3
+
+    def _vendor_request(self, requesttype, request, value, index, data_or_length,
+                        timeout_ms: int = C.REGISTER_TIMEOUT):
+        """rt2x00usb_vendor_request: retries until ``timeout_ms`` passes; a failure is logged and
+        returns None, or raises ENODEV once the device is gone. [SRC rt2x00usb.c:45-80]"""
+        if not self.device_present:
+            raise usb.core.USBError("device not present", errno=errno.ENODEV)
+        expire = time.monotonic() + timeout_ms / 1000
+        while True:
             try:
                 result = self.dev.ctrl_transfer(requesttype, request, value, index,
-                                                data_or_length, self.timeout_ms)
-                if attempt:
-                    logger.info("rt5372: vendor req 0x%02x off 0x%04x recovered on attempt %d",
-                                request, index, attempt + 1)
+                                                data_or_length, timeout_ms // 2)
+            except usb.core.USBError as e:
+                error = e
+                if self.rt2x00usb_check_usb_error(e):
+                    self.device_present = False
+                    break
+            else:
                 if logger.isEnabledFor(TRACE):
                     _trace_xfer(request, requesttype, value, index, data_or_length, result)
                 return result
-            except usb.core.USBError as e:
-                last = e
-                if _is_device_gone(e) or attempt == _VENDOR_REQ_MAX_ATTEMPTS - 1:
-                    break
-                time.sleep(0.005 * (attempt + 1))     # 5ms, 10ms — backoff, not a spin
-        logger.warning("rt5372: vendor req 0x%02x off 0x%04x failed after %d attempts: %s",
-                       request, index, _VENDOR_REQ_MAX_ATTEMPTS, last)
-        raise last
+            if time.monotonic() >= expire:
+                break
+        logger.error("Vendor Request 0x%02x failed for offset 0x%04x with error %d",
+                     request, index, -(error.errno or errno.EIO))
+        if not self.device_present:
+            raise usb.core.USBError("device not present", errno=errno.ENODEV) from error
+        return None
 
     def register_multiread(self, offset: int, length: int) -> bytes:
         """MULTI_READ chunked to CSR_CACHE_SIZE [SRC rt2x00usb.c:114-143
@@ -136,6 +134,9 @@ class RT5372Transport:
             bsize = min(C.CSR_CACHE_SIZE, remaining)
             data = self._vendor_request(C.USB_VENDOR_REQUEST_IN, C.USB_MULTI_READ,
                                         0, off, bsize)
+            if data is None:          # the C stops; register_read's reg stays 0 (rt2x00usb.c:107-108, rt2x00usb.h:189)
+                out += bytes(remaining)
+                break
             out += bytes(data)
             off += bsize
             remaining -= bsize
@@ -148,8 +149,9 @@ class RT5372Transport:
         remaining = len(data)
         while remaining > 0:
             bsize = min(C.CSR_CACHE_SIZE, remaining)
-            self._vendor_request(C.USB_VENDOR_REQUEST_OUT, C.USB_MULTI_WRITE,
-                                 0, off, data[pos:pos + bsize])
+            if self._vendor_request(C.USB_VENDOR_REQUEST_OUT, C.USB_MULTI_WRITE,
+                                    0, off, data[pos:pos + bsize]) is None:
+                break
             off += bsize
             pos += bsize
             remaining -= bsize
@@ -171,7 +173,8 @@ class RT5372Transport:
             reg = self.register_read(offset)
             if not get_field(reg, field_mask):
                 return True, reg
-            # kernel udelay(REGISTER_BUSY_DELAY) here; replay/HW needs no spin
+            time.sleep(C.REGISTER_BUSY_DELAY / 1_000_000)   # udelay(us)
+        logger.error("Indirect register access failed: offset=0x%.08x, value=0x%.08x", offset, reg)
         return False, 0xFFFFFFFF
 
     def eeprom_read(self, length: int) -> bytes:
@@ -181,8 +184,9 @@ class RT5372Transport:
         the USB_EEPROM_READ path (see eeprom.read_eeprom_efuse). Ported
         for a future 93C66-EEPROM rt2x00 member; no wire exercises it.
         """
-        return bytes(self._vendor_request(C.USB_VENDOR_REQUEST_IN, C.USB_EEPROM_READ,
-                                          0, 0, length))
+        data = self._vendor_request(C.USB_VENDOR_REQUEST_IN, C.USB_EEPROM_READ,
+                                    0, 0, length, C.EEPROM_TIMEOUT)
+        return bytes(length) if data is None else bytes(data)
 
     def autorun_detect(self) -> int:
         """1 if the NIC is in AutoRun mode (skip FW upload), else 0 [SRC
@@ -193,15 +197,18 @@ class RT5372Transport:
         it.
         """
         data = self._vendor_request(C.USB_VENDOR_REQUEST_IN, C.USB_DEVICE_MODE,
-                                    C.USB_MODE_AUTORUN, 0, 4)
+                                    C.USB_MODE_AUTORUN, 0, 4, C.REGISTER_TIMEOUT_FIRMWARE)
+        if data is None:
+            raise IOError("rt5372: autorun detect failed")   # rt2800usb.c:196-197
         fw_mode = int.from_bytes(bytes(data), "little")
         return 1 if (fw_mode & 0x00000003) == 2 else 0
 
-    def device_mode_sw(self, value: int, offset: int = 0) -> None:
+    def device_mode_sw(self, value: int, offset: int = 0,
+                       timeout_ms: int = C.REGISTER_TIMEOUT) -> int | None:
         """USB_DEVICE_MODE write with no data phase — the FW-load and reset
         signals [SRC rt2x00usb.h:149-158 rt2x00usb_vendor_request_sw]."""
-        self._vendor_request(C.USB_VENDOR_REQUEST_OUT, C.USB_DEVICE_MODE,
-                             value, offset, b"")
+        return self._vendor_request(C.USB_VENDOR_REQUEST_OUT, C.USB_DEVICE_MODE,
+                                    value, offset, b"", timeout_ms)
 
     # =====================================================================
     # rt2800 indirect-register layer  [SRC rt2800lib.c]

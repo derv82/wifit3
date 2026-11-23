@@ -14,7 +14,8 @@ from wifit3.persist.config import Config, ConfigError
 from wifit3.vault.tools.hashtopolis_api import (AccessGroup, HashtopolisApi, HashtopolisError,
                                                 ServerFile)
 
-_ACCESS_KEY_HINT = "[dim]Use port 8080 (legacy API), [i]not 4200[/i]: Users → API Management[/dim]"
+_SERVER_URL_HINT = "[dim]Backend port (8080), not the web UI (4200)[/dim]"
+_ACCESS_KEY_HINT = "[dim]Account → API Keys, or legacy Users → API Management[/dim]"
 _REFRESH_HINT = "[dim]Refresh to list wordlists[/dim]"
 
 
@@ -59,6 +60,7 @@ class HashtopolisConfigModal(ModalScreen[dict]):
     #hashtopolis-access-key-label { width: 1fr; }
     #hashtopolis-test-row { margin-top: 1; }
     #hashtopolis-test-result { width: 1fr; margin-left: 1; }
+    .hashtopolis-hint { padding-left: 3; }
     .hashtopolis-target-label { width: 10; height: 3; content-align: left middle; }
     .hashtopolis-target-row Select { width: 1fr; }
     #hashtopolis-buttons { align: right middle; }
@@ -95,12 +97,13 @@ class HashtopolisConfigModal(ModalScreen[dict]):
         yield Label("Server URL:")
         yield Input(settings.url or "", placeholder="http://192.168.1.10:8080",
                     id="hashtopolis-url")
+        yield Label(_SERVER_URL_HINT, classes="hashtopolis-hint")
         with Horizontal():
             yield Label("Access key:", id="hashtopolis-access-key-label")
             yield Button("reveal", compact=True, id="hashtopolis-reveal")
         yield Input(settings.access_key or "", password=True,
                     id="hashtopolis-access-key")
-        yield Label(_ACCESS_KEY_HINT)
+        yield Label(_ACCESS_KEY_HINT, classes="hashtopolis-hint")
 
     def _compose_test(self) -> ComposeResult:
         with Horizontal(id="hashtopolis-test-row"):

@@ -15,7 +15,7 @@ the EFUSE walker) replays with zero reimplementation.
 
 RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS.
-  * NEVER copy logic from chips/rt2800usb/ — it is the imitation port, highly inaccurate per the
+  * NEVER copy logic from chips/rt3572/ — it is the imitation port, highly inaccurate per the
     Pcap Replay, that this clean-room driver replaces (and has a CONFIRMED EFUSE word-vs-byte
     addressing bug). Port from the kernel C in driver_sources/rt2x00-source-v6.18/ and let THIS wire
     confirm it.

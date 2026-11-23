@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import struct
 from dataclasses import dataclass, field
+from typing import Callable
 
 from . import constants as C
 from .transport import AR9271Transport
@@ -87,6 +88,35 @@ def setup_complete(t: AR9271Transport) -> None:
     """htc_comp_msg: just the SETUP_COMPLETE message id [SRC] htc_hst.c:192-211. The target's
     acknowledgement is not an ENDPOINT0 control message, so we send and move on."""
     t.reg_out(frame(C.ENDPOINT0, struct.pack(">H", C.HTC_MSG_SETUP_COMPLETE_ID)))
+
+
+def fw_panic_report(msg: bytes) -> None:
+    """ath9k_htc_fw_panic_report. The fields are __be32 but the C reads them in host order (LE).
+    [SRC] htc_hst.c:375-397."""
+    (pattern,) = struct.unpack_from("<I", msg)
+    if pattern == 0x33221199 and len(msg) >= 16:
+        _, exccause, pc, badvaddr = struct.unpack_from("<4I", msg)
+        logger.error("ath: firmware panic! exccause: 0x%08x; pc: 0x%08x; badvaddr: 0x%08x.",
+                     exccause, pc, badvaddr)
+    elif pattern == 0x33221299:
+        logger.error("ath: firmware panic! bad epid: 0x%08x", struct.unpack_from("<I", msg, 4)[0])
+    else:
+        logger.error("ath: unknown panic pattern!")
+
+
+def rx_msg(msg: bytes, ctrl_epid: int, ctrl_rx: Callable[[bytes], None]) -> None:
+    """ath9k_htc_rx_msg after the handshake: a firmware panic is reported; the WMI control
+    endpoint's frames, trailer trimmed, go to ctrl_rx; everything else is dropped."""
+    if len(msg) < C.HTC_FRAME_HDR_LEN:
+        return
+    if msg[0] == C.HTC_PANIC_EPID:
+        fw_panic_report(msg)
+        return
+    if msg[0] != ctrl_epid:
+        return
+    if msg[1] & C.HTC_FLAGS_RECV_TRAILER:
+        msg = msg[:len(msg) - msg[4]]
+    ctrl_rx(msg[C.HTC_FRAME_HDR_LEN:])
 
 
 def handshake(t: AR9271Transport) -> HTCState:

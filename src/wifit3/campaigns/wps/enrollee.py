@@ -24,7 +24,7 @@ import time
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
 from .registrar import (AttemptOutcome, PinResult, WpsTransport, config_error_name,
-                        describe_frame, disassoc_reason)
+                        describe_frame, disassoc_reason, eapol_start_wait)
 
 logger = logging.getLogger(__name__)
 
@@ -112,16 +112,23 @@ class WpsEnrollee:
         last_eap_id = None    # None until the AP opens an EAP session; nothing to NACK before
         sent_done = False
         try:
-            phase("→ EAPOL-Start")
-            await self._send_1x(M.eapol_start())
-
             deadline = time.monotonic() + self.overall_timeout
-            timeout = self.eapol_start_timeout
+            start_pending = True
+            timeout = eapol_start_wait(self.wsc_2_0)
             while time.monotonic() < deadline:
                 if self.should_stop():
                     return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped by user")
                 frame = await self.t.recv(min(timeout, deadline - time.monotonic()))
-                timeout = self.msg_timeout
+                if frame is None and start_pending:
+                    start_pending = False
+                    phase("→ EAPOL-Start")
+                    await self._send_1x(M.eapol_start())
+                    timeout = self.eapol_start_timeout
+                    continue
+                if frame is not None and M.LLC_SNAP_EAPOL in frame:
+                    start_pending = False
+                if not start_pending:
+                    timeout = self.msg_timeout
                 if frame is None:
                     # No frame in the window.
                     if resends_left > 0 and self._last_1x_frame is not None:
@@ -247,7 +254,7 @@ class WpsEnrollee:
                     phase("→ WSC_NACK")
                     nack = M.build_wsc_nack(nonce_e, nonce_r or bytes(wc.NONCE_LEN))
                     await self._send_1x(M.eap_wsc_response(eap_id, M.WSC_NACK, nack))
-                    # Stay armed until the AP's EAP-Failure, so it is ACKed before we deauth.
+                    # Stay in active monitor until the AP's EAP-Failure, so it is ACKed before we deauth.
                     deadline = time.monotonic() + 1.0
                     while time.monotonic() < deadline:
                         frame = await self.t.recv(deadline - time.monotonic())

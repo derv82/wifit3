@@ -175,9 +175,7 @@ async def discover_bssid(iface, essid: str, channel: int, settle: float = 5.0,
 
     iface.register_rx_callback(cb)
     try:
-        if not await iface.set_channel(channel):
-            print(f"[-] set_channel({channel}) failed")
-            return None
+        await iface.set_channel(channel)
         t0 = time.monotonic()
         print(f"[*] searching for ESSID {essid!r} on CH{channel}...")
         while True:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
 from wifit3.models import AccessPoint
@@ -31,10 +31,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FakeAuthStats:
-    auth_attempts: int = 0
     associations: int = 0
     reactive_reauths: int = 0
-    started_at: float = field(default_factory=time.time)
 
 
 class WepFakeAuth:
@@ -83,7 +81,7 @@ class WepFakeAuth:
         self._announced_failure = False
         # The campaign registers our STA MAC with the array (drop-filter); we only watch RX here.
         self.iface.register_rx_callback(self._rx_cb)
-        logger.info("[WEP-FakeAuth] Armed on %s as %s (lazy auth)",
+        logger.info("[WEP-FakeAuth] Listening for %s as %s (lazy auth)",
                     self.target.bssid, mac_to_str(self.source_mac))
 
     def stop(self) -> FakeAuthStats:
@@ -174,13 +172,13 @@ class WepFakeAuth:
 
         self.state = "authenticating"
         self._assoc_ok = False
-        self.stats.auth_attempts += 1
 
         await self.iface.send_no_wait(auth_req(self.bssid_bytes, self.source_mac))
         await asyncio.sleep(0.1)  # let the AP process Auth before Assoc lands
         await self.iface.send_no_wait(assoc_req(self.bssid_bytes, self.source_mac,
                                                 self.target.ssid or "",
-                                                channel=self.target.channel))
+                                                channel=self.target.channel,
+                                                beacon_frame=self.target.last_beacon_frame))
 
         deadline = time.time() + self.assoc_timeout
         while time.time() < deadline and self._active and not self._assoc_ok:

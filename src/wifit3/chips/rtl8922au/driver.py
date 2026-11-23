@@ -6,12 +6,12 @@ import logging
 import time
 from typing import Callable, Optional
 
-import libusb_package
 import usb.core
 import usb.util
 
+from wifit3.device.backend import usb_backend
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, SetChannelError
 
 from ..driver import Driver, DeviceID, FakeMacSupport, ProgressCallback
 from ..rx_reader import RxReaderThread
@@ -24,7 +24,7 @@ from .constants import (
     B_BE_USB3_FORCE, B_BE_USB2_FORCE, B_BE_FORCE_U3_CK, B_BE_FORCE_U2_CK, B_BE_FORCE_CLK_U2,
     B_BE_USB3_GEN_MODE, B_BE_USB3_LANE_MODE, BULKOUT_ID_H2C, RTW89_WIFI_ROLE_MONITOR,
     RTW89_NET_TYPE_NO_LINK, RTW89_BSSID_MATCH_ALL, R_BE_SYS_CHIPINFO, B_BE_HW_ID_MASK,
-    DEFAULT_MON_RX_FLTR,
+    DEFAULT_MON_RX_FLTR, LINUX_ETIMEDOUT,
 )
 from .transport import RTL8922AUTransport
 
@@ -43,13 +43,8 @@ class RTL8922AUDriver(Driver):
     # its own handle, so no user action is needed. [SRC] usb.c rtw89_usb_switch_mode_be.
     DEVICE_REENUMERATES = True
 
-    # 2.4 GHz + 5 GHz (non-DFS only) at 20 MHz. DFS channels (52-64, 100-144) are excluded: wifite
-    # ships non-DFS only, and a DFS hop hears nothing without a CAC dwell. TODO: 6 GHz (8922a
-    # support_bands includes it). [SRC] rtw8922a.c:3210.
-    SUPPORTED_CHANNELS = (
-        list(range(1, 15))
-        + [36, 40, 44, 48, 149, 153, 157, 161, 165]
-    )
+    # 2.4 GHz + 5 GHz at 20 MHz. TODO: 6 GHz (8922a support_bands includes it). [SRC] rtw8922a.c:3210.
+    SUPPORTED_CHANNELS = Driver.CHANNELS_2G + Driver.CHANNELS_5G + Driver.CHANNELS_DFS
 
     def __init__(self) -> None:
         super().__init__()
@@ -105,9 +100,11 @@ class RTL8922AUDriver(Driver):
         """Map DMA channels to bulk-OUT endpoints: out_pipe is the interface's bulk-OUT endpoint
         addresses in order; the H2C channel uses out_pipe[bulkout_id[DMA_H2C]]. [SRC] usb.c:1030-1056,
         rtw8922au.c:27 (bulkout_id[DMA_H2C]=2)."""
-        out_pipe = [ep.bEndpointAddress for ep in intf
-                    if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_OUT
-                    and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK]
+        out_eps = [ep for ep in intf
+                   if usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_OUT
+                   and usb.util.endpoint_type(ep.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK]
+        out_pipe = [ep.bEndpointAddress for ep in out_eps]
+        self.transport.bulk_out_max_packet_size = {ep.bEndpointAddress: ep.wMaxPacketSize for ep in out_eps}
         if len(out_pipe) > BULKOUT_ID_H2C:
             self._h2c_ep = out_pipe[BULKOUT_ID_H2C]
         if len(out_pipe) > BULKOUT_ID_B0MG:
@@ -151,18 +148,28 @@ class RTL8922AUDriver(Driver):
         logger.debug("RTL8922AU: cv=0x%x acv=0x%x cid=0x%x aid=0x%x",
                     ver["cv"], ver["acv"], ver["cid"], ver["aid"])
         await self._p(progress_cb, 0.15, "MAC power-on")
-        mac.mac_pwr_on(self.transport, ver["cv"])
+        try:
+            mac.mac_pwr_on(self.transport, ver["cv"])
+        except TimeoutError:
+            logger.error("failed to power on")                      # core.c:7377-7381
+            logger.error("failed to setup chip information")        # usb.c:1306-1309
+            raise
         # rtw89_chip_info_setup continues: wait_firmware_completion + fw_recognize are file-side
         # (no wire ops), then chip_efuse_info_setup -> mac_partial_init. [SRC] core.c:7367-7423.
         await self._p(progress_cb, 0.25, "Firmware download + DMAC init")
-        mac.partial_init(self.transport, self._h2c_ep, ver["cv"])
-        # chip_efuse_info_setup continues after partial_init: dump the logical efuse + phycap.
-        # [SRC] core.c:7268-7291.
-        await self._p(progress_cb, 0.35, "Reading efuse + PHY caps")
-        efuse = mac.parse_efuse_map(self.transport, ver["cv"])
-        self.mac_address = ":".join(f"{b:02x}" for b in efuse["mac_addr"])
-        mac.parse_phycap_map(self.transport, ver["cv"])
-        mac.setup_phycap(self.transport)          # H2C phy-capability query to the running fw
+        try:
+            mac.partial_init(self.transport, self._h2c_ep, ver["cv"])
+            # chip_efuse_info_setup continues after partial_init: dump the logical efuse + phycap.
+            # [SRC] core.c:7268-7291.
+            await self._p(progress_cb, 0.35, "Reading efuse + PHY caps")
+            efuse = mac.parse_efuse_map(self.transport, ver["cv"])
+            self.mac_address = ":".join(f"{b:02x}" for b in efuse["mac_addr"])
+            mac.parse_phycap_map(self.transport, ver["cv"])
+            mac.setup_phycap(self.transport)          # H2C phy-capability query to the running fw
+        except Exception:
+            mac.mac_pwr_off(self.transport)           # out: on any ret. core.c:7383-7420
+            logger.error("failed to setup chip information")        # usb.c:1306-1309
+            raise
         # chip_info_setup's out: path powers the MAC back off. rtw89_core_start re-powers it.
         # [SRC] core.c:7419-7422.
         mac.mac_pwr_off(self.transport)
@@ -172,10 +179,21 @@ class RTL8922AUDriver(Driver):
         # Interface-up path: rtw89_ops_start -> rtw89_core_start -> rtw89_mac_preinit (the second
         # pwr_on, then mac_func_en). [SRC] core.c:6626-6635, mac.c:4341-4357.
         await self._p(progress_cb, 0.45, "MAC re-power + init")
-        mac.mac_preinit(self.transport, ver["cv"])
+        try:
+            mac.mac_preinit(self.transport, ver["cv"])
+        except TimeoutError:
+            logger.error("mac preinit fail, ret: %d", -LINUX_ETIMEDOUT)    # core.c:6631-6634
+            raise
         # phy_init_bb_afe applies a firmware AFE table; this card ships no afe element, so it is a
         # no-op. Then rtw89_mac_init: partial_init(include_bb=True). [SRC] core.c:6640-6648, phy.c:1968.
-        mac.mac_init(self.transport, self._h2c_ep, ver["cv"])
+        try:
+            mac.mac_init(self.transport, self._h2c_ep, ver["cv"])
+        except TimeoutError:
+            logger.error("mac init fail, ret:%d", -LINUX_ETIMEDOUT)    # core.c:6646
+            raise
+        except firmware.Rtw89Error as e:
+            logger.error("mac init fail, ret:%d", e.ret)
+            raise
         # core_start resumes after mac_init: btc_ntfy_poweron + chip_reset_bb_rf are no-ops on BE,
         # then phy_init_bb_reg writes the firmware BB register tables. [SRC] core.c:6648-6659.
         await self._p(progress_cb, 0.60, "BB/RF register init")
@@ -244,7 +262,8 @@ class RTL8922AUDriver(Driver):
             buf = bytes(self.dev.read(self._bulk_in_ep, RX_RECVBUF_SZ, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
-            if err in (110, 10060) or "timeout" in str(e).lower():
+            if (isinstance(e, usb.core.USBTimeoutError) or err in (110, 10060)
+                    or "timeout" in str(e).lower()):
                 return None
             raise
         if self.transport.rfk_wait.armed:
@@ -323,10 +342,10 @@ class RTL8922AUDriver(Driver):
             usb.util.dispose_resources(self.dev)
         except Exception:                                   # noqa: BLE001
             pass
-        backend = libusb_package.get_libusb1_backend()
+        backend = usb_backend()
         for i in range(40):                                 # up to ~10 s for the re-enum to settle
             time.sleep(0.25)
-            dev = usb.core.find(idVendor=self._vid, idProduct=self._pid, backend=backend)
+            dev = backend.find(self._vid, self._pid)
             if dev is None:
                 continue
             # Skip the stale pre-switch device (same address) for the first ~2 s so the re-enum can
@@ -347,13 +366,14 @@ class RTL8922AUDriver(Driver):
         raise BringUpError("re-enumeration",
                            "card did not re-appear after the USB mode switch; please replug")
 
-    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> None:
         """Tune channel. scan=True takes the fast-tune path (~75ms) for hopper scans;
         scan=False runs the full calibrated prehdl double-tune."""
+        if channel not in self.SUPPORTED_CHANNELS:
+            raise SetChannelError(f"RTL8922AU: channel {channel} not supported")
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._tune_hop, channel, scan)
         self._band_is_2g = channel <= 14                  # picks the mgmt TX basic rate (CCK1 vs OFDM6)
-        return True
 
     def _tune_hop(self, channel: int, scan: bool = False) -> None:
         """Tune channel off the event loop. scan=True takes the single-pass fast path;
@@ -400,21 +420,16 @@ class RTL8922AUDriver(Driver):
         if self.dev is not None:
             usb.util.dispose_resources(self.dev)
 
-    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+    async def _inject_frame(self, frame_bytes: bytes) -> None:
         """Prepend the BE mgmt TX descriptor and bulk-OUT the frame once on the B0MG pipe (0x05)."""
         if self._mgmt_ep is None:
             logger.error("RTL8922AU inject_frame: no mgmt bulk-OUT endpoint (not connected?)")
-            return False
+            return
         desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self._band_is_2g,
                                      ack=not frame_bytes[4] & 0x01)
         payload = desc + frame_bytes
-        try:
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.transport.bulk_out(self._mgmt_ep, payload))
-            return True
-        except usb.core.USBError as e:
-            logger.error("RTL8922AU inject_frame: bulk-OUT failed: %s", e)
-            return False
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: self.transport.bulk_out(self._mgmt_ep, payload))
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
         """Write an incrementing 12-bit sequence into the frame's seq_ctrl (BE has no HW seq

@@ -23,6 +23,8 @@ REALTEK_USB_VENQT_CMD_REQ = 0x05  # bRequest
 REALTEK_USB_VENQT_CMD_IDX = 0x00  # wIndex
 MAX_VENDOR_REQ_CMD_SIZE = 254
 
+USB_INTERFACE_CLASS_VENDOR = 0xFF  # [SRC] os_dep/linux/usb_intf.c:199-200
+
 # --- MAC registers [SRC] include/hal_com_reg.h ---
 REG_SYS_ISO_CTRL = 0x0000       # :39
 REG_SYS_FUNC_EN = 0x0002        # :40  (+1 = 0x0003, bit2 = 8051 core gate)

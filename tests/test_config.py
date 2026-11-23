@@ -11,7 +11,8 @@ _DEFAULTS = {n: copy.deepcopy(getattr(Config, n))
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
                  "silenced_bssids", "hide_silenced", "log_level", "captures_dir", "save_pcap",
-                 "decloaked_ssids", "wps_auto_pbc", "auto_crack", "cpu_crack", "hashcat",
+                 "save_probed_ssids",
+                 "decloaked_ssids", "nicknames", "wps_auto_pbc", "enable_dfs_channels", "auto_crack", "cpu_crack", "hashcat",
                  "hashtopolis", "dwpa")}
 
 
@@ -135,6 +136,24 @@ def test_hide_silenced_save_load_roundtrip(config_path):
     Config.hide_silenced = False
     Config.load()
     assert Config.hide_silenced is True
+
+
+def test_enable_dfs_channels_save_load_roundtrip(config_path):
+    assert Config.enable_dfs_channels is False
+    Config.enable_dfs_channels = True
+    Config.save()
+    Config.enable_dfs_channels = False
+    Config.load()
+    assert Config.enable_dfs_channels is True
+
+
+def test_save_probed_ssids_save_load_roundtrip(config_path):
+    assert Config.save_probed_ssids is False
+    Config.save_probed_ssids = True
+    Config.save()
+    Config.save_probed_ssids = False
+    Config.load()
+    assert Config.save_probed_ssids is True
 
 
 def test_wps_auto_pbc_save_load_roundtrip(config_path):
@@ -348,3 +367,27 @@ def test_decloaked_ssids_load_drops_junk_entries(config_path):
     config_path.write_text("[decloak]\n'AA:BB:CC:DD:EE:FF' = 'Net'\n'11:22:33:44:55:66' = 7\n")
     Config.load()
     assert Config.decloaked_ssids == {"aa:bb:cc:dd:ee:ff": "Net"}
+
+
+def test_nicknames_save_load_roundtrip(config_path):
+    Config.set_nickname("AA:BB:CC:DD:EE:FF", "Den")
+    Config.save()
+    assert "[nicknames]\n'aa:bb:cc:dd:ee:ff' = 'Den'" in config_path.read_text("utf-8")
+    Config.nicknames = None
+    Config.load()
+    assert Config.nickname("aa:bb:cc:dd:ee:ff") == "Den"
+
+
+def test_set_nickname_to_empty_clears_it():
+    Config.set_nickname("aa:bb:cc:dd:ee:ff", "Den")
+    Config.set_nickname("AA:BB:CC:DD:EE:FF", "")
+    assert Config.nicknames == {}
+
+
+def test_nicknames_stay_none_without_the_table_and_load_drops_junk_entries(config_path):
+    config_path.write_text("theme = 'wifit3-green-dark'\n")
+    Config.load()
+    assert Config.nicknames is None
+    config_path.write_text("[nicknames]\n'AA:BB:CC:DD:EE:FF' = 'Den'\n'11:22:33:44:55:66' = 7\n")
+    Config.load()
+    assert Config.nicknames == {"aa:bb:cc:dd:ee:ff": "Den"}

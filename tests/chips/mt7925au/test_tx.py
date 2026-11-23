@@ -7,10 +7,16 @@ TXWI does not depend on the address bytes (only addr1's group bit and seq_ctrl),
 descriptor is identical. These lock the per-field TXWI layout against a silent regress.
 """
 import struct
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from wifit3.chips.mt7925au import tx
-from wifit3.chips.mt7925au.constants import MT792x_WTBL_RESERVED
+from wifit3.chips.mt7925au.constants import MT792x_BASIC_RATES_TBL, MT792x_WTBL_RESERVED
 from wifit3.chips.mt7925au.driver import MT7925AUDriver
+
+# The TX captures' monitor vif came up on 5 GHz: mt7925/main.c:383, mt76_rates[4] OFDM 6 Mbps.
+OFDM_6M = MT792x_BASIC_RATES_TBL + 4
 
 # A directed deauth (fc=0x00c0, reason 7), 26 bytes, seq_ctrl = 0. Synthetic unicast MACs.
 DEAUTH_MPDU = bytes.fromhex(
@@ -36,7 +42,7 @@ DEAUTH_WIRE = bytes.fromhex(
 def test_build_tx_deauth_byte_exact():
     # The captured aireplay frame set MT_TXD3_NO_ACK; production build_tx clears it for unicast,
     # so the replay-only build_tx_no_ack is what reproduces the exact captured bytes.
-    frame = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED)
+    frame = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED, basic_rates_idx=OFDM_6M)
     assert frame == DEAUTH_WIRE
     assert len(frame) == 100
 
@@ -44,15 +50,15 @@ def test_build_tx_deauth_byte_exact():
 def test_no_ack_gutted_from_production():
     """Production build_tx clears NO_ACK for a unicast addr1 (the chip HW-retries until ACKed);
     the replay-only builder sets it, to byte-match the capture."""
-    prod = tx.build_tx(DEAUTH_MPDU, wcid_idx=19)
-    replay = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=19)
+    prod = tx.build_tx(DEAUTH_MPDU, wcid_idx=19, basic_rates_idx=OFDM_6M)
+    replay = tx.build_tx_no_ack(DEAUTH_MPDU, wcid_idx=19, basic_rates_idx=OFDM_6M)
     assert struct.unpack_from("<16I", prod, 4)[3] & 1 == 0     # NO_ACK clear
     assert struct.unpack_from("<16I", replay, 4)[3] & 1 == 1   # replay sets it
     assert prod != replay and len(prod) == len(replay)
 
 
 def test_txwi_fields():
-    frame = tx.build_tx(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED)
+    frame = tx.build_tx(DEAUTH_MPDU, wcid_idx=MT792x_WTBL_RESERVED, basic_rates_idx=OFDM_6M)
     txwi = struct.unpack_from("<16I", frame, 4)
     assert txwi[0] & 0xFFFF == 90            # TX_BYTES = MPDU + 64
     assert (txwi[0] >> 23) & 0x3 == 1        # PKT_FMT = MT_TX_TYPE_SF
@@ -67,7 +73,7 @@ def test_txwi_fields():
     assert (txwi[3] >> 28) & 1 == 1          # BA_DISABLE
     assert (txwi[3] >> 11) & 0x1F == 15      # REM_TX_COUNT
     assert txwi[3] & 1 == 0                  # NO_ACK clear for a unicast addr1
-    assert (txwi[6] >> 16) & 0x3F == 15      # TX_RATE = basic_rates_idx
+    assert (txwi[6] >> 16) & 0x3F == OFDM_6M  # TX_RATE = basic_rates_idx
     assert txwi[7] == 0
     assert txwi[8:] == (0,) * 8              # trailing 32 B of the 64 B TXD stay zero
 
@@ -77,7 +83,7 @@ def test_seq_is_read_from_mpdu():
     field changes with the frame's seq_ctrl."""
     mpdu = bytearray(DEAUTH_MPDU)
     struct.pack_into("<H", mpdu, 22, 0x60)   # SN = 6
-    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(mpdu), wcid_idx=19), 4)
+    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(mpdu), wcid_idx=19, basic_rates_idx=OFDM_6M), 4)
     assert (txwi[3] >> 16) & 0xFFF == 6
 
 
@@ -88,7 +94,7 @@ def test_stamp_tx_seq_increments_and_feeds_txwi():
     second = drv._stamp_tx_seq(DEAUTH_MPDU)
     assert struct.unpack_from("<H", first, 22)[0] == (1 << 4)    # SN 1, frag 0
     assert struct.unpack_from("<H", second, 22)[0] == (2 << 4)   # SN 2
-    txwi = struct.unpack_from("<16I", tx.build_tx(second, wcid_idx=19), 4)
+    txwi = struct.unpack_from("<16I", tx.build_tx(second, wcid_idx=19, basic_rates_idx=OFDM_6M), 4)
     assert (txwi[3] >> 16) & 0xFFF == 2
 
 
@@ -97,5 +103,18 @@ def test_broadcast_sets_bcm():
     probe = bytearray(DEAUTH_MPDU)
     probe[0:2] = struct.pack("<H", 0x0040)   # probe request
     probe[4:10] = b"\xff" * 6                 # broadcast addr1
-    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(probe), wcid_idx=19), 4)
+    txwi = struct.unpack_from("<16I", tx.build_tx(bytes(probe), wcid_idx=19, basic_rates_idx=OFDM_6M), 4)
     assert (txwi[3] >> 4) & 1 == 1            # BCM
+
+
+@pytest.mark.parametrize("channel, rate_idx", [(3, MT792x_BASIC_RATES_TBL), (36, OFDM_6M)])
+async def test_inject_rate_follows_band(channel, rate_idx):
+    """mt7925/main.c:382-385: CCK 1 Mbps on 2.4 GHz, OFDM 6 Mbps on 5 GHz."""
+    drv = MT7925AUDriver.__new__(MT7925AUDriver)
+    drv._channel = channel
+    drv._tx_wcid = MT792x_WTBL_RESERVED
+    drv.transport = MagicMock()
+    drv.transport.send_bulk_checked = AsyncMock(return_value=True)
+    await drv._inject_frame(DEAUTH_MPDU)
+    wire = drv.transport.send_bulk_checked.call_args.args[0]
+    assert (struct.unpack_from("<16I", wire, 4)[6] >> 16) & 0x3F == rate_idx

@@ -1,6 +1,8 @@
 """Port of rtl8xxxu core.c (v6.19.14): the functions on the RTL8192FU call graph, RTL8192F paths only."""
 from __future__ import annotations
 
+import errno
+import logging
 import time
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
@@ -8,14 +10,16 @@ from typing import Callable, Protocol
 
 from . import constants as C
 
+logger = logging.getLogger(__name__)
+
 
 class Rtl8xxxuTransport(Protocol):
     def read8(self, address: int) -> int: ...
     def read16(self, address: int) -> int: ...
     def read32(self, address: int) -> int: ...
-    def write8(self, address: int, value: int) -> None: ...
-    def write16(self, address: int, value: int) -> None: ...
-    def write32(self, address: int, value: int) -> None: ...
+    def write8(self, address: int, value: int) -> int | None: ...
+    def write16(self, address: int, value: int) -> int | None: ...
+    def write32(self, address: int, value: int) -> int | None: ...
     def write_block(self, address: int, data: bytes) -> None: ...
     def bulk_write(self, endpoint: int, data: bytes) -> None: ...
 
@@ -197,16 +201,16 @@ def rtl8xxxu_read32(priv: Rtl8xxxuPriv, addr: int) -> int:
     return priv.transport.read32(addr)
 
 
-def rtl8xxxu_write8(priv: Rtl8xxxuPriv, addr: int, val: int) -> None:
-    priv.transport.write8(addr, val & 0xFF)
+def rtl8xxxu_write8(priv: Rtl8xxxuPriv, addr: int, val: int) -> int | None:
+    return priv.transport.write8(addr, val & 0xFF)
 
 
-def rtl8xxxu_write16(priv: Rtl8xxxuPriv, addr: int, val: int) -> None:
-    priv.transport.write16(addr, val & 0xFFFF)
+def rtl8xxxu_write16(priv: Rtl8xxxuPriv, addr: int, val: int) -> int | None:
+    return priv.transport.write16(addr, val & 0xFFFF)
 
 
-def rtl8xxxu_write32(priv: Rtl8xxxuPriv, addr: int, val: int) -> None:
-    priv.transport.write32(addr, val & 0xFFFFFFFF)
+def rtl8xxxu_write32(priv: Rtl8xxxuPriv, addr: int, val: int) -> int | None:
+    return priv.transport.write32(addr, val & 0xFFFFFFFF)
 
 
 def rtl8xxxu_write8_set(priv: Rtl8xxxuPriv, addr: int, bits: int) -> None:
@@ -296,11 +300,12 @@ def rtl8xxxu_read_rfreg(priv: Rtl8xxxuPriv, path: int, reg: int) -> int:
     return retval & 0xFFFFF
 
 
-def rtl8xxxu_write_rfreg(priv: Rtl8xxxuPriv, path: int, reg: int, data: int) -> None:
+def rtl8xxxu_write_rfreg(priv: Rtl8xxxuPriv, path: int, reg: int, data: int) -> int:
     data &= C.FPGA0_LSSI_PARM_DATA_MASK
     dataaddr = (reg << C.FPGA0_LSSI_PARM_ADDR_SHIFT) | data
-    rtl8xxxu_write32(priv, rtl8xxxu_rfregs[path].lssiparm, dataaddr)
+    ret = rtl8xxxu_write32(priv, rtl8xxxu_rfregs[path].lssiparm, dataaddr)
     time.sleep(1e-6)
+    return 0 if ret == 4 else -errno.EIO          # core.c:932-936
 
 
 def rtl8xxxu_gen2_h2c_cmd(priv: Rtl8xxxuPriv, h2c: bytes) -> bool:
@@ -547,14 +552,18 @@ def rtl8xxxu_init_mac(priv: Rtl8xxxuPriv) -> None:
     for reg, val in priv.fops.mactable:
         if reg == 0xFFFF and val == 0xFF:
             break
-        rtl8xxxu_write8(priv, reg, val)
+        if rtl8xxxu_write8(priv, reg, val) != 1:
+            logger.warning("Failed to initialize MAC (reg: %04x, val %02x)", reg, val)   # core.c:2201-2207
+            raise OSError("init_mac failed")
 
 
 def rtl8xxxu_init_phy_regs(priv: Rtl8xxxuPriv, array: tuple[tuple[int, int], ...]) -> None:
     for reg, val in array:
         if reg == 0xFFFF and val == 0xFFFFFFFF:
             break
-        rtl8xxxu_write32(priv, reg, val)
+        if rtl8xxxu_write32(priv, reg, val) != 4:
+            logger.warning("Failed to initialize PHY")   # core.c:2242-2246; 8192f.c:758-760 ignores it
+            return
         time.sleep(1e-6)
 
 
@@ -608,7 +617,9 @@ def rtl8xxxu_init_rf_regs(priv: Rtl8xxxuPriv, array: tuple[tuple[int, int], ...]
         if reg in delays:
             time.sleep(delays[reg])
             continue
-        rtl8xxxu_write_rfreg(priv, path, reg, val)
+        if rtl8xxxu_write_rfreg(priv, path, reg, val):
+            logger.warning("Failed to initialize RF")    # core.c:2421-2425; core.c:2487 ignores it
+            return
         time.sleep(1e-6)
 
 

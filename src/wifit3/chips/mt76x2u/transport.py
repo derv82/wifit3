@@ -25,11 +25,15 @@ NO data payload. See ``mt76u_single_wr`` in usb.c:215.
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import struct
+import time
 from typing import Optional
 
 import usb.core
+
+from wifit3.errors import is_device_gone
 
 from .constants import (
     EP_IN_CMD_RESP,
@@ -48,7 +52,9 @@ from .constants import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEOUT_MS = 500
+_DEFAULT_TIMEOUT_MS = 300       # MT_VEND_REQ_TOUT_MS [SRC] usb.c:12
+_VEND_REQ_MAX_RETRY = 10        # MT_VEND_REQ_MAX_RETRY [SRC] usb.c:11
+_VEND_RETRY_SLEEP_MS = 7.5      # usleep_range(5000, 10000)
 _BULK_TIMEOUT_MS = 2000
 
 
@@ -64,6 +70,7 @@ class MT76x2UTransport:
         self.dev = dev
         self.timeout_ms = timeout_ms
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self.removed = False   # MT76_REMOVED
 
     # ------------------------------------------------------------------
     # Register read/write — virtual-address-aware routing.
@@ -79,8 +86,8 @@ class MT76x2UTransport:
         else:
             req = MT_VEND_MULTI_READ
         data = self._ctrl_in(req, plain_addr >> 16, plain_addr & 0xFFFF, 4)
-        if len(data) < 4:
-            return 0
+        if data is None or len(data) < 4:
+            return 0xFFFFFFFF          # ___mt76u_rr: data = ~0 unless ret == sizeof(__le32)
         return struct.unpack("<I", bytes(data))[0]
 
     def write32(self, addr: int, val: int) -> None:
@@ -126,14 +133,22 @@ class MT76x2UTransport:
 
         Used for FW reset (wValue=0x0001) and IVB trigger (wValue=0x0012).
         """
-        self._ctrl_out_no_payload(0x01, wvalue, 0)
+        if self._ctrl_out_no_payload(0x01, wvalue, 0) is None:
+            raise RuntimeError(f"vendor_dev_mode(0x{wvalue:04x}) failed")
 
     # ------------------------------------------------------------------
     # Bulk OUT / IN.
     # ------------------------------------------------------------------
     def write_bulk(self, ep: int, data: bytes,
                    timeout_ms: int = _BULK_TIMEOUT_MS) -> int:
-        return self.dev.write(ep, data, timeout=timeout_ms)
+        if self.removed:
+            raise usb.core.USBError("device removed", errno=errno.ENODEV)
+        try:
+            return self.dev.write(ep, data, timeout=timeout_ms)
+        except usb.core.USBError as e:
+            if is_device_gone(e):
+                self.removed = True
+            raise
 
     def read_bulk(self, ep: int, length: int,
                   timeout_ms: int = _BULK_TIMEOUT_MS) -> bytes:
@@ -164,35 +179,38 @@ class MT76x2UTransport:
     # ------------------------------------------------------------------
     # Internal control-transfer helpers.
     # ------------------------------------------------------------------
-    def _ctrl_in(self, bReq: int, wValue: int, wIndex: int, wLength: int) -> bytes:
-        return bytes(self.dev.ctrl_transfer(
-            bmRequestType=0xC0,   # vendor IN
-            bRequest=bReq,
-            wValue=wValue,
-            wIndex=wIndex,
-            data_or_wLength=wLength,
-            timeout=self.timeout_ms,
-        ))
+    def _vendor_request(self, bmRequestType: int, bRequest: int, wValue: int, wIndex: int,
+                        data_or_wLength):
+        """__mt76u_vendor_request: up to MT_VEND_REQ_MAX_RETRY tries; ENODEV marks the device
+        removed and raises, the last failure is logged and returns None. libusb reports the
+        kernel's -EPROTO as a generic EIO, which stays retryable. [SRC] usb.c:18-46."""
+        last_error = None
+        for _ in range(_VEND_REQ_MAX_RETRY):
+            if self.removed:
+                raise usb.core.USBError("device removed", errno=errno.ENODEV)
+            try:
+                return self.dev.ctrl_transfer(bmRequestType=bmRequestType, bRequest=bRequest,
+                                              wValue=wValue, wIndex=wIndex,
+                                              data_or_wLength=data_or_wLength,
+                                              timeout=self.timeout_ms)
+            except usb.core.USBError as e:
+                if is_device_gone(e):
+                    self.removed = True
+                    raise
+                last_error = e
+            time.sleep(_VEND_RETRY_SLEEP_MS / 1000)
+        logger.error("vendor request req:%02x off:%04x failed: %s", bRequest, wIndex, last_error)
+        return None
+
+    def _ctrl_in(self, bReq: int, wValue: int, wIndex: int, wLength: int) -> Optional[bytes]:
+        data = self._vendor_request(0xC0, bReq, wValue, wIndex, wLength)   # vendor IN
+        return None if data is None else bytes(data)
 
     def _ctrl_out(self, bReq: int, wValue: int, wIndex: int, payload: bytes) -> None:
-        self.dev.ctrl_transfer(
-            bmRequestType=0x40,   # vendor OUT
-            bRequest=bReq,
-            wValue=wValue,
-            wIndex=wIndex,
-            data_or_wLength=payload,
-            timeout=self.timeout_ms,
-        )
+        self._vendor_request(0x40, bReq, wValue, wIndex, payload)          # vendor OUT
 
-    def _ctrl_out_no_payload(self, bReq: int, wValue: int, wIndex: int) -> None:
-        self.dev.ctrl_transfer(
-            bmRequestType=0x40,
-            bRequest=bReq,
-            wValue=wValue,
-            wIndex=wIndex,
-            data_or_wLength=b"",
-            timeout=self.timeout_ms,
-        )
+    def _ctrl_out_no_payload(self, bReq: int, wValue: int, wIndex: int) -> Optional[int]:
+        return self._vendor_request(0x40, bReq, wValue, wIndex, b"")
 
     # ------------------------------------------------------------------
     # Endpoint discovery sanity check (matches kernel's mt76u_set_endpoints).

@@ -41,6 +41,7 @@ class APRow:
     """One scanner row as plain comparable values; the table supplies the colour."""
     bssid: str
     ssid: Optional[str] = None
+    nickname: Optional[str] = None
     guessid: Optional[str] = None
     channel: int = 0
     signal: int = -100
@@ -76,6 +77,8 @@ def _render_ssid(row: APRow, fg: str) -> Text:
     else:
         shown = f"{row.guessid}?" if row.guessid else "<Hidden>"
         name = Text(shown, style=f"{fg} italic")
+    if row.nickname:
+        name = Text(f"{row.nickname} (", style=f"{fg} bold") + name + Text(")", style=f"{fg} bold")
 
     badges = Text()
     for attr, colour, glyph in _BADGES:
@@ -209,7 +212,7 @@ class Column:
 # when one of its fields moves, so every input to its appearance must be listed.
 COLUMNS: Tuple[Column, ...] = (
     Column("ssid", "SSID",
-           ("ssid", "guessid", "silenced", "has_handshake", "has_pmkid",
+           ("ssid", "nickname", "guessid", "silenced", "has_handshake", "has_pmkid",
             "has_wep_key", "has_wps_psk", "is_stale"),
            _render_ssid, _ssid_key, right_aligned=True, min_width=20),
     Column("channel", "CH", ("channel", "is_stale"),

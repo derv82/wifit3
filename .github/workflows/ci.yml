@@ -16,15 +16,20 @@ concurrency:
 
 jobs:
   test:
-    name: Lint + test
+    name: Lint + test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Every Python that pyproject's requires-python allows.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Sync env (runtime + dev deps)

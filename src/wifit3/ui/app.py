@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 import threading
+from pathlib import Path
 from typing import Any, List, Optional, Set
 
 from textual import events, work
@@ -21,6 +22,7 @@ from wifit3.chips import log_trace
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.config import Config, ConfigError
+from wifit3.persist.probed_ssids import ProbedSsidFile
 from wifit3.persist.vault import Vault
 from wifit3.errors import WifiteDeviceLostError, WifiteFatalError
 from wifit3.device.manager import DeviceManager, Status
@@ -34,7 +36,7 @@ from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
-from .screens.vault_drawer import VaultDrawer
+from .screens.vault.drawer import VaultDrawer
 from .clipboard import copy_copyq_text, copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes
@@ -176,11 +178,20 @@ class WifiteApp(App):
         self.scanner_view = ScannerView()
         self.focus_view = FocusViewV2()
         self.vault = Vault()
+        if self._config_error is None:
+            try:
+                self.vault.move_nicknames_to_config()
+            except ConfigError as e:
+                self._config_error = str(e)
         self._vault_notices_lock = threading.Lock()
         self._vault_refresh_pending = False     # a table refresh is scheduled for the notices so far
-        self._vault_full_refresh = False        # one of them was a full refresh (BSSID None)
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
+
+        def _on_probe_write_error(path: Path, error: OSError) -> None:
+            self.notify(str(error), title=f"Can't save probed SSIDs to {path}", severity="error")
+
+        self.probed_ssid_file = ProbedSsidFile(on_error=_on_probe_write_error)
         self.ap_watcher = ApWatcher(self.vault)
         self._device_timer: Optional[Timer] = None
         self._handlers_before_mount: dict[signal.Signals, Any] = {}
@@ -213,6 +224,10 @@ class WifiteApp(App):
             Config.save()
         except ConfigError as e:
             self.notify(str(e), severity="error", title="Config")
+
+    def _handle_exception(self, error: Exception) -> None:
+        logger.critical("Unhandled exception, exiting", exc_info=error)
+        super()._handle_exception(error)
 
     def on_mount(self) -> None:
         """Register screens, push the splash, and start the always-on device watch."""
@@ -283,6 +298,7 @@ class WifiteApp(App):
     def _poll_ap_events(self) -> None:
         if self.array is None:
             return
+        self.probed_ssid_file.sync(self.array.probed_ssids)
         for event in self.ap_watcher.poll(self.array):
             if isinstance(event, ApDecloaked):
                 if Config.remember_decloak(event.bssid, event.ssid or ""):
@@ -339,7 +355,6 @@ class WifiteApp(App):
         """Any thread: one table refresh per tick, however many notices the Vault sends. None once the
         app has stopped (a PSK propagation can finish after quit)."""
         with self._vault_notices_lock:
-            self._vault_full_refresh |= bssid is None
             if self._vault_refresh_pending:
                 return
             self._vault_refresh_pending = True
@@ -351,12 +366,11 @@ class WifiteApp(App):
     def _refresh_vault_table(self) -> None:
         """Reload the vault table if its drawer is open, even below the modal that changed it."""
         with self._vault_notices_lock:
-            full_refresh, self._vault_full_refresh = self._vault_full_refresh, False
             self._vault_refresh_pending = False
         for screen in reversed(self.screen_stack):
             if isinstance(screen, VaultDrawer):
                 try:
-                    screen.vault_changed(full_refresh)
+                    screen.vault_changed()
                 except Exception:
                     logger.debug("Vault table refresh skipped", exc_info=True)
                 return

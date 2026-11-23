@@ -29,7 +29,7 @@ from wifit3.chips.mt7925au import tx as mt_tx
 from wifit3.chips.mt7925au import txpower as mt_txpower
 from wifit3.chips.mt7925au.constants import (
     MT7925_RXD_SEQ_OFF, MT_MIB_SDR9, MT_MIB_SDR3, MT_TX_AGG_CNT, MT_WTBL_UPDATE,
-    MT792x_WTBL_RESERVED, EP_OUT_MCU, EP_OUT_HCCA, MT_SDIO_TXD_SIZE, SDIO_HDR_SIZE,
+    MT792x_WTBL_RESERVED, MT792x_BASIC_RATES_TBL, EP_OUT_MCU, EP_OUT_HCCA, MT_SDIO_TXD_SIZE, SDIO_HDR_SIZE,
     MCU_UNI_CMD_DEV_INFO_UPDATE, MCU_UNI_CMD_BSS_INFO_UPDATE, MCU_UNI_CMD_SNIFFER,
     MCU_UNI_CMD_BAND_CONFIG, MCU_UNI_CMD_CHIP_CONFIG, MCU_UNI_CMD_SET_DOMAIN_INFO,
     MCU_UNI_CMD_SET_POWER_LIMIT, UNI_SNIFFER_ENABLE, UNI_SNIFFER_CONFIG,
@@ -172,7 +172,7 @@ async def _drive_firmware(dev: E.ReplayDevice, state: dict):
     t = _make_transport(dev, state["q"])
     loader = MT7925AUFirmwareLoader(t, ASSETS)
     loader._claim_vendor_interface = lambda *a, **k: 0
-    return await loader.load_firmware()
+    return await loader.power_on() and await loader.load_firmware()
 
 
 async def _drive_postboot(dev: E.ReplayDevice, state: dict):
@@ -301,7 +301,10 @@ def _tx_bytematch(capture, title: str) -> "bool | None":
         # build_tx_no_ack (not the production build_tx): the captured aireplay frames set
         # MT_TXD3_NO_ACK, which wifit3's inject path sets only for a group addr1. This
         # replay-only builder adds that one bit so the byte-match reflects the exact captured frames.
-        built = mt_tx.build_tx_no_ack(mpdu, wcid_idx=MT792x_WTBL_RESERVED)
+        # The capture's monitor vif was added on the 5 GHz default chandef, so Linux injected at
+        # basic_rates_idx = MT792x_BASIC_RATES_TBL + 4 (mt7925/main.c:382-383) even on ch 1.
+        built = mt_tx.build_tx_no_ack(mpdu, wcid_idx=MT792x_WTBL_RESERVED,
+                                      basic_rates_idx=MT792x_BASIC_RATES_TBL + 4)
         if built == op.data:
             match += 1
         else:

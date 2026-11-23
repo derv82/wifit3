@@ -4,7 +4,7 @@ import pytest
 
 from wifit3.models.jobs import JobState, ToolStatus
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.screens.vault_drawer import VaultDrawer
+from wifit3.ui.screens.vault.drawer import VaultDrawer
 from wifit3.ui.vault.global_tracker import GlobalJobTracker
 
 

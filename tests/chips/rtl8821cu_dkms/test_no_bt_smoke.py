@@ -172,6 +172,6 @@ def test_no_bt_cold_bringup_completes_without_touching_btc(monkeypatch):
     # (5) A 5 GHz tune re-runs the no-BT band switch (btcwifionly.switch_antenna, is_5g=True) — the
     # other band's crash site — and must likewise complete without touching t.btc.
     w32_before = _w32(t)
-    assert _drive(driver.set_channel(36)) is True
+    _drive(driver.set_channel(36))
     assert getattr(t, "btc", None) is None
     assert ("W32", 0x004C, 0x01000000) in _w32(t)[len(w32_before):]     # the 5 GHz switch ran anew
