@@ -6,6 +6,7 @@ import struct
 
 import pytest
 
+from wifit3.crack.hc22000_format import pmkid_hashline
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, data_header, eapol_key, set_mic
 from wifit3.dot11.mac import BROADCAST_MAC, mac_header
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic
@@ -26,7 +27,9 @@ from wifit3.persist.pcap import (
     RADIOTAP_PRESENT_EXT,
     RADIOTAP_PRESENT_FLAGS,
     RADIOTAP_PRESENT_TSFT,
+    FourWayHandshake,
     HandshakePcaps,
+    read_access_points,
     read_handshakes,
     read_pcap,
     write_pcap,
@@ -378,3 +381,62 @@ def test_four_way_handshake_matches_psk(tmp_path):
     assert handshake.ssid == _SSID
     assert handshake.matches_psk(_PSK)
     assert not handshake.matches_psk("wrong horse")
+
+
+_CLIENT_MAC = "02:00:00:00:00:02"
+
+
+def _hidden_beacon() -> bytes:
+    fixed = bytes(8) + bytes.fromhex("64001104")
+    return mac_header(b"\x80\x00", BROADCAST_MAC, _AA, _AA) + fixed + b"\x00\x00\x01\x01\x82" + _RSN_IE_PSK
+
+
+def _probe_response() -> bytes:
+    fixed = bytes(8) + bytes.fromhex("64001104")
+    return mac_header(b"\x50\x00", _SPA, _AA, _AA) + fixed + b"\x00\x07HomeNet\x01\x01\x82" + _RSN_IE_PSK
+
+
+def _assoc_request() -> bytes:
+    return mac_header(b"\x00\x00", _AA, _SPA, _AA) + bytes.fromhex("11040a00") + b"\x00\x07HomeNet" + _RSN_IE_PSK
+
+
+def test_read_access_points_stamps_messages_and_last_seen_with_frame_times(tmp_path):
+    write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), *_m1_m2(1, 1000.0), (_beacon(), 1001.0)])
+    [ap] = read_access_points(tmp_path / "a.pcap")
+    assert (ap.bssid, ap.ssid, ap.last_seen) == (_BSSID, _SSID, 1001.0)
+    assert [message.timestamp for message in ap.handshakes[_CLIENT_MAC].messages] == pytest.approx([1000.0, 1000.005], abs=1e-6)
+
+
+def test_read_access_points_uses_a_probe_response_as_the_beacon_of_an_ap_without_beacons(tmp_path):
+    write_pcap(tmp_path / "a.pcap", [(_probe_response(), 999.0), *_m1_m2(1, 1000.0)])
+    [ap] = read_access_points(tmp_path / "a.pcap")
+    hs = ap.handshakes[_CLIENT_MAC]
+    assert hs.beacon_frame == _probe_response()
+    [pair] = hs.valid_pairs_by_instance().values()
+    assert FourWayHandshake.from_pair(hs, pair, ap.ssid).matches_psk(_PSK)
+
+
+@pytest.mark.parametrize("naming_frame", [_probe_response(), _assoc_request()])
+def test_read_access_points_decloaks_a_hidden_ap(tmp_path, naming_frame):
+    write_pcap(tmp_path / "a.pcap", [(_hidden_beacon(), 999.0), (naming_frame, 999.5), *_m1_m2(1, 1000.0)])
+    [ap] = read_access_points(tmp_path / "a.pcap")
+    assert ap.ssid == _SSID
+
+
+def test_read_access_points_leaves_a_hidden_ap_without_an_ssid(tmp_path):
+    write_pcap(tmp_path / "a.pcap", [(_hidden_beacon(), 999.0), *_m1_m2(1, 1000.0)])
+    [ap] = read_access_points(tmp_path / "a.pcap")
+    assert ap.ssid is None
+    assert ap.handshakes[_CLIENT_MAC].valid_pairs_by_instance()
+
+
+def test_read_access_points_reads_a_pmkid_from_a_file_without_m2(tmp_path):
+    pmkid = bytes(range(16))
+    m1 = eapol_key(key_info=0x008a, key_len=16, replay=1, nonce=b"\xa0" * 32,
+                   key_data=bytes.fromhex("dd14000fac04") + pmkid)
+    m1_frame = data_header(to_ds=False, bssid=_AA, client=_SPA) + LLC_SNAP_EAPOL + m1
+    write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), (m1_frame, 1000.0)])
+    [ap] = read_access_points(tmp_path / "a.pcap")
+    hs = ap.handshakes[_CLIENT_MAC]
+    assert hs.pmkid == pmkid
+    assert pmkid_hashline(ap.ssid, hs) is not None

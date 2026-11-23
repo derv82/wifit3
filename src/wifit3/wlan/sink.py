@@ -97,10 +97,14 @@ class WlanSink:
 
     # ----- ingest ------------------------------------------------------------
 
-    def update(self, pkt: Packet, card_id: str, channel_hint: int = 1) -> None:
+    def update(self, pkt: Packet, card_id: str, channel_hint: int = 1, *,
+               timestamp: Optional[float] = None) -> None:
         """Fold one deduplicated (novel) frame into the picture. ``card_id`` names the receiving
         card (for per-card RSSI); ``channel_hint`` is that card's current channel, used only when a
-        beacon carries no channel of its own."""
+        beacon carries no channel of its own. ``timestamp`` is the epoch seconds the frame was
+        received; None means now."""
+        if timestamp is None:
+            timestamp = time.time()
         frame_type = pkt.type
         bssid = pkt.bssid
 
@@ -119,10 +123,10 @@ class WlanSink:
 
         self.packet_stats.record_rx(bssid, frame_type)  # Live packet dashboard
 
-        self._on_beacon_frame(pkt, card_id, channel_hint)
+        self._on_beacon_frame(pkt, card_id, channel_hint, timestamp)
         self._on_wepdata_frame(pkt)
         self._track_client(pkt, card_id)
-        self._on_eapol_frame(pkt)
+        self._on_eapol_frame(pkt, timestamp)
         self._on_eap_frame(pkt)
 
     def record_signal(self, card_id: str, bssid: str, rssi: int) -> None:
@@ -138,18 +142,18 @@ class WlanSink:
         a client's M2 pairs with it."""
         pkt = WlanFrameParser.parse_80211_frame(frame, 0)
         if isinstance(pkt, EapolPacket):
-            self._on_eapol_frame(pkt)
+            self._on_eapol_frame(pkt, time.time())
 
     def record_injected_beacon(self, frame: bytes, card_id: str, channel_hint: int) -> None:
         """Fold EvilTwin's own beacon into the sink, bypassing the array's own-frame RX filter, so a
         twin on its own BSSID has the AP record its 4-way is tracked under."""
         pkt = WlanFrameParser.parse_80211_frame(frame, -100)
         if isinstance(pkt, BeaconPacket):
-            self._on_beacon_frame(pkt, card_id, channel_hint)
+            self._on_beacon_frame(pkt, card_id, channel_hint, time.time())
 
     # ----- typed handlers ----------------------------------------------------
 
-    def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int) -> bool:
+    def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int, timestamp: float) -> bool:
         """Build/refresh the AP from a beacon or probe response."""
         if not isinstance(pkt, BeaconPacket):
             return False
@@ -267,7 +271,7 @@ class WlanSink:
                 )
 
         ap = self.access_points[bssid]
-        ap.last_seen = time.time()
+        ap.last_seen = timestamp
 
         # Stash the latest RSNIE
         rsn_ie = pkt.rsn_ie_raw
@@ -359,7 +363,7 @@ class WlanSink:
                 self.decloak(ap, pkt.ssid, frame_type)
         return True
 
-    def _on_eapol_frame(self, pkt: Packet) -> bool:
+    def _on_eapol_frame(self, pkt: Packet, timestamp: float) -> bool:
         """Track the 4-way handshake / PMKID for a client on a known AP."""
         if not isinstance(pkt, EapolPacket):
             return False
@@ -401,7 +405,7 @@ class WlanSink:
 
         # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list.
         if client_mac not in self.own_macs and not hs.has_message(raw_frame):
-            eapol = HandshakeMessage.from_packet(pkt, akm, time.time())
+            eapol = HandshakeMessage.from_packet(pkt, akm, timestamp)
             hs.add_message(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")

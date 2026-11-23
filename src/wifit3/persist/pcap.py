@@ -17,6 +17,7 @@ from wifit3.dot11.parser import WlanFrameParser
 from wifit3.models import AccessPoint, Handshake, HandshakeMessage
 from wifit3.persist.config import Config
 from wifit3.persist.save import fresh_path
+from wifit3.wlan.sink import WlanSink
 
 LINKTYPE_IEEE802_11 = 105
 LINKTYPE_PRISM_HEADER = 119
@@ -330,3 +331,22 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
             handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid))
     handshakes.sort(key=lambda handshake: handshake.first_seen, reverse=True)
     return handshakes
+
+
+def read_access_points(path: Path) -> list[AccessPoint]:
+    """Every AP in the capture with its handshakes and PMKIDs, stamped with the file's frame times.
+    A handshake on an AP heard only through probe responses gets the first probe response as its beacon."""
+    sink = WlanSink()
+    probe_response_by_bssid: dict[str, bytes] = {}
+    for frame, timestamp in read_pcap(path):
+        packet = WlanFrameParser.parse_80211_frame(frame, 0)
+        if packet is None:
+            continue
+        sink.update(packet, path.name, timestamp=timestamp)
+        if isinstance(packet, BeaconPacket) and packet.type == "probe_resp":
+            probe_response_by_bssid.setdefault(packet.bssid, packet.raw)
+    for ap in sink.get_access_points():
+        for hs in ap.handshakes.values():
+            if not hs.beacon_frame and ap.bssid in probe_response_by_bssid:
+                hs.beacon_frame = probe_response_by_bssid[ap.bssid]
+    return sink.get_access_points()
