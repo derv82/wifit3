@@ -219,6 +219,58 @@ def test_save_wep_caches_key_and_dedupes(tmp_path):
     assert len(v.persisted(ap.bssid)) == 1
 
 
+def test_save_wep_key_writes_a_different_key_and_skips_an_empty_one(tmp_path):
+    v = Vault()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    v.save_wep_key(ap, b"abcde")
+    assert v.save_wep_key(ap, b"fghij").was_new
+    assert v.save_wep_key(ap, b"") is None
+
+
+def test_save_wps_pin_dedupes_on_pin_and_psk(tmp_path):
+    v = Vault()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    first = v.save_wps_pin(ap, "12345670", "abcdefgh")
+    again = v.save_wps_pin(ap, "12345670", "abcdefgh")
+    assert first.was_new and not again.was_new and again.path == first.path
+    assert v.save_wps_pin(ap, "12345670", "rotated").was_new
+    pin_only = v.save_wps_pin(ap, "12345670", None)
+    assert pin_only.was_new and not v.save_wps_pin(ap, "12345670", None).was_new
+    empty_pin = v.save_wps_pin(ap, "", "psk")
+    assert empty_pin.was_new and not v.save_wps_pin(ap, "", "psk").was_new
+    assert v.save_wps_pin(ap, "12345670", "") is None
+
+
+def test_save_wps_pin_dedupes_against_the_legacy_empty_pin_label(tmp_path):
+    existing = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_wps_pin.txt"
+    existing.write_text("SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: psk\nPIN: <empty>\n", encoding="utf-8")
+    v = Vault()
+    result = v.save_wps_pin(AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet"), "", "psk")
+    assert not result.was_new and result.path == existing
+
+
+def test_save_wps_pbc_dedupes_on_psk(tmp_path):
+    v = Vault()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    first = v.save_wps_pbc(ap, "abcdefgh")
+    again = v.save_wps_pbc(ap, "abcdefgh")
+    assert first.was_new and not again.was_new and again.path == first.path
+    assert v.save_wps_pbc(ap, "other").was_new
+    assert v.save_wps_pbc(ap, "") is None
+
+
+def test_save_wpa_psk_dedupes_on_bssid_and_psk_but_not_against_a_wps_file(tmp_path):
+    v = Vault()
+    first = v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+    again = v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+    assert first.was_new and not again.was_new and again.path == first.path
+    assert v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat?").was_new
+    assert v.save_wpa_psk("Cafe WiFi", "11:22:33:44:55:66", "hashcat!").was_new
+    v.save_wps_pbc(AccessPoint(bssid="66:55:44:33:22:11", ssid="Cafe WiFi"), "hashcat!")
+    assert v.save_wpa_psk("Cafe WiFi", "66:55:44:33:22:11", "hashcat!").was_new
+    assert v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "") is None
+
+
 def test_save_wps_pbc_and_pin_cache_their_psks(tmp_path):
     v = Vault()
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")

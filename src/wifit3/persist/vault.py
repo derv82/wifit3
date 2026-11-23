@@ -414,44 +414,59 @@ class Vault:
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes, manual: bool = False) -> Optional[SaveResult]:
         """``manual``: typed in, not recovered from the AP, so unverified until a live check."""
-        result = save.save_wep_key(ap, key)
-        if result:
-            update_meta(ap.ssid, ap.bssid)
-        if result and result.was_new:
+        if not key:
+            return None
+        saved = self._saved_key(ap.bssid, CaptureType.WEP, key.hex())
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wep_key(ap, key), was_new=True)
+        update_meta(ap.ssid, ap.bssid)
+        if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ap.ssid, ap.bssid, result.path)
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WEP, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
-        elif result and not manual:
+        elif not manual:
             self._record_key_recovered_again(ap.bssid, (CaptureType.WEP, key.hex()))
         return result
 
     def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: Optional[str],
                      manual: bool = False) -> Optional[SaveResult]:
         """``manual``: typed in, not recovered from the AP, so unverified until a live check."""
-        result = save.save_wps_pin(ap, pin, psk)
-        if result:
-            update_meta(ap.ssid, ap.bssid)
-        if result and result.was_new:
+        if psk == "":
+            return None
+        saved = self._saved_key(ap.bssid, CaptureType.WPS_PIN, psk, pin)
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wps_pin(ap, pin, psk), was_new=True)
+        update_meta(ap.ssid, ap.bssid)
+        if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ap.ssid, ap.bssid, result.path)
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PIN, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, pin=pin, ssid=ap.ssid))
-        elif result and psk and not manual:
+        elif psk and not manual:
             self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
-        result = save.save_wps_pbc(ap, psk)
-        if result:
-            update_meta(ap.ssid, ap.bssid)
-        if result and result.was_new:
+        if not psk:
+            return None
+        saved = self._saved_key(ap.bssid, CaptureType.WPS_PBC, psk)
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wps_pbc(ap, psk), was_new=True)
+        update_meta(ap.ssid, ap.bssid)
+        if result.was_new:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PBC, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, ssid=ap.ssid))
-        elif result:
+        else:
             self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
 
@@ -463,16 +478,29 @@ class Vault:
 
     def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str, manual: bool = False) -> Optional[SaveResult]:
         """``manual``: typed in, not cracked or recovered from the AP."""
-        result = save.save_wpa_psk(ssid, bssid, psk)
-        if result:
-            update_meta(ssid, bssid)
-        if result and result.was_new:
+        if not psk:
+            return None
+        saved = self._saved_key(bssid, CaptureType.WPA_PSK, psk)
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wpa_psk(ssid, bssid, psk), was_new=True)
+        update_meta(ssid, bssid)
+        if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ssid, bssid, result.path)
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPA_PSK, timestamp=int(time.time()), path=str(result.path),
                 bssid=bssid, value=psk, ssid=ssid))
         return result
+
+    def _saved_key(self, bssid: str, capture_type: CaptureType, value: Optional[str],
+                   pin: Optional[str] = None) -> Optional[PersistedCapture]:
+        """The AP's indexed capture of this type holding ``value`` (and ``pin``)."""
+        for capture in self.persisted(bssid):
+            if capture.type == capture_type and capture.value == value and capture.pin == pin:
+                return capture
+        return None
 
     # ----- filesystem ops (the screen goes through these, never touches disk) -----
 

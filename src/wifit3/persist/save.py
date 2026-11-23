@@ -1,6 +1,5 @@
-"""Content-deduped auto-save for recovered artifacts: handshakes, PMKIDs,
-WEP keys, WPS credentials. One save_* per kind, each returning a SaveResult
-(or None when there's nothing worth saving). Dedupe never overwrites."""
+"""Recovered artifacts in captures/: handshakes and PMKIDs are content-deduped (SaveResult); WEP keys,
+WPS credentials and PSKs always get a new file (Vault dedupes those against its index)."""
 from __future__ import annotations
 
 import os
@@ -14,11 +13,8 @@ from wifit3.crack.hc22000_format import eapol_hashlines, parse_hc22000, pmkid_ha
 from wifit3.models import AccessPoint
 from wifit3.persist.common import (
     LEGACY_CAPTURE_RE,
-    WEP_KEY_HEX_RE,
-    WPS_PSK_RE,
     bssid_to_colon,
     bssid_to_dashed,
-    parse_wps_pin,
     safe_ssid,
 )
 from wifit3.persist.config import Config
@@ -291,52 +287,27 @@ def consolidate_hc_files(captures_dir: Path) -> tuple[int, int]:
 
 # ----- WEP key --------------------------------------------------------------
 
-def save_wep_key(ap: AccessPoint, key: bytes) -> Optional[SaveResult]:
-    """Persist a recovered WEP key. Dedupes by exact key value for this BSSID."""
+def write_wep_key(ap: AccessPoint, key: bytes) -> Path:
+    """Write a recovered WEP key to a new file."""
     captures_dir = Path(Config.captures_dir)
-    if not key:
-        return None
-    key_hex = key.hex()
-    for p in _existing(captures_dir, ap.bssid, "_wep_key.txt"):
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        m = WEP_KEY_HEX_RE.search(text)
-        if m and m.group(1).lower() == key_hex:
-            return SaveResult(path=p, was_new=False)
-
     captures_dir.mkdir(parents=True, exist_ok=True)
     path = fresh_path(captures_dir, ap.ssid, ap.bssid, "_wep_key.txt")
     lines = [
         f"SSID:  {ap.ssid or '<hidden>'}",
         f"BSSID: {ap.bssid}",
-        f"WEP key (hex):   {key_hex}",
+        f"WEP key (hex):   {key.hex()}",
     ]
     if all(0x20 <= b < 0x7F for b in key):
         lines.append(f'WEP key (ASCII): "{key.decode("ascii")}"')
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return SaveResult(path=path, was_new=True)
+    return path
 
 
 # ----- WPS PIN / PBC --------------------------------------------------------
 
-def save_wps_pin(ap: AccessPoint, pin: str, psk: Optional[str]) -> Optional[SaveResult]:
-    """Persist a WPS-PIN credential, with no PSK line when ``psk`` is None.
-    Dedupes by (PIN, PSK) for this BSSID."""
+def write_wps_pin(ap: AccessPoint, pin: str, psk: Optional[str]) -> Path:
+    """Write a WPS-PIN credential to a new file, with no PSK line when ``psk`` is None."""
     captures_dir = Path(Config.captures_dir)
-    if psk == "":
-        return None
-    for p in _existing(captures_dir, ap.bssid, "_wps_pin.txt"):
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        psk_match = WPS_PSK_RE.search(text)
-        existing_psk = psk_match.group(1).strip() if psk_match else None
-        if existing_psk == psk and parse_wps_pin(text) == pin:
-            return SaveResult(path=p, was_new=False)
-
     captures_dir.mkdir(parents=True, exist_ok=True)
     path = fresh_path(captures_dir, ap.ssid, ap.bssid, "_wps_pin.txt")
     body = (
@@ -346,34 +317,23 @@ def save_wps_pin(ap: AccessPoint, pin: str, psk: Optional[str]) -> Optional[Save
         + f"PIN: {pin}\n"
     )
     path.write_text(body, encoding="utf-8")
-    return SaveResult(path=path, was_new=True)
+    return path
 
 
-def save_wps_pbc(ap: AccessPoint, psk: str) -> Optional[SaveResult]:
-    """Persist a WPS-PBC credential. Dedupes by PSK for this BSSID."""
-    return _save_psk(ap.ssid, ap.bssid, psk, "_wps_pbc.txt")
+def write_wps_pbc(ap: AccessPoint, psk: str) -> Path:
+    """Write a WPS-PBC credential to a new file."""
+    return _write_psk(ap.ssid, ap.bssid, psk, "_wps_pbc.txt")
 
 
 # ----- WPA PSK --------------------------------------------------------------
 
-def save_wpa_psk(ssid: str | None, bssid: str, psk: str) -> Optional[SaveResult]:
-    """Persist a passphrase recovered from a handshake/PMKID. Dedupes by PSK for this BSSID."""
-    return _save_psk(ssid, bssid, psk, "_wpa_psk.txt")
+def write_wpa_psk(ssid: str | None, bssid: str, psk: str) -> Path:
+    """Write a passphrase recovered from a handshake/PMKID to a new file."""
+    return _write_psk(ssid, bssid, psk, "_wpa_psk.txt")
 
 
-def _save_psk(ssid: str | None, bssid: str, psk: str, suffix: str) -> Optional[SaveResult]:
+def _write_psk(ssid: str | None, bssid: str, psk: str, suffix: str) -> Path:
     captures_dir = Path(Config.captures_dir)
-    if not psk:
-        return None
-    for p in _existing(captures_dir, bssid, suffix):
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        m = WPS_PSK_RE.search(text)
-        if m and m.group(1).strip() == psk:
-            return SaveResult(path=p, was_new=False)
-
     captures_dir.mkdir(parents=True, exist_ok=True)
     path = fresh_path(captures_dir, ssid, bssid, suffix)
     body = (
@@ -382,4 +342,4 @@ def _save_psk(ssid: str | None, bssid: str, psk: str, suffix: str) -> Optional[S
         f"PSK: {psk}\n"
     )
     path.write_text(body, encoding="utf-8")
-    return SaveResult(path=path, was_new=True)
+    return path

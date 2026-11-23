@@ -17,7 +17,7 @@ from wifit3.models import AccessPoint, CaptureType, ToolName
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.exhaustion import record_exhausted
 from wifit3.persist.vault import Vault
-from wifit3.ui.app import WifiteApp
+from wifit3.ui.app import VAULT_TABLE_RELOAD_DELAY_S, WifiteApp
 from wifit3.persist.pcap import write_pcap
 from wifit3.ui.screens.vault.drawer import VaultDrawer, _ap_contents_text
 from wifit3.ui.screens.vault.handshakes import UncrackedHandshakeList
@@ -274,7 +274,7 @@ async def test_a_burst_of_vault_changes_refreshes_the_drawer_once(mocker):
 
         for bssid in ("aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:01"):
             app.vault.notify_changed(bssid)
-        await pilot.pause(0)
+        await pilot.pause(VAULT_TABLE_RELOAD_DELAY_S * 2)
 
         vault_changed.assert_called_once_with()
 

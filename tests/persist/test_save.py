@@ -8,10 +8,10 @@ from wifit3.persist.save import (
     consolidate_hc_files,
     save_handshake,
     save_pmkid,
-    save_wep_key,
-    save_wpa_psk,
-    save_wps_pbc,
-    save_wps_pin,
+    write_wep_key,
+    write_wpa_psk,
+    write_wps_pbc,
+    write_wps_pin,
 )
 
 
@@ -206,179 +206,77 @@ class TestSavePmkid:
         assert save_pmkid(ap, "11:22:33:44:55:66") is None
 
 
-# ---- save_wep_key ----------------------------------------------------------
+# ---- write_wep_key ---------------------------------------------------------
 
-class TestSaveWepKey:
+class TestWriteWepKey:
     def test_writes_ascii_when_printable(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        result = save_wep_key(ap, b"abcde")
-        assert result is not None and result.was_new is True
-        assert result.path.name.endswith("_wep_key.txt")
-        body = result.path.read_text(encoding="utf-8")
+        path = write_wep_key(ap, b"abcde")
+        assert path.name.endswith("_wep_key.txt")
+        body = path.read_text(encoding="utf-8")
         assert "WEP key (hex):   6162636465" in body
         assert 'WEP key (ASCII): "abcde"' in body
 
     def test_writes_hex_only_when_non_printable(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        result = save_wep_key(ap, b"\x00\x01\x02\x03\x04")
-        body = result.path.read_text(encoding="utf-8")
+        body = write_wep_key(ap, b"\x00\x01\x02\x03\x04").read_text(encoding="utf-8")
         assert "WEP key (hex):   0001020304" in body
         assert "ASCII" not in body
 
-    def test_dedupes_same_key_and_returns_existing_path(self, tmp_path):
+    def test_same_key_twice_writes_two_files(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        first = save_wep_key(ap, b"abcde")
-        assert first is not None and first.was_new is True
-        again = save_wep_key(ap, b"abcde")
-        assert again is not None and again.was_new is False
-        assert again.path == first.path
-
-    def test_different_key_writes_new(self, tmp_path):
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        save_wep_key(ap, b"abcde")
-        second = save_wep_key(ap, b"fghij")
-        assert second is not None and second.was_new is True
+        assert write_wep_key(ap, b"abcde") != write_wep_key(ap, b"abcde")
 
     def test_hidden_ssid_uses_fallback_filename(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid=None)
-        result = save_wep_key(ap, b"abcde")
-        assert result is not None
-        assert result.path.name.startswith("hidden_")
-        body = result.path.read_text(encoding="utf-8")
-        assert "SSID:  <hidden>" in body
-
-    def test_empty_key_returns_none(self, tmp_path):
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        assert save_wep_key(ap, b"") is None
+        path = write_wep_key(ap, b"abcde")
+        assert path.name.startswith("hidden_")
+        assert "SSID:  <hidden>" in path.read_text(encoding="utf-8")
 
 
-# ---- save_wps_pin / save_wps_pbc ------------------------------------------
+# ---- write_wps_pin / write_wps_pbc ------------------------------------------
 
-class TestSaveWpsPin:
+class TestWriteWpsPin:
     def test_writes_with_psk_and_pin(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        result = save_wps_pin(ap, "12345670", "abcdefgh")
-        assert result is not None and result.was_new is True
-        assert result.path.name.endswith("_wps_pin.txt")
-        body = result.path.read_text(encoding="utf-8")
+        path = write_wps_pin(ap, "12345670", "abcdefgh")
+        assert path.name.endswith("_wps_pin.txt")
+        body = path.read_text(encoding="utf-8")
         assert "SSID: HomeNet" in body
         assert "BSSID: aa:bb:cc:dd:ee:ff" in body
         assert "PSK: abcdefgh" in body
         assert "PIN: 12345670" in body
         assert "method:" not in body
 
-    def test_dedupes_same_pin_and_psk_returns_existing_path(self, tmp_path):
+    def test_pin_only_writes_no_psk_line(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        first = save_wps_pin(ap, "12345670", "abcdefgh")
-        assert first is not None and first.was_new is True
-        again = save_wps_pin(ap, "12345670", "abcdefgh")
-        assert again is not None and again.was_new is False
-        assert again.path == first.path
-
-    def test_psk_rotation_writes_new(self, tmp_path):
-        # Same PIN but PSK rotated, high-value: re-verify caught the rotation.
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        save_wps_pin(ap, "12345670", "oldpsk")
-        second = save_wps_pin(ap, "12345670", "newpsk")
-        assert second is not None and second.was_new is True
-
-    def test_empty_pin_is_written_and_deduplicated(self, tmp_path):
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        first = save_wps_pin(ap, "", "psk")
-        assert first is not None and first.was_new is True
-        assert "PIN: \n" in first.path.read_text(encoding="utf-8")
-        again = save_wps_pin(ap, "", "psk")
-        assert again is not None and again.was_new is False
-        assert again.path == first.path
-
-    def test_legacy_empty_pin_label_is_deduplicated(self, tmp_path):
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        existing = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_wps_pin.txt"
-        existing.write_text(
-            "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: psk\nPIN: <empty>\n",
-            encoding="utf-8",
-        )
-
-        result = save_wps_pin(ap, "", "psk")
-
-        assert result is not None and result.was_new is False
-        assert result.path == existing
-
-    def test_pin_only_writes_no_psk_line_and_dedupes(self, tmp_path):
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        first = save_wps_pin(ap, "12345670", None)
-        assert first is not None and first.was_new is True
-        body = first.path.read_text(encoding="utf-8")
+        body = write_wps_pin(ap, "12345670", None).read_text(encoding="utf-8")
         assert "PSK" not in body and "PIN: 12345670" in body
-        again = save_wps_pin(ap, "12345670", None)
-        assert again is not None and again.was_new is False
-        assert save_wps_pin(ap, "12345670", "abcdefgh").was_new is True
 
-    def test_empty_psk_returns_none(self, tmp_path):
+    def test_empty_pin_is_written(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        assert save_wps_pin(ap, "12345670", "") is None
+        assert "PIN: \n" in write_wps_pin(ap, "", "psk").read_text(encoding="utf-8")
 
 
-class TestSaveWpsPbc:
+class TestWriteWpsPbc:
     def test_writes_psk_only(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        result = save_wps_pbc(ap, "abcdefgh")
-        assert result is not None and result.was_new is True
-        assert result.path.name.endswith("_wps_pbc.txt")
-        body = result.path.read_text(encoding="utf-8")
+        path = write_wps_pbc(ap, "abcdefgh")
+        assert path.name.endswith("_wps_pbc.txt")
+        body = path.read_text(encoding="utf-8")
         assert "PSK: abcdefgh" in body
         assert "PIN:" not in body
         assert "method:" not in body
 
-    def test_dedupes_same_psk_returns_existing_path(self, tmp_path):
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        first = save_wps_pbc(ap, "abcdefgh")
-        assert first is not None and first.was_new is True
-        again = save_wps_pbc(ap, "abcdefgh")
-        assert again is not None and again.was_new is False
-        assert again.path == first.path
 
-    def test_different_psk_writes_new(self, tmp_path):
-        ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
-        save_wps_pbc(ap, "psk1")
-        second = save_wps_pbc(ap, "psk2")
-        assert second is not None and second.was_new is True
+# ---- write_wpa_psk ----------------------------------------------------------
 
-
-# ---- save_wpa_psk -----------------------------------------------------------
-
-class TestSaveWpaPsk:
+class TestWriteWpaPsk:
     def test_writes_ssid_bssid_and_psk(self, tmp_path):
-        result = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
-        assert result is not None and result.was_new is True
-        assert result.path.name.endswith("_wpa_psk.txt")
-        assert result.path.read_text(encoding="utf-8") == (
+        path = write_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+        assert path.name.endswith("_wpa_psk.txt")
+        assert path.read_text(encoding="utf-8") == (
             "SSID: Cafe WiFi\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: hashcat!\n")
-
-    def test_dedupes_same_bssid_and_psk_returns_existing_path(self, tmp_path):
-        first = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
-        again = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
-        assert again is not None and again.was_new is False
-        assert first is not None and again.path == first.path
-
-    def test_different_psk_or_bssid_writes_new(self, tmp_path):
-        save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
-        other_psk = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat?")
-        other_bssid = save_wpa_psk("Cafe WiFi", "11:22:33:44:55:66", "hashcat!")
-        assert other_psk is not None and other_psk.was_new is True
-        assert other_bssid is not None and other_bssid.was_new is True
-
-    def test_does_not_dedupe_against_a_wps_file(self, tmp_path):
-        save_wps_pbc(AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="Cafe WiFi"), "hashcat!")
-        result = save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
-        assert result is not None and result.was_new is True
-
-    def test_dedupes_against_an_upper_case_file_name_and_skips_directories(self, tmp_path):
-        (tmp_path / "Cafe_AA-BB-CC-DD-EE-FF_1_dir_wpa_psk.txt").mkdir()
-        upper = tmp_path / "Cafe_AA-BB-CC-DD-EE-FF_1_WPA_PSK.TXT"
-        upper.write_text("SSID: Cafe\nBSSID: AA:BB:CC:DD:EE:FF\nPSK: hashcat!\n", encoding="utf-8")
-        result = save_wpa_psk("Cafe", "aa:bb:cc:dd:ee:ff", "hashcat!")
-        assert result is not None and result.was_new is False and result.path == upper
 
 
 # ---- SSID sanitization (path traversal) ------------------------------------
@@ -386,16 +284,15 @@ class TestSaveWpaPsk:
 class TestSsidSanitization:
     def test_traversal_chars_neutered(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="../evil name/")
-        result = save_wps_pbc(ap, "psk")
-        assert result is not None
-        assert result.path.parent == tmp_path
-        assert "/" not in result.path.name and "\\" not in result.path.name
+        path = write_wps_pbc(ap, "psk")
+        assert path.parent == tmp_path
+        assert "/" not in path.name and "\\" not in path.name
 
     def test_long_ssid_truncated(self, tmp_path):
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="A" * 100)
-        result = save_wps_pbc(ap, "psk")
+        path = write_wps_pbc(ap, "psk")
         # 32 cap on the ssid portion; the bssid+epoch+suffix follow.
-        ssid_part = result.path.name.split("_aa-bb-cc-dd-ee-ff_")[0]
+        ssid_part = path.name.split("_aa-bb-cc-dd-ee-ff_")[0]
         assert len(ssid_part) == 32
 
 

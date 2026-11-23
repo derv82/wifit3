@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, List, Optional, Set
 
@@ -48,6 +49,8 @@ Header.ALLOW_SELECT = False
 HeaderTitle.ALLOW_SELECT = False
 HeaderIcon.ALLOW_SELECT = False
 HeaderClock.ALLOW_SELECT = False
+
+VAULT_TABLE_RELOAD_DELAY_S = 0.2
 
 
 class WifiteApp(App):
@@ -185,6 +188,7 @@ class WifiteApp(App):
                 self._config_error = str(e)
         self._vault_notices_lock = threading.Lock()
         self._vault_refresh_pending = False     # a table refresh is scheduled for the notices so far
+        self._vault_last_notice = 0.0
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
 
@@ -352,20 +356,25 @@ class WifiteApp(App):
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
 
     def _vault_changed(self, bssid: Optional[str]) -> None:
-        """Any thread: one table refresh per tick, however many notices the Vault sends. None once the
+        """Any thread: the table reloads once notices stop for VAULT_TABLE_RELOAD_DELAY_S. None once the
         app has stopped (a PSK propagation can finish after quit)."""
         with self._vault_notices_lock:
+            self._vault_last_notice = time.monotonic()
             if self._vault_refresh_pending:
                 return
             self._vault_refresh_pending = True
         if threading.current_thread() is threading.main_thread():    # the app runs on the main thread
-            self.call_later(self._refresh_vault_table)
+            self.set_timer(VAULT_TABLE_RELOAD_DELAY_S, self._refresh_vault_table)
         elif self.is_running:
-            self.call_from_thread(self.call_later, self._refresh_vault_table)
+            self.call_from_thread(self.set_timer, VAULT_TABLE_RELOAD_DELAY_S, self._refresh_vault_table)
 
     def _refresh_vault_table(self) -> None:
-        """Reload the vault table if its drawer is open."""
+        """Reload the vault table if its drawer is open; wait again if a notice came in meanwhile."""
         with self._vault_notices_lock:
+            quiet_for = time.monotonic() - self._vault_last_notice
+            if quiet_for < VAULT_TABLE_RELOAD_DELAY_S:
+                self.set_timer(VAULT_TABLE_RELOAD_DELAY_S - quiet_for, self._refresh_vault_table)
+                return
             self._vault_refresh_pending = False
         if isinstance(self.screen, VaultDrawer):
             try:
