@@ -61,7 +61,7 @@ def write_pcap(path: Path, records: Iterable[tuple[bytes, float]]) -> int:
     return count
 
 
-def read_pcap(path: Path) -> Iterator[tuple[bytes, int]]:
+def read_pcap(path: Path) -> Iterator[tuple[bytes, float]]:
     """``(frame, epoch seconds)`` of each record in a little-endian pcap written by ``write_pcap``;
     nothing for any other format or an unreadable file."""
     try:
@@ -72,9 +72,9 @@ def read_pcap(path: Path) -> Iterator[tuple[bytes, int]]:
         return
     offset = 24
     while offset + 16 <= len(data):
-        ts_sec, _, length, _ = struct.unpack_from("<IIII", data, offset)
+        ts_sec, ts_usec, length, _ = struct.unpack_from("<IIII", data, offset)
         offset += 16
-        yield data[offset:offset + length], ts_sec
+        yield data[offset:offset + length], ts_sec + ts_usec / 1_000_000
         offset += length
 
 

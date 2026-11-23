@@ -54,6 +54,12 @@ def test_write_pcap_preserves_per_frame_timestamps(tmp_path):
     assert _record_header(path, 1)[:2] == (1002, 250000)
 
 
+def test_read_pcap_keeps_microseconds(tmp_path):
+    path = tmp_path / "c.pcap"
+    write_pcap(path, [(_beacon_body(), 100.25)])
+    assert list(read_pcap(path)) == [(_beacon_body(), 100.25)]
+
+
 _CLIENT = "11:22:33:44:55:66"
 _ANONCE = b"\xaa" * 32
 _SNONCE = b"\x22" * 32
