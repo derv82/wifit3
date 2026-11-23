@@ -12,8 +12,8 @@ from textual.widgets import DataTable, Label
 
 from wifit3.persist.ap_state import ApState
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.screens.vault_drawer import VaultDrawer
-from wifit3.ui.screens.vault_item import VaultItemView, _ApStatePanel, _KeyRow
+from wifit3.ui.screens.vault.drawer import VaultDrawer
+from wifit3.ui.screens.vault.item import VaultItemView, _ApStatePanel, _KeyRow
 
 T = TypeVar("T")
 

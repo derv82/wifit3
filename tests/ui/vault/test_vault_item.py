@@ -3,7 +3,7 @@ import time
 from wifit3.crack.hc22000_format import hashline_id, parse_hc22000
 from wifit3.models import CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, DatedHashline, Key, PasswordStatus
-from wifit3.ui.screens.vault_item import _KeyRow, date_text, hashline_groups, key_text
+from wifit3.ui.screens.vault.item import _KeyRow, date_text, hashline_groups, key_text
 
 _LINE = "WPA*02*{mic}*aabbccddeeff*{sta}*486f6d65*" + "a" * 64 + "*" + "00" * 99 + "*{pair}"
 

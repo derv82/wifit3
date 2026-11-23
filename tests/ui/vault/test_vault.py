@@ -18,12 +18,12 @@ from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.exhaustion import record_exhausted
 from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.screens.vault_drawer import VaultDrawer, _ap_contents_text
-from wifit3.ui.screens.vault_table import VaultTable
-from wifit3.ui.screens.vault_item import (DeleteKeyPressed, VaultItemView, date_text, hashline_groups, _ApStatePanel,
+from wifit3.ui.screens.vault.drawer import VaultDrawer, _ap_contents_text
+from wifit3.ui.screens.vault.table import VaultTable
+from wifit3.ui.screens.vault.item import (DeleteKeyPressed, VaultItemView, date_text, hashline_groups, _ApStatePanel,
                                           _CrackerButton, _exhausted_count_text, _exhausted_names, _hashline_prompt,
                                           _no_crackable_text, _UncrackedList)
-from wifit3.ui.vault.modals.add_credential import ManualCredential
+from wifit3.ui.screens.vault.modals.add_credential import ManualCredential
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates

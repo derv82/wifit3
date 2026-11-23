@@ -32,7 +32,7 @@ from wifit3.persist.ap_state import (
 from wifit3.persist.exhaustion import ExhaustedWordlist
 from wifit3.ui.colors import KEY_CHIP_STYLE, PASSWORD_MISMATCH_COLOR
 from wifit3.ui.encryption_format import wep_key_ascii
-from wifit3.ui.screens.vault_breakpoints import NARROW, SHORT, TALL, TINY, WIDE
+from wifit3.ui.screens.vault.breakpoints import NARROW, SHORT, TALL, TINY, WIDE
 from wifit3.ui.vault.tools_ui import UI_TOOLS
 from wifit3.vault.tools.base import VaultTool
 

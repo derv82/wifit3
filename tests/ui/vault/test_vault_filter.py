@@ -1,5 +1,5 @@
 """The Vault filter match: case, width and accent folding."""
-from wifit3.ui.screens.vault_table import matches_filter
+from wifit3.ui.screens.vault.table import matches_filter
 
 
 def test_matches_filter_folds_case_width_and_accents():

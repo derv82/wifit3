@@ -36,7 +36,7 @@ from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
-from .screens.vault_drawer import VaultDrawer
+from .screens.vault.drawer import VaultDrawer
 from .clipboard import copy_copyq_text, copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes

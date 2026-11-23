@@ -6,7 +6,7 @@ from textual.widgets import Label
 
 from tests.ui.wait_until import wait_until
 from wifit3.models.jobs import JobAction, JobState, ToolStatus
-from wifit3.ui.vault.job_pane import (
+from wifit3.ui.screens.vault.job_pane import (
     JobActionButton, JobPauseButton, JobRow, JobSkipButton, JobTrackerPane,
 )
 

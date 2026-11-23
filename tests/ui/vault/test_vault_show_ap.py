@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 from wifit3.campaigns.campaign import Campaign
 from wifit3.models import AccessPoint
-from wifit3.ui.screens.vault_drawer import VaultDrawer
-from wifit3.ui.screens.vault_item import ShowApPressed, _ApStatePanel
+from wifit3.ui.screens.vault.drawer import VaultDrawer
+from wifit3.ui.screens.vault.item import ShowApPressed, _ApStatePanel
 
 BSSID = "aa:bb:cc:dd:ee:01"
 

@@ -9,14 +9,14 @@ from textual.screen import ModalScreen
 from textual import events, on, work
 from textual.binding import Binding
 
-from .vault_breakpoints import COMPACT, NARROW, SHORT, TALL, TINY, WIDE
-from .vault_table import VaultTable
-from .vault_item import AddKeyPressed, DeleteKeyPressed, ShowApPressed, VaultItemView, key_description
+from .breakpoints import COMPACT, NARROW, SHORT, TALL, TINY, WIDE
+from .table import VaultTable
+from .item import AddKeyPressed, DeleteKeyPressed, ShowApPressed, VaultItemView, key_description
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, is_confirmed
-from wifit3.ui.vault.job_pane import JobTrackerPane
-from wifit3.ui.vault.modals.add_credential import AddCredentialModal, ManualCredential
-from wifit3.ui.vault.modals.confirm import ConfirmModal
+from wifit3.ui.screens.vault.job_pane import JobTrackerPane
+from wifit3.ui.screens.vault.modals.add_credential import AddCredentialModal, ManualCredential
+from wifit3.ui.screens.vault.modals.confirm import ConfirmModal
 from wifit3.ui.modals.nickname import NicknameModal
 
 

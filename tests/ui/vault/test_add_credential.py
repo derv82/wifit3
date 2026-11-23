@@ -2,7 +2,7 @@
 import pytest
 
 from wifit3.models import CaptureType
-from wifit3.ui.vault.modals.add_credential import credential_error
+from wifit3.ui.screens.vault.modals.add_credential import credential_error
 
 _BSSID = "aa:bb:cc:dd:ee:ff"
 

@@ -7,7 +7,7 @@ from wifit3.models import AccessPoint
 from wifit3.persist import ap_state
 from wifit3.persist.vault import Vault
 from wifit3.ui.app import WifiteApp
-from wifit3.ui.screens.vault_drawer import VaultDrawer
+from wifit3.ui.screens.vault.drawer import VaultDrawer
 from textual.worker import WorkerCancelled, WorkerFailed
 
 from tests.ui.wait_until import wait_until
