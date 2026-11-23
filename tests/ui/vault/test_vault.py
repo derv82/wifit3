@@ -9,7 +9,7 @@ from typing import Callable
 import pytest
 from textual import events
 from textual.app import ComposeResult
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Label
 
 from wifit3.crack.hc22000_format import hashline_id
@@ -28,6 +28,8 @@ from wifit3.ui.screens.vault.item import VaultItemView, _ApStatePanel, _no_crack
 from wifit3.ui.screens.vault.key_row import DeleteKeyPressed
 from wifit3.ui.screens.vault.rows import date_text
 from wifit3.ui.screens.vault.modals.add_credential import ManualCredential
+from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
+from wifit3.vault.tools.dwpa_api import PotfileEntry, parse_potfile
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
@@ -115,6 +117,16 @@ async def _wait_until(pilot, condition: Callable[[], bool]) -> None:
     while not condition():
         assert time.monotonic() < deadline, "condition never held"
         await pilot.pause(0)
+
+
+async def _open_vault(app, pilot, bssid: str | None = None) -> VaultDrawer:
+    """Push the drawer and wait until it has laid out its content, opened and judged its PSKs."""
+    drawer = VaultDrawer(bssid)
+    await app.push_screen(drawer)
+    await _wait_until(pilot, lambda: drawer.has_class("open"))
+    await app.workers.wait_for_complete()
+    await pilot.pause(0)
+    return drawer
 
 
 async def _open_item_view(app, pilot, bssid: str) -> VaultItemView:
@@ -373,15 +385,88 @@ async def test_saving_the_psk_hides_the_uncracked_handshakes(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_dwpa_button_is_disabled_with_a_work_in_progress_tooltip(tmp_path):
+async def test_the_dwpa_button_opens_the_modal_for_the_highlighted_handshake(tmp_path, mocker):
     _write_handshake_pcap(tmp_path)
     app = _VaultApp()
     async with app.run_test() as pilot:
         item = await _open_item_view(app, pilot, _BSSID)
-        button = item.query_one(_ApStatePanel)._dwpa_button
+        push = mocker.patch.object(app, "push_screen")
+        panel = item.query_one(_ApStatePanel)
 
-        assert button.disabled
-        assert button.tooltip == "Not implemented yet; work in progress"
+        panel._dwpa_button.press()
+        await pilot.pause(0)
+
+        modal = push.call_args.args[0]
+        assert isinstance(modal, DwpaConfigModal)
+        assert modal.handshake is panel._handshake_list.highlighted_handshake()
+        assert (modal.bssid, modal.ssid) == (_BSSID, _SSID)
+
+
+@pytest.mark.asyncio
+async def test_a_dwpa_upload_is_confirmed_when_the_modal_closes(tmp_path, mocker):
+    _write_handshake_pcap(tmp_path)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, _BSSID)
+        mocker.patch.object(app, "push_screen", side_effect=lambda modal, callback: callback(True))
+
+        item.query_one(_ApStatePanel)._dwpa_button.press()
+        await pilot.pause(0)
+
+        assert "Uploaded the handshake to DWPA" in app.notified
+
+
+@pytest.mark.asyncio
+async def test_dwpa_retrieved_keys_are_saved_as_the_aps_wpa_psk(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+        panel = item.query_one(_ApStatePanel)
+        network = PotfileEntry("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66", "HomeNet", "88888888")
+
+        panel._store_dwpa_keys([network])
+        assert app.notified[-1] == "Retrieved 1 new key from DWPA"
+        assert "88888888" in [key.value for key in app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys]
+        assert list(tmp_path.glob("HomeNet_aa-bb-cc-dd-ee-ff_*_wpa_psk.txt"))
+        panel._store_dwpa_keys([network])
+        assert app.notified[-1] == "1 key already in Vault"
+
+        other = PotfileEntry("02:00:00:00:00:02", "02:00:00:00:00:03", "Elsewhere", "hunter22")
+        panel._store_dwpa_keys([other])
+        assert app.notified[-1] == "No DWPA keys for the Vault's APs"
+        assert app.vault.persisted("02:00:00:00:00:02") == []
+
+
+@pytest.mark.asyncio
+async def test_a_dwpa_key_for_an_ssid_with_a_colon_is_split_on_the_aps_ssid(tmp_path):
+    _write(tmp_path, "My_Net_aa-bb-cc-dd-ee-ff.hc22000",
+           _EAPOL_LINE.replace("5465737431", "My:Net".encode().hex()))
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        item = await _open_item_view(app, pilot, "aa:bb:cc:dd:ee:ff")
+
+        item.query_one(_ApStatePanel)._store_dwpa_keys(
+            parse_potfile("aabbccddeeff:112233445566:My:Net:password1"))
+
+        assert [key.value for key in app.vault.ap_state("aa:bb:cc:dd:ee:ff").keys] == ["password1"]
+
+
+@pytest.mark.asyncio
+async def test_a_key_saved_while_a_modal_is_open_refreshes_the_vault(tmp_path):
+    _write(tmp_path, "HomeNet_aa-bb-cc-dd-ee-ff.hc22000", _EAPOL_LINE)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        drawer = await _open_vault(app, pilot, "aa:bb:cc:dd:ee:ff")
+        item = drawer.query_one(VaultItemView)
+        app.push_screen(ModalScreen())      # the DWPA dialog stays open while it saves
+        await pilot.pause(0)
+
+        app.vault.save_wpa_psk("HomeNet", "aa:bb:cc:dd:ee:ff", "88888888")
+        await pilot.pause(0)
+        await pilot.pause(0)
+
+        assert [key.value for key in item._state.keys] == ["88888888"]
 
 
 @pytest.mark.asyncio

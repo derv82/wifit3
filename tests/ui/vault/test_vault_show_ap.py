@@ -81,7 +81,7 @@ def _panel(array, line_count: int):
     lines = [SimpleNamespace(show_ap_button=SimpleNamespace(display=None, disabled=None, tooltip=None))
              for _ in range(line_count)]
     return SimpleNamespace(app=SimpleNamespace(array=array), _state=SimpleNamespace(bssid=BSSID),
-                           _ssid_lines=lines)
+                           _ssid_lines=lines, _dwpa_button=object())
 
 
 def test_show_ap_shows_on_the_first_ssid_line_only_while_the_ap_is_in_the_array():
@@ -118,7 +118,6 @@ def test_show_ap_press_posts_show_ap_pressed_for_the_ap_in_view():
     _, array = _array_with_ap()
     panel = _panel(array, 2)
     panel.add_key_button = object()
-    panel._dwpa_button = object()
     panel.post_message = MagicMock()
     event = SimpleNamespace(button=panel._ssid_lines[0].show_ap_button, stop=MagicMock())
 

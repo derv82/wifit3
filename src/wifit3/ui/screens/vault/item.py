@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import os
-import tempfile
-from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from rich.markup import escape
 from textual import on
@@ -29,8 +26,11 @@ from wifit3.ui.screens.vault.hashlines import (CrackerButton, UncrackedHashlineL
                                                selected_count_text)
 from wifit3.ui.screens.vault.key_row import KEY_KINDS, KeyRow, key_text
 from wifit3.ui.screens.vault.rows import date_text
+from wifit3.ui.vault.modals.dwpa import DwpaConfigModal
 from wifit3.ui.vault.tools_ui import UI_TOOLS
+from wifit3.vault.manager import log_propagation
 from wifit3.vault.tools.base import VaultTool
+from wifit3.vault.tools.dwpa_api import PotfileEntry, split_on_known_ssid
 
 
 _STATUS_COLOR = {
@@ -172,8 +172,8 @@ class _ApStatePanel(VerticalGroup):
         self._handshake_section = VerticalGroup(classes="uncracked-section")
         self._handshake_count_label = Label("")
         self._handshake_list = UncrackedHandshakeList(classes="uncracked")
-        self._dwpa_button = Button("DWPA", "primary", classes="tool-btn", disabled=True,
-                                   tooltip="Not implemented yet; work in progress")
+        self._dwpa_button = Button("DWPA", "primary", classes="tool-btn",
+                                   tooltip="Upload the highlighted handshake to a DWPA server")
 
     async def show(self, state: ApState, handshakes: tuple[FourWayHandshake, ...],
                    expanded_key_ids: frozenset[tuple[CaptureType, str]],
@@ -364,14 +364,48 @@ class _ApStatePanel(VerticalGroup):
         event.stop()
 
     def _upload_to_dwpa(self) -> None:
-        """The highlighted 4-way and its beacon, alone in a temporary pcap, for DWPA."""
         handshake = self._handshake_list.highlighted_handshake()
-        if handshake is None:
+        state = self._state
+        if handshake is None or state is None:
             return
-        fd, name = tempfile.mkstemp(suffix=".pcap")
-        os.close(fd)
-        handshake.write(Path(name))
-        # Upload Path(name) to DWPA here, then delete it.
+
+        def _on_upload(uploaded: bool | None) -> None:
+            if uploaded:
+                self.notify("Uploaded the handshake to DWPA")
+
+        self.app.push_screen(DwpaConfigModal(handshake, state.bssid, handshake.ssid or None, self._store_dwpa_keys),
+                             _on_upload)
+
+    def _store_dwpa_keys(self, networks: Sequence[PotfileEntry]) -> None:
+        added = known = 0
+        by_bssid: dict[str, list[PotfileEntry]] = {}
+        for network in networks:
+            by_bssid.setdefault(network.bssid, []).append(network)
+        for bssid, entries in by_bssid.items():
+            if not self.app.vault.persisted(bssid):
+                continue            # a DWPA network this Vault has no record of
+            state = self.app.vault.ap_state(bssid)
+            entries = [split_on_known_ssid(entry, [history.ssid for history in state.ssids])
+                       for entry in entries]
+            ssid = entries[0].ssid
+            held = {key.value for key in state.keys}
+            for psk in dict.fromkeys(entry.psk for entry in entries):
+                if psk in held:
+                    known += 1
+                    continue
+                try:
+                    self.app.vault.save_wpa_psk(ssid, bssid, psk)
+                except OSError as e:
+                    self.notify(f"Could not save {escape(ssid)}: {escape(str(e))}", severity="warning")
+                    continue
+                self.app.vault.propagate_verified_psk(bssid, ssid, psk).add_done_callback(log_propagation)
+                added += 1
+        if not added:
+            self.notify(f"{known} key{'s' if known > 1 else ''} already in Vault" if known
+                        else "No DWPA keys for the Vault's APs")
+            return
+        already = f", {known} already in Vault" if known else ""
+        self.notify(f"Retrieved {added} new key{'s' if added > 1 else ''} from DWPA{already}")
 
     def _launch_tool(self, tool: VaultTool) -> None:
         state = self._state
