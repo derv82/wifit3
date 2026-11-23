@@ -1,9 +1,5 @@
-"""Minimal libpcap writer for raw 802.11 frames.
-
-Produces a standard libpcap-format file (NOT pcapng) with linktype
-``LINKTYPE_IEEE802_11`` (105). Suitable for handing to ``hcxpcapngtool``
-(which accepts both pcap and pcapng) → ``hashcat -m 22000``.
-"""
+"""Reads 802.11 frames from pcap and pcapng files, writes raw 802.11 pcaps for ``hcxpcapngtool``,
+and reads the 4-way handshakes in them."""
 
 from __future__ import annotations
 
@@ -23,9 +19,29 @@ from wifit3.persist.config import Config
 from wifit3.persist.save import fresh_path
 
 LINKTYPE_IEEE802_11 = 105
+LINKTYPE_PRISM_HEADER = 119
+LINKTYPE_IEEE802_11_RADIOTAP = 127
 PCAP_MAGIC = 0xA1B2C3D4
+PCAP_MAGIC_NANOSECONDS = 0xA1B23C4D
+PCAP_LINKTYPE_FCS_PRESENT = 0x04000000
 PCAP_VERSION = (2, 4)
 SNAPLEN = 65535
+PCAPNG_SECTION_HEADER_BLOCK = 0x0A0D0D0A
+PCAPNG_INTERFACE_DESCRIPTION_BLOCK = 1
+PCAPNG_ENHANCED_PACKET_BLOCK = 6
+PCAPNG_BYTE_ORDER_MAGIC = 0x1A2B3C4D
+PCAPNG_IF_TSRESOL = 9
+PCAPNG_IF_FCSLEN = 13
+PCAPNG_IF_TSOFFSET = 14
+PCAPNG_TSRESOL_POWER_OF_2 = 0x80
+PCAPNG_TSRESOL_EXPONENT = 0x7F
+PRISM_MSGCODES = (0x41, 0x44)
+PRISM_HEADER_LENGTH = 144
+AVS_HEADER_LENGTH_BY_COOKIE = {0x80211001: 64, 0x80211002: 80}
+RADIOTAP_PRESENT_TSFT = 1 << 0
+RADIOTAP_PRESENT_FLAGS = 1 << 1
+RADIOTAP_PRESENT_EXT = 1 << 31
+RADIOTAP_FLAGS_FCS = 0x10
 
 
 def write_pcap(path: Path, records: Iterable[tuple[bytes, float]]) -> int:
@@ -67,20 +83,153 @@ def write_pcap(path: Path, records: Iterable[tuple[bytes, float]]) -> int:
 
 
 def read_pcap(path: Path) -> Iterator[tuple[bytes, float]]:
-    """``(frame, epoch seconds)`` of each record in a little-endian pcap written by ``write_pcap``;
-    nothing for any other format or an unreadable file."""
+    """``(802.11 frame, epoch seconds)`` of each complete record of a pcap or pcapng with raw 802.11,
+    radiotap or Prism link type, link header stripped; nothing for other link types or an unreadable file."""
     try:
         data = path.read_bytes()
     except OSError:
         return
-    if len(data) < 24 or struct.unpack_from("<I", data)[0] != PCAP_MAGIC:
+    if data[:4] == PCAPNG_SECTION_HEADER_BLOCK.to_bytes(4, "little"):
+        packets = _pcapng_packets(data)
+    else:
+        packets = _pcap_packets(data)
+    for linktype, fcs_length, packet, timestamp in packets:
+        frame = _strip_link_header(linktype, fcs_length, packet)
+        if frame is not None:
+            yield frame, timestamp
+
+
+def _pcap_packets(data: bytes) -> Iterator[tuple[int, int, bytes, float]]:
+    if len(data) < 24:
         return
+    magic = data[:4]
+    if magic == PCAP_MAGIC.to_bytes(4, "little"):
+        order, units_per_second = "<", 1_000_000
+    elif magic == PCAP_MAGIC.to_bytes(4, "big"):
+        order, units_per_second = ">", 1_000_000
+    elif magic == PCAP_MAGIC_NANOSECONDS.to_bytes(4, "little"):
+        order, units_per_second = "<", 1_000_000_000
+    elif magic == PCAP_MAGIC_NANOSECONDS.to_bytes(4, "big"):
+        order, units_per_second = ">", 1_000_000_000
+    else:
+        return
+    linktype_field = struct.unpack_from(order + "I", data, 20)[0]
+    fcs_length = 0
+    if linktype_field & PCAP_LINKTYPE_FCS_PRESENT:
+        fcs_words = linktype_field >> 28
+        fcs_length = 2 * fcs_words
     offset = 24
     while offset + 16 <= len(data):
-        ts_sec, ts_usec, length, _ = struct.unpack_from("<IIII", data, offset)
+        ts_sec, ts_fraction, length, original_length = struct.unpack_from(order + "IIII", data, offset)
         offset += 16
-        yield data[offset:offset + length], ts_sec + ts_usec / 1_000_000
+        if offset + length > len(data):
+            return
+        if original_length <= length:
+            yield (linktype_field & 0xFFFF, fcs_length, data[offset:offset + length],
+                   ts_sec + ts_fraction / units_per_second)
         offset += length
+
+
+def _pcapng_packets(data: bytes) -> Iterator[tuple[int, int, bytes, float]]:
+    order = "<"
+    interfaces: list[tuple[int, int, int, int]] = []
+    offset = 0
+    while offset + 12 <= len(data):
+        block_type = struct.unpack_from(order + "I", data, offset)[0]
+        if block_type == PCAPNG_SECTION_HEADER_BLOCK:
+            byte_order_magic = data[offset + 8:offset + 12]
+            if byte_order_magic == PCAPNG_BYTE_ORDER_MAGIC.to_bytes(4, "little"):
+                order = "<"
+            elif byte_order_magic == PCAPNG_BYTE_ORDER_MAGIC.to_bytes(4, "big"):
+                order = ">"
+            else:
+                return
+            interfaces = []
+        block_length = struct.unpack_from(order + "I", data, offset + 4)[0]
+        if block_length < 12 or offset + block_length > len(data):
+            return
+        body = data[offset + 8:offset + block_length - 4]
+        if block_type == PCAPNG_INTERFACE_DESCRIPTION_BLOCK and len(body) >= 8:
+            interfaces.append(_pcapng_interface(order, body))
+        elif block_type == PCAPNG_ENHANCED_PACKET_BLOCK and len(body) >= 20:
+            interface_id, ts_high, ts_low, length, original_length = struct.unpack_from(order + "IIIII", body)
+            if interface_id < len(interfaces) and 20 + length <= len(body) and original_length <= length:
+                linktype, fcs_length, units_per_second, ts_offset = interfaces[interface_id]
+                timestamp = ts_offset + ((ts_high << 32) | ts_low) / units_per_second
+                yield linktype, fcs_length, body[20:20 + length], timestamp
+        offset += block_length
+
+
+def _pcapng_interface(order: str, body: bytes) -> tuple[int, int, int, int]:
+    """``(link type, FCS length, timestamp units per second, timestamp offset in seconds)`` of an IDB body."""
+    fcs_length = 0
+    units_per_second = 1_000_000
+    ts_offset = 0
+    option_offset = 8
+    while option_offset + 4 < len(body):
+        code, length = struct.unpack_from(order + "HH", body, option_offset)
+        value_offset = option_offset + 4
+        if value_offset + length > len(body):
+            break
+        if code == PCAPNG_IF_TSRESOL and length == 1:
+            tsresol = body[value_offset]
+            if tsresol & PCAPNG_TSRESOL_POWER_OF_2:
+                units_per_second = 2 ** (tsresol & PCAPNG_TSRESOL_EXPONENT)
+            else:
+                units_per_second = 10 ** tsresol
+        elif code == PCAPNG_IF_FCSLEN and length == 1:
+            fcs_bits = body[value_offset]
+            fcs_length = fcs_bits // 8
+        elif code == PCAPNG_IF_TSOFFSET and length == 8:
+            ts_offset = struct.unpack_from(order + "q", body, value_offset)[0]
+        option_offset = value_offset + (length + 3) // 4 * 4
+    return struct.unpack_from(order + "H", body)[0], fcs_length, units_per_second, ts_offset
+
+
+def _strip_prism_header(packet: bytes) -> Optional[bytes]:
+    if len(packet) < 8:
+        return None
+    avs_cookie = struct.unpack_from(">I", packet)[0]
+    if avs_cookie in AVS_HEADER_LENGTH_BY_COOKIE:
+        minimum_length = AVS_HEADER_LENGTH_BY_COOKIE[avs_cookie]
+        header_length = struct.unpack_from(">I", packet, 4)[0]
+    elif avs_cookie in PRISM_MSGCODES:
+        minimum_length = PRISM_HEADER_LENGTH
+        header_length = struct.unpack_from(">I", packet, 4)[0]
+    elif struct.unpack_from("<I", packet)[0] in PRISM_MSGCODES:
+        minimum_length = PRISM_HEADER_LENGTH
+        header_length = struct.unpack_from("<I", packet, 4)[0]
+    else:
+        return packet
+    if header_length < minimum_length or header_length > len(packet):
+        return None
+    return packet[header_length:]
+
+
+def _strip_link_header(linktype: int, fcs_length: int, packet: bytes) -> Optional[bytes]:
+    if linktype == LINKTYPE_IEEE802_11:
+        if fcs_length > len(packet):
+            return None
+        return packet[:len(packet) - fcs_length]
+    if linktype == LINKTYPE_PRISM_HEADER:
+        return _strip_prism_header(packet)
+    if linktype != LINKTYPE_IEEE802_11_RADIOTAP or len(packet) < 8:
+        return None
+    header_length, present = struct.unpack_from("<HI", packet, 2)
+    if header_length < 8 or header_length > len(packet):
+        return None
+    frame = packet[header_length:]
+    if present & RADIOTAP_PRESENT_FLAGS:
+        fields_offset = 8
+        present_word = present
+        while present_word & RADIOTAP_PRESENT_EXT and fields_offset + 4 <= header_length:
+            present_word = struct.unpack_from("<I", packet, fields_offset)[0]
+            fields_offset += 4
+        if present & RADIOTAP_PRESENT_TSFT:
+            fields_offset = (fields_offset + 7) // 8 * 8 + 8
+        if fields_offset < header_length and packet[fields_offset] & RADIOTAP_FLAGS_FCS:
+            frame = frame[:-4]
+    return frame
 
 
 @dataclass(frozen=True)

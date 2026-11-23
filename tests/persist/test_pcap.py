@@ -2,11 +2,35 @@
 FCS-less MPDU bodies (every chip driver strips at RX ingress), so the writer
 no longer second-guesses the frame tail."""
 
+import struct
+
+import pytest
+
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, data_header, eapol_key, set_mic
 from wifit3.dot11.mac import BROADCAST_MAC, mac_header
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic
 from wifit3.models import AccessPoint, Handshake, HandshakeMessage
-from wifit3.persist.pcap import HandshakePcaps, read_handshakes, read_pcap, write_pcap
+from wifit3.persist.pcap import (
+    LINKTYPE_IEEE802_11,
+    LINKTYPE_IEEE802_11_RADIOTAP,
+    LINKTYPE_PRISM_HEADER,
+    PCAP_LINKTYPE_FCS_PRESENT,
+    PCAP_MAGIC_NANOSECONDS,
+    PCAPNG_ENHANCED_PACKET_BLOCK,
+    PCAPNG_IF_FCSLEN,
+    PCAPNG_IF_TSOFFSET,
+    PCAPNG_IF_TSRESOL,
+    PCAPNG_INTERFACE_DESCRIPTION_BLOCK,
+    PCAPNG_SECTION_HEADER_BLOCK,
+    RADIOTAP_FLAGS_FCS,
+    RADIOTAP_PRESENT_EXT,
+    RADIOTAP_PRESENT_FLAGS,
+    RADIOTAP_PRESENT_TSFT,
+    HandshakePcaps,
+    read_handshakes,
+    read_pcap,
+    write_pcap,
+)
 
 
 def _first_packet(path) -> bytes:
@@ -61,6 +85,168 @@ def test_read_pcap_keeps_microseconds(tmp_path):
     path = tmp_path / "c.pcap"
     write_pcap(path, [(_beacon_body(), 100.25)])
     assert list(read_pcap(path)) == [(_beacon_body(), 100.25)]
+
+
+def test_read_pcap_reads_big_endian_nanosecond_pcap(tmp_path):
+    path = tmp_path / "be.pcap"
+    body = _beacon_body()
+    path.write_bytes(struct.pack(">IHHiIII", PCAP_MAGIC_NANOSECONDS, 2, 4, 0, 0, 65535, LINKTYPE_IEEE802_11)
+                     + struct.pack(">IIII", 100, 250_000_000, len(body), len(body)) + body)
+    assert list(read_pcap(path)) == [(body, 100.25)]
+
+
+def test_read_pcap_skips_a_truncated_last_record(tmp_path):
+    path = tmp_path / "a.pcap"
+    write_pcap(path, [(_beacon_body(), 100.0), (_beacon_body(), 101.0)])
+    path.write_bytes(path.read_bytes()[:-1])
+    assert list(read_pcap(path)) == [(_beacon_body(), 100.0)]
+
+
+def _pcapng_block(order: str, block_type: int, body: bytes) -> bytes:
+    body += bytes(-len(body) % 4)
+    length = 12 + len(body)
+    return struct.pack(order + "II", block_type, length) + body + struct.pack(order + "I", length)
+
+
+def _pcapng_section(order: str) -> bytes:
+    return _pcapng_block(order, PCAPNG_SECTION_HEADER_BLOCK, struct.pack(order + "IHHq", 0x1A2B3C4D, 1, 0, -1))
+
+
+def _pcapng_option(order: str, code: int, value: bytes) -> bytes:
+    return struct.pack(order + "HH", code, len(value)) + value + bytes(-len(value) % 4)
+
+
+def _pcapng_interface(order: str, linktype: int, *options: bytes) -> bytes:
+    return _pcapng_block(order, PCAPNG_INTERFACE_DESCRIPTION_BLOCK,
+                         struct.pack(order + "HHI", linktype, 0, 65535) + b"".join(options) + bytes(4))
+
+
+def _pcapng_packet(order: str, interface_id: int, timestamp: int, packet: bytes, original_length: int = 0) -> bytes:
+    header = struct.pack(order + "IIIII", interface_id, timestamp >> 32, timestamp & 0xFFFFFFFF,
+                         len(packet), original_length or len(packet))
+    return _pcapng_block(order, PCAPNG_ENHANCED_PACKET_BLOCK, header + packet)
+
+
+@pytest.mark.parametrize("order", ["<", ">"])
+def test_read_pcap_reads_pcapng_sections_and_interfaces(tmp_path, order):
+    body = _beacon_body()
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(
+        _pcapng_section(order)
+        + _pcapng_interface(order, LINKTYPE_IEEE802_11)
+        + _pcapng_interface(order, LINKTYPE_IEEE802_11, _pcapng_option(order, PCAPNG_IF_TSRESOL, bytes([9])))
+        + _pcapng_block(order, 4, bytes(8))
+        + _pcapng_packet(order, 0, 100_250_000, body)
+        + _pcapng_packet(order, 1, 200_500_000_000, body)
+        + _pcapng_section(order)
+        + _pcapng_interface(order, LINKTYPE_IEEE802_11, _pcapng_option(order, PCAPNG_IF_TSRESOL, bytes([0x81])))
+        + _pcapng_packet(order, 0, 601, body))
+    assert list(read_pcap(path)) == [(body, 100.25), (body, 200.5), (body, 300.5)]
+
+
+def test_read_pcap_skips_a_truncated_pcapng_block(tmp_path):
+    path = tmp_path / "a.pcapng"
+    data = _pcapng_section("<") + _pcapng_interface("<", LINKTYPE_IEEE802_11) + _pcapng_packet("<", 0, 0, _beacon_body())
+    path.write_bytes(data[:-1])
+    assert list(read_pcap(path)) == []
+
+
+def test_read_pcap_strips_radiotap_header_and_fcs(tmp_path):
+    present = RADIOTAP_PRESENT_EXT | RADIOTAP_PRESENT_FLAGS | RADIOTAP_PRESENT_TSFT
+    radiotap = struct.pack("<BBHII", 0, 0, 25, present, 0) + bytes(4) + bytes(8) + bytes([RADIOTAP_FLAGS_FCS])
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", LINKTYPE_IEEE802_11_RADIOTAP)
+                     + _pcapng_packet("<", 0, 0, radiotap + _beacon_body() + b"FCS!"))
+    assert _frames(path) == [_beacon_body()]
+
+
+def test_read_pcap_keeps_the_frame_tail_without_radiotap_flags(tmp_path):
+    radiotap = struct.pack("<BBHI", 0, 0, 8, 0)
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", LINKTYPE_IEEE802_11_RADIOTAP)
+                     + _pcapng_packet("<", 0, 0, radiotap + _beacon_body()))
+    assert _frames(path) == [_beacon_body()]
+
+
+def test_read_pcap_strips_prism_header(tmp_path):
+    prism = struct.pack("<II", 0x41, 144) + bytes(136)
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", LINKTYPE_PRISM_HEADER)
+                     + _pcapng_packet("<", 0, 0, prism + _beacon_body()))
+    assert _frames(path) == [_beacon_body()]
+
+
+def _pcap(linktype_field: int, *records: tuple[bytes, int]) -> bytes:
+    data = struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, linktype_field)
+    for packet, original_length in records:
+        data += struct.pack("<IIII", 100, 0, len(packet), original_length) + packet
+    return data
+
+
+def test_read_pcap_skips_a_record_cut_by_the_snaplen(tmp_path):
+    path = tmp_path / "a.pcap"
+    path.write_bytes(_pcap(LINKTYPE_IEEE802_11, (_beacon_body(), len(_beacon_body()) + 4), (b"NEXT", 4)))
+    assert _frames(path) == [b"NEXT"]
+
+
+def test_read_pcap_skips_a_pcapng_packet_cut_by_the_snaplen(tmp_path):
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", LINKTYPE_IEEE802_11)
+                     + _pcapng_packet("<", 0, 0, _beacon_body(), original_length=len(_beacon_body()) + 4))
+    assert _frames(path) == []
+
+
+@pytest.mark.parametrize("header", [
+    struct.pack(">II", 0x44, 144) + bytes(136),
+    struct.pack(">II", 0x80211001, 64) + bytes(56),
+])
+def test_read_pcap_strips_big_endian_prism_and_avs_headers(tmp_path, header):
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", LINKTYPE_PRISM_HEADER)
+                     + _pcapng_packet("<", 0, 0, header + _beacon_body()))
+    assert _frames(path) == [_beacon_body()]
+
+
+@pytest.mark.parametrize("linktype, header", [
+    (LINKTYPE_IEEE802_11_RADIOTAP, struct.pack("<BBHI", 0, 0, 4, 0)),
+    (LINKTYPE_PRISM_HEADER, struct.pack("<II", 0x44, 8)),
+    (LINKTYPE_PRISM_HEADER, struct.pack(">II", 0x80211001, 8)),
+])
+def test_read_pcap_yields_nothing_for_a_link_header_below_its_minimum_length(tmp_path, linktype, header):
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", linktype)
+                     + _pcapng_packet("<", 0, 0, header + _beacon_body()))
+    assert _frames(path) == []
+
+
+def test_read_pcap_adds_the_pcapng_timestamp_offset(tmp_path):
+    tsoffset = _pcapng_option("<", PCAPNG_IF_TSOFFSET, struct.pack("<q", 1000))
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", LINKTYPE_IEEE802_11, tsoffset)
+                     + _pcapng_packet("<", 0, 250_000, _beacon_body()))
+    assert list(read_pcap(path)) == [(_beacon_body(), 1000.25)]
+
+
+def test_read_pcap_strips_the_fcs_of_a_classic_pcap_link_type(tmp_path):
+    fcs_words = 2
+    path = tmp_path / "a.pcap"
+    path.write_bytes(_pcap((fcs_words << 28) | PCAP_LINKTYPE_FCS_PRESENT | LINKTYPE_IEEE802_11,
+                           (_beacon_body() + b"FCS!", len(_beacon_body()) + 4)))
+    assert _frames(path) == [_beacon_body()]
+
+
+def test_read_pcap_strips_the_fcs_of_a_pcapng_interface(tmp_path):
+    fcslen = _pcapng_option("<", PCAPNG_IF_FCSLEN, bytes([32]))
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", LINKTYPE_IEEE802_11, fcslen)
+                     + _pcapng_packet("<", 0, 0, _beacon_body() + b"FCS!"))
+    assert _frames(path) == [_beacon_body()]
+
+
+def test_read_pcap_yields_nothing_for_other_link_types(tmp_path):
+    path = tmp_path / "a.pcapng"
+    path.write_bytes(_pcapng_section("<") + _pcapng_interface("<", 1) + _pcapng_packet("<", 0, 0, _beacon_body()))
+    assert list(read_pcap(path)) == []
 
 
 _CLIENT = "11:22:33:44:55:66"
