@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 from rich.markup import escape
@@ -349,6 +352,8 @@ class _ApStatePanel(VerticalGroup):
     def _button_pressed(self, event: Button.Pressed) -> None:
         if isinstance(event.button, CrackerButton):
             self._launch_tool(event.button.tool)
+        elif event.button is self._dwpa_button:
+            self._upload_to_dwpa()
         elif event.button is self.add_key_button:
             self.post_message(AddKeyPressed())
         elif (self._ssid_lines and event.button is self._ssid_lines[0].show_ap_button
@@ -357,6 +362,16 @@ class _ApStatePanel(VerticalGroup):
         else:
             return
         event.stop()
+
+    def _upload_to_dwpa(self) -> None:
+        """The highlighted 4-way and its beacon, alone in a temporary pcap, for DWPA."""
+        handshake = self._handshake_list.highlighted_handshake()
+        if handshake is None:
+            return
+        fd, name = tempfile.mkstemp(suffix=".pcap")
+        os.close(fd)
+        handshake.write(Path(name))
+        # Upload Path(name) to DWPA here, then delete it.
 
     def _launch_tool(self, tool: VaultTool) -> None:
         state = self._state

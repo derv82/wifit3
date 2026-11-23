@@ -118,6 +118,7 @@ def test_show_ap_press_posts_show_ap_pressed_for_the_ap_in_view():
     _, array = _array_with_ap()
     panel = _panel(array, 2)
     panel.add_key_button = object()
+    panel._dwpa_button = object()
     panel.post_message = MagicMock()
     event = SimpleNamespace(button=panel._ssid_lines[0].show_ap_button, stop=MagicMock())
 
