@@ -209,7 +209,7 @@ def test_cpu_crack_counts_and_dedupes_the_ssid_passwords_in_the_total(tool, tmp_
     run = tool._runs[job.job_id]
     tried = list(tool._passwords(run))
     assert tried == list(dict.fromkeys(
-        all_ssid_variants([("ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
+        all_ssid_variants([(b"ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
     assert run.passwords_total == len(tried)
     release.set()
     _join(tool, job)
@@ -360,7 +360,7 @@ def test_each_password_source_is_its_own_queue_entry_recorded_once_exhausted(too
 
     _join(tool, job)
     assert list(tool._passwords(tool._runs[job.job_id])) == list(dict.fromkeys(
-        all_ssid_variants([("ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
+        all_ssid_variants([(b"ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
     wordlist_entry = tool.poll_status(job)
     assert wordlist_entry.detail == "words.txt (3/3)"
     assert _capture_exhaustion(job) == {wordlist_identity(default), SSID_VARIANTS_IDENTITY}

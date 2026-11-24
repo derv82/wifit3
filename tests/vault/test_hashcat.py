@@ -346,7 +346,7 @@ def test_launch_runs_the_default_passwords_then_the_ssid_passwords_first(tmp_pat
                                            str(ssid_passwords_path),
                                            str(wordlist.resolve())]
     assert ssid_passwords_path.read_text(encoding="utf-8").splitlines() == list(dict.fromkeys(
-        all_ssid_variants([("ab", "02:00:00:00:00:01")]) + ssid_passwords(["CafeGuest"])))
+        all_ssid_variants([(b"ab", "02:00:00:00:00:01")]) + ssid_passwords(["CafeGuest"])))
     assert spawn.call_args.args[0][-1] == str(DEFAULT_PASSWORDS_PATH.resolve())
     assert job.tool_state["identities"] == [
         wordlist_identity(DEFAULT_PASSWORDS_PATH), SSID_VARIANTS_IDENTITY, wordlist_identity(wordlist)]

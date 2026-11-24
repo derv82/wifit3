@@ -42,7 +42,7 @@ class _PasswordSourceCounts:
 def _count_password_sources(hashlines: Sequence[DatedHashline]) -> _PasswordSourceCounts:
     return _PasswordSourceCounts(
         default_passwords=sum(1 for _ in read_passwords(DEFAULT_PASSWORDS_PATH)),
-        ap_ssid_passwords=len(all_ssid_variants((h.line.ssid, h.line.bssid) for h in hashlines)) if hashlines else None)
+        ap_ssid_passwords=len(all_ssid_variants((bytes.fromhex(h.line.essid), h.line.bssid) for h in hashlines)) if hashlines else None)
 
 
 def _file_identity(path: str | Path) -> Optional[str]:

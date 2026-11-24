@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def capture_ssid_variants(capture_path: str) -> list[str]:
     """``all_ssid_variants`` of every ESSID and BSSID in the capture's hashlines."""
-    return all_ssid_variants((line.ssid, line.bssid) for _, line in read_hc22000(capture_path))
+    return all_ssid_variants((bytes.fromhex(line.essid), line.bssid) for _, line in read_hc22000(capture_path))
 
 
 @dataclass

@@ -1,10 +1,13 @@
 """WPA passphrase tests: SSID variants, wordlist streaming."""
+import hashlib
 from pathlib import Path
+
+import pytest
 
 from wifit3.crack import passwords
 from wifit3.crack.default_psks import default_psks
 from wifit3.crack.passwords import expand_wordlists, read_passwords, ssid_variants
-from wifit3.dot11.wpa import is_valid_psk
+from wifit3.dot11.wpa import derive_pmk, is_valid_psk
 
 
 def test_ssid_variants_start_with_the_cases_and_primary_suffixes():
@@ -37,8 +40,8 @@ def test_ssid_variants_pad_numbers_only_as_far_as_eight_bytes_needs():
 
 
 def test_all_ssid_variants_try_every_default_psk_before_any_ssid_variant():
-    variants = passwords.all_ssid_variants([("HomeNet", "02:ab:cd:00:00:01"),
-                                            ("CafeWifi", "02:ab:cd:00:00:02")])
+    variants = passwords.all_ssid_variants([(b"HomeNet", "02:ab:cd:00:00:01"),
+                                            (b"CafeWifi", "02:ab:cd:00:00:02")])
     defaults = default_psks("HomeNet", "02:ab:cd:00:00:01") + default_psks("CafeWifi", "02:ab:cd:00:00:02")
     assert variants[:len(defaults)] == defaults
     assert variants[len(defaults):] == list(dict.fromkeys(ssid_variants("HomeNet") + ssid_variants("CafeWifi")))
@@ -86,3 +89,20 @@ def test_expand_wordlists_keeps_the_requested_order_of_files(tmp_path):
 
 def test_expand_wordlists_drops_what_does_not_exist(tmp_path):
     assert expand_wordlists([str(tmp_path / "missing.txt")]) == []
+
+
+@pytest.mark.parametrize(("ssid_bytes", "password"), [
+    pytest.param(b"Caf\xc3\xa9", "Caf\xe91234", id="utf-8"),
+    pytest.param(b"Caf\xe9", "$HEX[436166e93132333435363738]", id="latin-1"),
+    pytest.param(b"\xd6\xd0\xce\xc4", "$HEX[d6d0cec43132333435363738]", id="gbk"),
+])
+def test_all_ssid_variants_builds_passwords_from_the_ssid_bytes(ssid_bytes, password):
+    variants = passwords.all_ssid_variants([(ssid_bytes, "02:ab:cd:00:00:01")])
+    assert password in variants
+    "".join(variants).encode("utf-8")                   # no lone surrogate reaches a wordlist or JSON
+
+
+def test_derive_pmk_takes_a_hex_passphrase_as_its_bytes():
+    psk = "$HEX[436166e93132333435363738]"
+    assert is_valid_psk(psk)
+    assert derive_pmk(psk, b"Caf\xe9") == hashlib.pbkdf2_hmac("sha1", b"Caf\xe912345678", b"Caf\xe9", 4096, 32)

@@ -120,7 +120,7 @@ async def test_password_source_labels_count_the_chosen_hashlines_ssids_or_one_ss
     async with app.run_test() as pilot:
         for modal, ssid_label in (
                 (CpuCrackConfigModal(bssid=persisted.bssid, probed_ssids=["CafeGuest"], hashlines=[_dated(chosen)]),
-                 f"This AP's SSID variants ({len(all_ssid_variants([('ab', '02:00:00:00:00:01')]))})"),
+                 f"This AP's SSID variants ({len(all_ssid_variants([(b'ab', '02:00:00:00:00:01')]))})"),
                 (HashcatConfigModal(confirm_label="Save", probed_ssids=["CafeGuest"]),
                  f"This AP's SSID variants (about {len(ssid_variants('HomeWifi')):,} per SSID)")):
             await app.push_screen(modal)
