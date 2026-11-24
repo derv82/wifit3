@@ -10,10 +10,11 @@ from wifit3.campaigns.verify.wep import VerifyWepCampaign
 from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
 from wifit3.crack.wep import rc4_keystream
 from wifit3.dot11 import str_to_mac
-from wifit3.dot11.eapol import HMAC_MD5_RC4, HMAC_SHA1_AES, KeyDescriptorVersion
+from wifit3.dot11.eapol import HMAC_MD5_RC4, HMAC_SHA1_AES, LLC_SNAP_EAPOL, KeyDescriptorVersion
 from wifit3.dot11.packet import DeauthPacket, EapolPacket, WepDataPacket
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.dot11.wep.crypto import icv
+from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic
 from wifit3.models import AccessPoint
 
 BSSID = "00:11:22:33:44:55"
@@ -301,3 +302,26 @@ async def test_verify_wep_key_that_decrypts_nothing_is_rejected(monkeypatch):
 def test_verify_is_ineligible_on_a_hidden_ssid(campaign_class):
     assert campaign_class.ineligible_reason(AccessPoint(bssid=BSSID, ssid=None, channel=1)) == "hidden SSID: can't associate"
     assert campaign_class.ineligible_reason(AccessPoint(bssid=BSSID, ssid="TestNet", channel=1)) is None
+
+
+# (SSID element, ap.ssid as the parser decodes it)
+@pytest.mark.parametrize(("ssid_bytes", "ssid"), [
+    pytest.param(b"Caf\xc3\xa9", "Café", id="utf-8"),
+    pytest.param(b"Caf\xe9", "Caf", id="latin-1"),
+])
+async def test_verify_psk_m2_mic_is_keyed_by_the_ssid_bytes(monkeypatch, ssid_bytes, ssid):
+    iface = _iface()
+    array = _array(iface)
+    array.access_points[BSSID] = AccessPoint(bssid=BSSID, ssid=ssid, ssid_bytes=ssid_bytes, channel=1)
+    array.next_frame = AsyncMock(side_effect=[_eapol_from_ap(1, 1), _eapol_from_ap(3, 2)])
+    _associates(monkeypatch)
+
+    await _run(VerifyPskCampaign, array, "pw")
+
+    sent = [call.args[0] for call in iface.send_until_ack.call_args_list + iface.send_no_wait.call_args_list]
+    [m2_frame] = [frame for frame in sent if LLC_SNAP_EAPOL in frame]
+    eapol = m2_frame[m2_frame.index(LLC_SNAP_EAPOL) + len(LLC_SNAP_EAPOL):]
+    snonce, mic = eapol[17:49], eapol[81:97]
+    kck = derive_ptk(derive_pmk("pw", ssid_bytes), str_to_mac(BSSID), str_to_mac(OUR_MAC), b"\x11" * 32, snonce,
+                     KCK_LEN)
+    assert eapol_mic(kck, eapol[:81] + bytes(16) + eapol[97:]) == mic

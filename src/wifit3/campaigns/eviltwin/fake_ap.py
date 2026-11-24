@@ -61,11 +61,11 @@ class FakeApStats:
 
 
 class FakeAP:
-    def __init__(self, twin_iface, bssid: bytes, ssid: str, channel: int, twin_beacon: bytes,
+    def __init__(self, twin_iface, bssid: bytes, ssid_bytes: bytes, channel: int, twin_beacon: bytes,
                  rx_source=None, record_m1: Optional[Callable[[bytes], None]] = None):
         self.iface = twin_iface
         self.bssid = bssid
-        self.ssid = ssid
+        self.ssid_bytes = ssid_bytes
         self.channel = channel
         self.twin_beacon = twin_beacon
         self.rx_source = rx_source
@@ -185,10 +185,9 @@ class FakeAP:
         self._tx(build_deauth(client, self.bssid, self.bssid, 7))
 
     def _on_probe(self, pkt, client: bytes) -> None:
-        ssid = pkt.ssid
-        if ssid in (None, "", "<hidden>"):
+        if not pkt.ssid_bytes:                    # wildcard: the parser leaves it None
             self.stats.probes_wildcard += 1
-        elif ssid == self.ssid:
+        elif pkt.ssid_bytes == self.ssid_bytes:
             self.stats.probes_direct += 1
         else:
             return

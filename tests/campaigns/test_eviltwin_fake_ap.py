@@ -49,7 +49,7 @@ def _m2(bssid: bytes, client: bytes, snonce: bytes) -> bytes:
 
 
 def _fakeap(m1_sink=None):
-    return FakeAP(FakeIface(), _BSSID, _SSID, 1, twin_beacon=bytes(60), record_m1=m1_sink)
+    return FakeAP(FakeIface(), _BSSID, _SSID.encode("utf-8"), 1, twin_beacon=bytes(60), record_m1=m1_sink)
 
 
 async def _flush():
@@ -71,7 +71,7 @@ async def test_probe_resp_advertises_the_beacon_minus_tim():
     fixed = bytes(8) + b"\x64\x00" + b"\x11\x04"                 # TSF, 100 TU, capability
     ssid_ie, tim_ie = b"\x00\x07" + _SSID.encode(), b"\x05\x04\x00\x01\x00\x00"
     beacon = head + fixed + ssid_ie + tim_ie + GENERIC_RSN_IE
-    fap = FakeAP(FakeIface(), _BSSID, _SSID, 1, twin_beacon=beacon)
+    fap = FakeAP(FakeIface(), _BSSID, _SSID.encode("utf-8"), 1, twin_beacon=beacon)
     fap.on_rx(_parse(probe_req(_BSSID, _CLIENT, _SSID)))
     await _flush()
     resp = fap.iface.sent[0]
@@ -94,6 +94,23 @@ async def test_probe_for_other_ssid_ignored():
     await _flush()
     assert fap.stats.probes_direct == 0 and fap.stats.probes_wildcard == 0
     assert fap.iface.sent == []
+
+
+def _probe_req_for(ssid_bytes: bytes) -> bytes:
+    frame = probe_req(_BSSID, _CLIENT, "")                     # 24-byte header, then an empty SSID element
+    return frame[:24] + bytes([0, len(ssid_bytes)]) + ssid_bytes + frame[26:]
+
+
+@pytest.mark.parametrize(("ssid_bytes", "other_ssid_bytes"), [
+    pytest.param(b"Caf\xc3\xa9", b"Caf\xc3\xa8", id="utf-8"),
+    pytest.param(b"Caf\xe9", b"Caf\xe8", id="latin-1"),
+])
+async def test_directed_probe_matches_the_ssid_bytes(ssid_bytes, other_ssid_bytes):
+    fap = FakeAP(FakeIface(), _BSSID, ssid_bytes, 1, twin_beacon=bytes(60))
+    fap.on_rx(_parse(_probe_req_for(other_ssid_bytes)))
+    fap.on_rx(_parse(_probe_req_for(ssid_bytes)))
+    await _flush()
+    assert fap.stats.probes_direct == 1 and len(fap.iface.sent) == 1
 
 
 async def test_auth_assoc_drives_m1_and_progress():
@@ -122,7 +139,7 @@ async def test_m1_reaches_the_driver_after_the_assoc_resp():
                     await asyncio.sleep(0)
             return await super().send_no_wait(frame)
 
-    fap = FakeAP(SlowMgmtIface(), _BSSID, _SSID, 1, twin_beacon=bytes(60))
+    fap = FakeAP(SlowMgmtIface(), _BSSID, _SSID.encode("utf-8"), 1, twin_beacon=bytes(60))
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
     fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     for _ in range(20):
@@ -143,7 +160,7 @@ async def test_reassoc_req_gets_a_reassoc_resp():
 
 async def test_assoc_resp_carries_the_twin_beacon_ht_elements():
     ht_op = bytes.fromhex("3d03" "010000")
-    fap = FakeAP(FakeIface(), _BSSID, _SSID, 1, twin_beacon=bytes(36) + ht_op)
+    fap = FakeAP(FakeIface(), _BSSID, _SSID.encode("utf-8"), 1, twin_beacon=bytes(36) + ht_op)
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
     fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     await _flush()
@@ -247,7 +264,7 @@ class _RxSource:
 
 async def test_stop_is_idempotent_and_reaps_the_beacon_task():
     iface, rx = _LifecycleIface(), _RxSource()
-    fap = FakeAP(iface, _BSSID, _SSID, 1, twin_beacon=bytes(60), rx_source=rx)
+    fap = FakeAP(iface, _BSSID, _SSID.encode("utf-8"), 1, twin_beacon=bytes(60), rx_source=rx)
     await fap.start()
     await _flush()
     task = fap._beacon_task
@@ -259,7 +276,7 @@ async def test_stop_is_idempotent_and_reaps_the_beacon_task():
 
 async def test_stop_surfaces_a_teardown_failure_after_cleaning_up():
     iface, rx = _LifecycleIface(clear_error=RuntimeError("clear failed")), _RxSource()
-    fap = FakeAP(iface, _BSSID, _SSID, 1, twin_beacon=bytes(60), rx_source=rx)
+    fap = FakeAP(iface, _BSSID, _SSID.encode("utf-8"), 1, twin_beacon=bytes(60), rx_source=rx)
     await fap.start()
     with pytest.raises(RuntimeError, match="clear failed"):
         await fap.stop()
@@ -332,7 +349,7 @@ async def test_reassoc_starts_a_fresh_m1_sequence(sleeps):
 
 async def test_stop_cancels_the_pending_m1_resends(sleeps):
     iface, rx = _LifecycleIface(), _RxSource()
-    fap = FakeAP(iface, _BSSID, _SSID, 1, twin_beacon=bytes(60), rx_source=rx)
+    fap = FakeAP(iface, _BSSID, _SSID.encode("utf-8"), 1, twin_beacon=bytes(60), rx_source=rx)
     await fap.start()
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
     fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
