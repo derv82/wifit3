@@ -47,11 +47,18 @@ def ssid_ie(ssid_bytes: bytes) -> bytes:
 
 
 def ssid_text(ssid_bytes: bytes) -> str:
-    """The SSID as text: UTF-8 with undecodable bytes dropped, or \\xNN per byte when nothing decodes."""
+    """The SSID as printable text: UTF-8 with undecodable bytes dropped and each non-printable character
+    as \\xNN of its UTF-8 bytes, or \\xNN per byte when nothing decodes."""
     text = ssid_bytes.decode("utf-8", errors="ignore")
-    if text:
-        return text
-    return "".join(f"\\x{byte:02x}" for byte in ssid_bytes)
+    if not text:
+        return "".join(f"\\x{byte:02x}" for byte in ssid_bytes)
+    characters = []
+    for character in text:
+        if character.isprintable():
+            characters.append(character)
+        else:
+            characters.append("".join(f"\\x{byte:02x}" for byte in character.encode("utf-8")))
+    return "".join(characters)
 
 
 def rates_ie(channel: int = 1) -> bytes:
