@@ -46,6 +46,14 @@ def ssid_ie(ssid_bytes: bytes) -> bytes:
     return bytes([0x00, len(s)]) + s
 
 
+def ssid_text(ssid_bytes: bytes) -> str:
+    """The SSID as text: UTF-8 with undecodable bytes dropped, or \\xNN per byte when nothing decodes."""
+    text = ssid_bytes.decode("utf-8", errors="ignore")
+    if text:
+        return text
+    return "".join(f"\\x{byte:02x}" for byte in ssid_bytes)
+
+
 def rates_ie(channel: int = 1) -> bytes:
     """Supported Rates IE (tag 1), band-aware (OFDM on 5 GHz, CCK+OFDM on 2.4 GHz)."""
     rates = SUPPORTED_RATES_5GHZ if channel > 14 else SUPPORTED_RATES

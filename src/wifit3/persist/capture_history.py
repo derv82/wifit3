@@ -60,11 +60,7 @@ def _body_ssid(text: str, filename_ssid: str) -> str:
 def _essid(lines: list[tuple[str, Hc22000Line]], filename_ssid: str) -> str:
     if not lines:
         return filename_ssid
-    try:
-        essid = bytes.fromhex(lines[0][1].essid).decode("utf-8")
-    except UnicodeDecodeError:
-        return filename_ssid
-    return _ssid_naming_file(essid, filename_ssid)
+    return _ssid_naming_file(lines[0][1].ssid, filename_ssid)
 
 
 def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:

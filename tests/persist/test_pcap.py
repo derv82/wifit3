@@ -444,10 +444,11 @@ def test_read_access_points_reads_a_pmkid_from_a_file_without_m2(tmp_path):
     assert pmkid_hashline(ap.ssid_bytes, hs) is not None
 
 
-# (SSID element, ap.ssid, the .hc22000 filename): ap.ssid and the filename are as on master.
-_CAFE_SSIDS = [
+# (SSID element, ap.ssid, the .hc22000 filename): UTF-8 and Latin-1 are as on master; master never saved GBK-only.
+_NON_ASCII_SSIDS = [
     pytest.param(b"Caf\xc3\xa9", "Café", "Caf__02-00-00-00-00-01.hc22000", id="utf-8"),
     pytest.param(b"Caf\xe9", "Caf", "Caf_02-00-00-00-00-01.hc22000", id="latin-1"),
+    pytest.param(b"\xd6\xd0\xce\xc4", "\\xd6\\xd0\\xce\\xc4", "_xd6_xd0_xce_xc4_02-00-00-00-00-01.hc22000", id="gbk"),
 ]
 
 
@@ -457,7 +458,7 @@ def _beacon_with_ssid(ssid_bytes: bytes) -> bytes:
             + b"\x01\x01\x82" + _RSN_IE_PSK)
 
 
-@pytest.mark.parametrize(("ssid_bytes", "ssid", "filename"), _CAFE_SSIDS)
+@pytest.mark.parametrize(("ssid_bytes", "ssid", "filename"), _NON_ASCII_SSIDS)
 def test_save_handshake_writes_the_ssid_bytes_as_the_essid(tmp_path, ssid_bytes, ssid, filename):
     pmk = derive_pmk(_PSK, ssid_bytes)
     write_pcap(tmp_path / "a.pcap", [(_beacon_with_ssid(ssid_bytes), 999.0), *_m1_m2(1, 1000.0, pmk)])
@@ -471,7 +472,7 @@ def test_save_handshake_writes_the_ssid_bytes_as_the_essid(tmp_path, ssid_bytes,
     assert line.ssid == ssid
 
 
-@pytest.mark.parametrize(("ssid_bytes", "ssid", "filename"), _CAFE_SSIDS)
+@pytest.mark.parametrize(("ssid_bytes", "ssid", "filename"), _NON_ASCII_SSIDS)
 def test_read_handshakes_hashes_the_ssid_bytes(tmp_path, ssid_bytes, ssid, filename):
     pmk = derive_pmk(_PSK, ssid_bytes)
     write_pcap(tmp_path / "a.pcap", [(_beacon_with_ssid(ssid_bytes), 999.0), *_m1_m2(1, 1000.0, pmk)])

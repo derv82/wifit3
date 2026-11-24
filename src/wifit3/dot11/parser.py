@@ -12,7 +12,7 @@ from wifit3.dot11.eap import (
     EAP_TYPE_EXPANDED,
 )
 from wifit3.dot11.eapol import EAPOL_TYPE_EAP, EAPOL_TYPE_KEY, LLC_SNAP_EAPOL
-from wifit3.dot11.ie import iter_information_elements
+from wifit3.dot11.ie import iter_information_elements, ssid_text
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.wsc.identity import device_type_label, wps_text
 from wifit3.dot11.wsc.messages import (
@@ -660,10 +660,10 @@ class WlanFrameParser:
                     # the rest of the row on screen) all sail through, as do TAB/LF/CR, which
                     # this guard used to whitelist and which shift the table row. isprintable()
                     # rejects all of them while keeping non-ASCII SSIDs intact.
-                    ssid_text = tag_data.decode('utf-8', errors='ignore')
-                    if not all(ch.isprintable() for ch in ssid_text):
+                    ssid = ssid_text(tag_data)
+                    if not all(ch.isprintable() for ch in ssid):
                         return None  # Corrupt frame masquerading as valid
-                    parsed["ssid"] = ssid_text
+                    parsed["ssid"] = ssid
                     parsed["ssid_bytes"] = tag_data
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if len(tag_data) == 1:

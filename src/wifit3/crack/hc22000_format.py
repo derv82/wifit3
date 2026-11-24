@@ -33,6 +33,7 @@ from typing import List, Optional
 from wifit3.models import Handshake
 from wifit3.crack import handshake as wpa
 from wifit3.crack.handshake import mac_compact
+from wifit3.dot11.ie import ssid_text
 from wifit3.dot11.rsn import AKM_FT_PSK, AKM_PSK_SHA256
 
 PMKID_SHA256_MESSAGE_PAIR_BIT = 0x02
@@ -93,8 +94,8 @@ class Hc22000Line:
 
     @property
     def ssid(self) -> str:
-        """The ESSID field decoded as the parser decodes ap.ssid: UTF-8, undecodable bytes dropped."""
-        return bytes.fromhex(self.essid).decode("utf-8", errors="ignore")
+        """The ESSID field as text, the way the parser makes ap.ssid."""
+        return ssid_text(bytes.fromhex(self.essid))
 
     @property
     def bssid(self) -> str:
