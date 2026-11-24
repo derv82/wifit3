@@ -93,8 +93,8 @@ class Hc22000Line:
 
     @property
     def ssid(self) -> str:
-        """The ESSID field decoded as UTF-8, undecodable bytes replaced."""
-        return bytes.fromhex(self.essid).decode("utf-8", errors="replace")
+        """The ESSID field decoded as the parser decodes ap.ssid: UTF-8, undecodable bytes dropped."""
+        return bytes.fromhex(self.essid).decode("utf-8", errors="ignore")
 
     @property
     def bssid(self) -> str:

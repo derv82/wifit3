@@ -468,6 +468,7 @@ def test_save_handshake_writes_the_ssid_bytes_as_the_essid(tmp_path, ssid_bytes,
     [(_, line)] = read_hc22000(result.path)
     assert line.essid == ssid_bytes.hex()
     assert psk_matches(_PSK, line)
+    assert line.ssid == ssid
 
 
 @pytest.mark.parametrize(("ssid_bytes", "ssid", "filename"), _CAFE_SSIDS)

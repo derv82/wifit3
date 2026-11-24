@@ -239,15 +239,15 @@ def test_load_matches_saved_psks_against_every_ssid_file(tmp_path):
 
 def test_jobs_are_filed_under_the_newest_ssids_file_even_when_its_ssid_is_not_utf8(tmp_path):
     non_utf8_line = _OTHER_LINE.replace("54502d4c494e4b5f484153484341545f54455354", b"Caf\xe9".hex())
-    newest = _write_aggregate("Caf_", non_utf8_line)
+    newest = _write_aggregate("Caf", non_utf8_line)
     older = _write_aggregate("Old", _OLD_SSID_LINE)
     os.utime(newest, (1_600_000_000, 1_600_000_000))       # the older file on disk
     os.utime(older, (1_700_000_000, 1_700_000_000))
-    write_hashline_dates("Caf_", _BSSID, {non_utf8_line: 1_700_000_000})
+    write_hashline_dates("Caf", _BSSID, {non_utf8_line: 1_700_000_000})
     write_hashline_dates("Old", _BSSID, {_OLD_SSID_LINE: 1_600_000_000})
 
     state = _state()
-    assert state.ssids[0].ssid == "Caf�"
+    assert state.ssids[0].ssid == "Caf"
     assert state.hashline_capture.path == str(newest)
 
 

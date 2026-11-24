@@ -221,4 +221,4 @@ def test_read_hc22000_keeps_valid_lines_stripped(tmp_path):
 def test_ssid_decodes_the_essid_field():
     assert parse_hc22000(f"WPA*01*{_COMMON}***").ssid == "Home"
     not_utf8 = _COMMON.replace("486f6d65", "48ff")
-    assert parse_hc22000(f"WPA*01*{not_utf8}***").ssid == "H�"
+    assert parse_hc22000(f"WPA*01*{not_utf8}***").ssid == "H"
