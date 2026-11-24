@@ -189,6 +189,7 @@ class WlanSink:
             ap = AccessPoint(
                 bssid=bssid,
                 ssid=ssid if self._is_real_ssid(ssid) else None,
+                ssid_bytes=pkt.ssid_bytes if self._is_real_ssid(ssid) else None,
                 channel=channel,
                 encryption=enc,
                 akms=list(akms),
@@ -231,7 +232,7 @@ class WlanSink:
             if frame_type == "beacon":
                 ap.beacons += 1
 
-            self.decloak(ap, ssid, frame_type)
+            self.decloak(ap, ssid, frame_type, pkt.ssid_bytes)
 
             self._record_ap_signal(ap, card_id, rssi)
 
@@ -360,7 +361,7 @@ class WlanSink:
         if frame_type in ("assoc_req", "reassoc_req"):
             ap = self.access_points.get(bssid)
             if ap is not None:
-                self.decloak(ap, pkt.ssid, frame_type)
+                self.decloak(ap, pkt.ssid, frame_type, pkt.ssid_bytes)
         return True
 
     def _on_eapol_frame(self, pkt: Packet, timestamp: float) -> bool:
@@ -471,15 +472,19 @@ class WlanSink:
         ap.wps = True
         return True
 
-    def decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
-        """Set ap.ssid to ssid, ignoring a placeholder or empty one. Sets
-        ap.decloak_method to method only while ap has no usable SSID yet, so the
-        first source to name a hidden AP is the one recorded."""
+    def decloak(self, ap: AccessPoint, ssid: str, method: str, ssid_bytes: Optional[bytes] = None) -> None:
+        """Set ap.ssid to ssid, ignoring a placeholder or empty one, and ap.ssid_bytes to ssid_bytes
+        (ssid's UTF-8 when None). Sets ap.decloak_method to method only while ap has no usable SSID
+        yet, so the first source to name a hidden AP is the one recorded."""
         if not self._is_real_ssid(ssid):
             return
         if not self._is_real_ssid(ap.ssid):
             ap.decloak_method = method
         ap.ssid = ssid
+        if ssid_bytes is None:
+            ap.ssid_bytes = ssid.encode("utf-8")
+        else:
+            ap.ssid_bytes = ssid_bytes
 
     @staticmethod
     def _is_real_ssid(ssid: Optional[str]) -> bool:

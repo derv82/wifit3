@@ -303,7 +303,7 @@ def test_ft_psk_handshake_emits_wpa04_with_ft_identifiers():
     pairs = wpa.crackable_pairs(hs)
     assert len(pairs) == 1
     assert wpa.withheld_capture_label(hs) is None
-    fields = wpa.hc22000_line("FTNet", hs, pairs[0]).split("*")
+    fields = wpa.hc22000_line(b"FTNet", hs, pairs[0]).split("*")
     assert fields[1] == "04" and fields[8] == "80"
     assert fields[9:] == ["1234", b"r0kh.example.test".hex(), "020000000001"]
 
@@ -534,7 +534,7 @@ def test_akm6_eapol_and_pmkid_both_crackable():
 
 def test_hc22000_line_shape():
     hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False), _frame(2, 5, nonce=SNONCE))
-    line = wpa.hc22000_line("TestNet", hs, wpa.crackable_pairs(hs)[0])
+    line = wpa.hc22000_line(b"TestNet", hs, wpa.crackable_pairs(hs)[0])
     parts = line.split("*")
     assert parts[0] == "WPA" and parts[1] == "02"
     assert parts[2] == "11" * 16                 # MIC (from M2)
@@ -548,7 +548,7 @@ def test_reserved_akm_is_not_crackable_and_never_misnamed_sae():
     assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
     assert not hs.is_complete
-    assert hc.eapol_hashlines("Net", hs) == []
+    assert hc.eapol_hashlines(b"Net", hs) == []
     assert _label(hs) == "Unsupported AKM"
     assert wpa.withheld_capture_label(hs) == "Unsupported AKM"
 
@@ -558,7 +558,7 @@ def test_reserved_akm_unknown_selection_offer_is_withheld():
     assert wpa.crackable_pairs(_m1m2(offered=[42])) == []
     assert _verdict(_m1m2(offered=[2, 42])) == "unknown"
     assert wpa.crackable_pairs(_m1m2(offered=[2, 42])) == []
-    assert hc.eapol_hashlines("Net", _m1m2(offered=[2, 42])) == []
+    assert hc.eapol_hashlines(b"Net", _m1m2(offered=[2, 42])) == []
 
 
 def test_vendor_akm_only_is_not_legacy_psk_fallback():
@@ -578,7 +578,7 @@ def test_vendor_akm_pmkid_fallback_is_withheld():
     for offered in ([], [2]):
         hs = _hs_pmkid(offered=offered, vendor=True, m1_key_descriptor_version=2)
         assert wpa.crackable_pmkid_akm(hs) is None
-        assert hc.pmkid_hashline("Net", hs) is None
+        assert hc.pmkid_hashline(b"Net", hs) is None
 
 
 def test_mixed_eap_psk_crackable_only_with_a_proven_psk_selection():
@@ -590,7 +590,7 @@ def test_pmkid_mixed_enterprise_psk_offer_withheld_without_selection():
     hs = _hs_pmkid(offered=[1, 2], m1_key_descriptor_version=2)
     assert wpa.crackable_pmkid_akm(hs) is None
     assert wpa.pmkid_crackable(hs) is False
-    assert hc.pmkid_hashline("Net", hs) is None
+    assert hc.pmkid_hashline(b"Net", hs) is None
     for off in ([2, 42], [42], [2, 8], [2, 4]):
         assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=off, m1_key_descriptor_version=2)) is None, off
 

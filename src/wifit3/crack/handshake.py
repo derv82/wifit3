@@ -443,12 +443,7 @@ def mac_compact(mac: str) -> str:
     return mac.replace(":", "").replace("-", "").lower()
 
 
-def ssid_hex(ssid: str) -> str:
-    """SSID -> UTF-8 hex (hashcat consumes the raw advertised bytes)."""
-    return ssid.encode("utf-8", errors="replace").hex()
-
-
-def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
+def hc22000_line(ssid_bytes: bytes, hs: Handshake, pair: CrackablePair) -> str:
     """The ``WPA*02*…`` hashline for a crackable pair (``WPA*04*…`` plus MDID, R0KH-ID
     and R1KH-ID for FT-PSK), MIC field zeroed.
 
@@ -465,7 +460,7 @@ def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
         f"*{f.mic.hex()}"
         f"*{mac_compact(hs.bssid)}"
         f"*{mac_compact(hs.client_mac)}"
-        f"*{ssid_hex(ssid)}"
+        f"*{ssid_bytes.hex()}"
         f"*{pair.anonce_frame.nonce.hex()}"
         f"*{bytes(payload).hex()}"
         f"*{pair.pair_byte | NONCE_CORRECTION_BIT:02x}"

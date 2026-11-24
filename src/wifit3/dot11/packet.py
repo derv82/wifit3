@@ -31,6 +31,7 @@ class Packet:
     rssi: int
     raw: bytes
     ssid: Optional[str] = None   # on beacon/probe_resp/probe_req/assoc_req; None elsewhere
+    ssid_bytes: Optional[bytes] = None   # the SSID element as sent; set whenever ssid is a real SSID
 
     @property
     def transmitter(self) -> str:

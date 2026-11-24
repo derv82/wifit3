@@ -203,7 +203,7 @@ def save_handshake(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
     hs = ap.handshakes.get(client_mac)
     if hs is None:
         return None
-    lines = eapol_hashlines(ap.ssid, hs)
+    lines = eapol_hashlines(ap.ssid_bytes, hs)
     if not lines:
         return None
 
@@ -241,7 +241,7 @@ def save_pmkid(ap: AccessPoint, client_mac: str) -> Optional[SaveResult]:
     hs = ap.handshakes.get(client_mac)
     if hs is None:
         return None
-    line = pmkid_hashline(ap.ssid, hs)
+    line = pmkid_hashline(ap.ssid_bytes, hs)
     if not line:
         return None
     entry = parse_hc22000(line)

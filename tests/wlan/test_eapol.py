@@ -393,14 +393,14 @@ def test_oversized_keystone_yields_no_crackable_pair_or_hashline():
     good = _make_hs(_hmsg(m1, akm=2),
                     _hmsg(WlanFrameParser.parse_80211_frame(m4_frame, -42), akm=2))
     assert good.is_complete and len(crackable_pairs(good)) == 1
-    assert eapol_hashlines("Net", good)
+    assert eapol_hashlines(b"Net", good)
 
     oversized = _make_hs(
         _hmsg(m1, akm=2),
         _hmsg(WlanFrameParser.parse_80211_frame(_forge_body_len(m4_frame, 65535), -42), akm=2))
     assert not oversized.is_complete
     assert crackable_pairs(oversized) == []
-    assert eapol_hashlines("Net", oversized) == []
+    assert eapol_hashlines(b"Net", oversized) == []
 
 
 def test_truncated_m1_pmkid_fragment_stays_usable_without_payload():

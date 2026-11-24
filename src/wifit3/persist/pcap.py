@@ -245,9 +245,9 @@ class FourWayHandshake:
     hashline: Optional[Hc22000Line] # the pair's WPA*02/04 line; None without an SSID
 
     @classmethod
-    def from_pair(cls, hs: Handshake, pair: CrackablePair, ssid: str) -> FourWayHandshake:
+    def from_pair(cls, hs: Handshake, pair: CrackablePair, ssid: str, ssid_bytes: bytes) -> FourWayHandshake:
         first, second = sorted((pair.anonce_frame.msg_num, pair.mic_frame.msg_num))
-        hashline = parse_hc22000(hc22000_line(ssid, hs, pair)) if ssid else None
+        hashline = parse_hc22000(hc22000_line(ssid_bytes, hs, pair)) if ssid_bytes else None
         return cls(hs.bssid, hs.client_mac, ssid, hs.beacon_frame or b"",
                    tuple(handshake_messages(hs, pair)), second > 2, hashline)
 
@@ -285,7 +285,7 @@ class HandshakePcaps:
             return []
         written: list[Path] = []
         for anonce, pair in hs.valid_pairs_by_instance().items():
-            handshake = FourWayHandshake.from_pair(hs, pair, ap.ssid or "")
+            handshake = FourWayHandshake.from_pair(hs, pair, ap.ssid or "", ap.ssid_bytes or b"")
             key = (ap.bssid, client_mac, anonce)
             if key in self._written:
                 path, frame_count = self._written[key]
@@ -321,6 +321,10 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
     if beacon is None:
         return []
     ssid = beacon.ssid or ssid or ""
+    if beacon.ssid_bytes is None:
+        ssid_bytes = ssid.encode("utf-8")
+    else:
+        ssid_bytes = beacon.ssid_bytes
     handshakes: list[FourWayHandshake] = []
     for hs in by_client.values():
         hs.beacon_frame = beacon.raw
@@ -328,7 +332,7 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
         hs.vendor_akm_offered = beacon.vendor_akm_offered
         hs.rsn_ie_seen = beacon.rsn_ie_raw is not None
         for pair in hs.valid_pairs_by_instance().values():
-            handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid))
+            handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid, ssid_bytes))
     handshakes.sort(key=lambda handshake: handshake.first_seen, reverse=True)
     return handshakes
 

@@ -6,7 +6,8 @@ import struct
 
 import pytest
 
-from wifit3.crack.hc22000_format import pmkid_hashline
+from wifit3.crack.hc22000_format import pmkid_hashline, read_hc22000
+from wifit3.crack.wpa_psk import psk_matches
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, data_header, eapol_key, set_mic
 from wifit3.dot11.mac import BROADCAST_MAC, mac_header
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic
@@ -34,6 +35,7 @@ from wifit3.persist.pcap import (
     read_pcap,
     write_pcap,
 )
+from wifit3.persist.save import save_handshake
 
 
 def _first_packet(path) -> bytes:
@@ -328,12 +330,12 @@ def _beacon() -> bytes:
     return mac_header(b"\x80\x00", BROADCAST_MAC, _AA, _AA) + fixed + b"\x00\x07HomeNet\x01\x01\x82" + _RSN_IE_PSK
 
 
-def _m1_m2(index: int, timestamp: float) -> list[tuple[bytes, float]]:
-    """The M1 and M2 of the ``index``th association, whose MIC ``_PSK`` makes."""
+def _m1_m2(index: int, timestamp: float, pmk: bytes = _PMK) -> list[tuple[bytes, float]]:
+    """The M1 and M2 of the ``index``th association, whose MIC ``pmk`` makes."""
     anonce, snonce = b"\xa0" + index.to_bytes(31, "big"), b"\x5b" + index.to_bytes(31, "big")
     m1 = eapol_key(key_info=0x008a, key_len=16, replay=index, nonce=anonce)
     m2 = eapol_key(key_info=0x010a, key_len=0, replay=index, nonce=snonce, key_data=_RSN_IE_PSK)
-    m2 = set_mic(m2, eapol_mic(derive_ptk(_PMK, _AA, _SPA, anonce, snonce, KCK_LEN), m2))
+    m2 = set_mic(m2, eapol_mic(derive_ptk(pmk, _AA, _SPA, anonce, snonce, KCK_LEN), m2))
     return [(data_header(to_ds=False, bssid=_AA, client=_SPA) + LLC_SNAP_EAPOL + m1, timestamp),
             (data_header(to_ds=True, bssid=_AA, client=_SPA) + LLC_SNAP_EAPOL + m2, timestamp + 0.005)]
 
@@ -413,7 +415,7 @@ def test_read_access_points_uses_a_probe_response_as_the_beacon_of_an_ap_without
     hs = ap.handshakes[_CLIENT_MAC]
     assert hs.beacon_frame == _probe_response()
     [pair] = hs.valid_pairs_by_instance().values()
-    assert FourWayHandshake.from_pair(hs, pair, ap.ssid).matches_psk(_PSK)
+    assert FourWayHandshake.from_pair(hs, pair, ap.ssid, ap.ssid_bytes).matches_psk(_PSK)
 
 
 @pytest.mark.parametrize("naming_frame", [_probe_response(), _assoc_request()])
@@ -439,4 +441,39 @@ def test_read_access_points_reads_a_pmkid_from_a_file_without_m2(tmp_path):
     [ap] = read_access_points(tmp_path / "a.pcap")
     hs = ap.handshakes[_CLIENT_MAC]
     assert hs.pmkid == pmkid
-    assert pmkid_hashline(ap.ssid, hs) is not None
+    assert pmkid_hashline(ap.ssid_bytes, hs) is not None
+
+
+# (SSID element, ap.ssid, the .hc22000 filename): ap.ssid and the filename are as on master.
+_CAFE_SSIDS = [
+    pytest.param(b"Caf\xc3\xa9", "Café", "Caf__02-00-00-00-00-01.hc22000", id="utf-8"),
+    pytest.param(b"Caf\xe9", "Caf", "Caf_02-00-00-00-00-01.hc22000", id="latin-1"),
+]
+
+
+def _beacon_with_ssid(ssid_bytes: bytes) -> bytes:
+    fixed = bytes(8) + bytes.fromhex("64001104")
+    return (mac_header(b"\x80\x00", BROADCAST_MAC, _AA, _AA) + fixed + bytes([0, len(ssid_bytes)]) + ssid_bytes
+            + b"\x01\x01\x82" + _RSN_IE_PSK)
+
+
+@pytest.mark.parametrize(("ssid_bytes", "ssid", "filename"), _CAFE_SSIDS)
+def test_save_handshake_writes_the_ssid_bytes_as_the_essid(tmp_path, ssid_bytes, ssid, filename):
+    pmk = derive_pmk(_PSK, ssid_bytes)
+    write_pcap(tmp_path / "a.pcap", [(_beacon_with_ssid(ssid_bytes), 999.0), *_m1_m2(1, 1000.0, pmk)])
+    [ap] = read_access_points(tmp_path / "a.pcap")
+    result = save_handshake(ap, _CLIENT_MAC)
+    assert ap.ssid == ssid
+    assert result.path.name == filename
+    [(_, line)] = read_hc22000(result.path)
+    assert line.essid == ssid_bytes.hex()
+    assert psk_matches(_PSK, line)
+
+
+@pytest.mark.parametrize(("ssid_bytes", "ssid", "filename"), _CAFE_SSIDS)
+def test_read_handshakes_hashes_the_ssid_bytes(tmp_path, ssid_bytes, ssid, filename):
+    pmk = derive_pmk(_PSK, ssid_bytes)
+    write_pcap(tmp_path / "a.pcap", [(_beacon_with_ssid(ssid_bytes), 999.0), *_m1_m2(1, 1000.0, pmk)])
+    [handshake] = read_handshakes(_BSSID, None, [tmp_path / "a.pcap"])
+    assert handshake.ssid == ssid
+    assert handshake.matches_psk(_PSK)

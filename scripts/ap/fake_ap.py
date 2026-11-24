@@ -154,7 +154,7 @@ class ApResponder:
         self.stats["m2"] += 1
         print(f"[#] M2    <- {_mac_str(client)} #{self.stats['m2']} (SNonce {(pkt.nonce or b'')[:4].hex()}...)")
         hs = self._assemble(client, anonce, pkt)
-        lines = eapol_hashlines(self.ssid, hs)
+        lines = eapol_hashlines(self.ssid.encode("utf-8"), hs)
         if not lines:
             print(f"[-] M2 from {_mac_str(client)} did not form a crackable pair")
             return

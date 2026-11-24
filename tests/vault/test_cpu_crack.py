@@ -129,7 +129,7 @@ def test_cpu_crack_finds_a_stored_psk_sha256_pmkid(tool, tmp_path):
                    pmkid=wpa_psk.sha256_pmkid(pmk, bytes.fromhex("112233445566"),
                                               bytes.fromhex("aabbccddeeff")))
     hs.pmkid_akm = 6
-    line = pmkid_hashline(ssid, hs)
+    line = pmkid_hashline(ssid.encode("utf-8"), hs)
     assert line is not None and line.endswith("***03")
 
     job = _launch(tool, tmp_path, [line], [["nope", "sha256-secret"]])

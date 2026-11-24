@@ -173,6 +173,7 @@ class WlanFrameParser:
             fields: Dict[str, Any] = {
                 "type": type_str,
                 "ssid": tags.get("ssid"),
+                "ssid_bytes": tags.get("ssid_bytes"),
                 "encryption": tags.get("encryption", "OPEN"),
                 "wpa3": tags.get("wpa3", False),
                 "transition_mode": tags.get("transition_mode", False),
@@ -199,7 +200,8 @@ class WlanFrameParser:
             tags = cls._parse_tags(frame, subtype)
             if tags is None:
                 return None
-            return ProbeReqPacket(**base, type="probe_req", ssid=tags.get("ssid"))
+            return ProbeReqPacket(**base, type="probe_req", ssid=tags.get("ssid"),
+                                  ssid_bytes=tags.get("ssid_bytes"))
 
         if subtype == cls.SUBTYPE_ASSOC_REQ:
             tags = cls._parse_tags(frame, subtype)
@@ -207,7 +209,7 @@ class WlanFrameParser:
                 return None
             # Client's selected AKM from the RSN IE (24 hdr + cap + listen = 28).
             return AssocRequestPacket(
-                **base, type="assoc_req", ssid=tags.get("ssid"),
+                **base, type="assoc_req", ssid=tags.get("ssid"), ssid_bytes=tags.get("ssid_bytes"),
                 assoc_akm=cls._rsn_akm_selection(frame, 28)[0])
 
         if subtype == cls.SUBTYPE_REASSOC_REQ:
@@ -216,7 +218,7 @@ class WlanFrameParser:
                 return None
             # 34 = assoc's 28 + 6-byte Current AP Address.
             return AssocRequestPacket(
-                **base, type="reassoc_req", ssid=tags.get("ssid"),
+                **base, type="reassoc_req", ssid=tags.get("ssid"), ssid_bytes=tags.get("ssid_bytes"),
                 assoc_akm=cls._rsn_akm_selection(frame, 34)[0])
 
         if subtype in (cls.SUBTYPE_ASSOC_RESP, cls.SUBTYPE_REASSOC_RESP):
@@ -662,6 +664,7 @@ class WlanFrameParser:
                     if not all(ch.isprintable() for ch in ssid_text):
                         return None  # Corrupt frame masquerading as valid
                     parsed["ssid"] = ssid_text
+                    parsed["ssid_bytes"] = tag_data
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if len(tag_data) == 1:
                     channel_ds = tag_data[0]
