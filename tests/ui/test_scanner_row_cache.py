@@ -18,6 +18,7 @@ from textual.app import App
 from wifit3.models import AccessPoint, Client, Handshake, IdKey, IdSource
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
+from wifit3.wlan.sink import WlanSink
 from wifit3.ui.screens.scanner import ScannerView
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -141,9 +142,9 @@ async def test_decloak_without_last_seen_is_seen(scanner):
     # _decloak runs off a client's probe request via _track_client.
     app, screen = scanner
     ap = _ap()
-    ap.ssid = None
+    ap.ssid = ap.ssid_bytes = ap.ssid_displayable = None
     _assert_cache_is_honest(screen, ap)
-    ap.ssid = "Revealed"
+    WlanSink().decloak(ap, "Revealed", "probe_req")
     assert _assert_cache_is_honest(screen, ap).ssid == "Revealed"
 
 

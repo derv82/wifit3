@@ -421,8 +421,8 @@ class FocusViewV2(Screen):
             return dict(essid="", bssid="", channel=0, power_dbm=-100, signal=None,
                         wps=False, has_m1=False, probing=False, probe_disabled=False,
                         identity="", identity_details=None)
-        if ap.ssid:
-            essid = fm.truncate_ssid(ap.ssid)
+        if ap.ssid_displayable:
+            essid = fm.truncate_ssid(ap.ssid_displayable)
         else:
             essid = "‹hidden›"
             guessid = self.app.guessid(ap)
@@ -620,8 +620,8 @@ class FocusViewV2(Screen):
         # Log initial "target acquired"
         enc = fm.encryption_chip(ap)
         guessid = self.app.guessid(ap)
-        if ap.ssid:
-            chip = f"[black bold on cyan] {escape(ap.ssid)} [/black bold on cyan]"
+        if ap.ssid_displayable:
+            chip = f"[black bold on cyan] {escape(ap.ssid_displayable)} [/black bold on cyan]"
             self._log(f"[bold]Target acquired:[/bold] {chip}")
         elif guessid:
             self._log("[bold]Target acquired:[/bold] "
@@ -899,9 +899,12 @@ class FocusViewV2(Screen):
                 self._log(treelog.leaf(_save_line(result)))
         elif isinstance(ev, ApDecloaked):
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
+            ssid = ev.ssid
+            if self._target_ap is not None:
+                ssid = self._target_ap.ssid_displayable
             self._log(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
-                f"[green]{escape(ev.ssid or '')}[/green] "
+                f"[green]{escape(ssid or '')}[/green] "
                 f"[dim]via {method_label}[/dim]"
             )
 
@@ -991,7 +994,7 @@ class FocusViewV2(Screen):
         if iface is None:
             self._log(treelog.leaf_fail(f"no interface can probe CH {ap.channel}"))
             return
-        label = escape(ap.ssid or ap.bssid)
+        label = escape(ap.ssid_displayable or ap.bssid)
         self._log(treelog.header(
             f"[bold]Identity probe[/bold] on [cyan]{label}[/cyan] [dim](CH {ap.channel})[/dim]"
         ))
@@ -1285,13 +1288,13 @@ class FocusViewV2(Screen):
         if not ap or not array:
             self._log("[red]✗ No target / interface. Aborting PMKID harvest.[/red]")
             return
-        self._log(pmkid_log.header(escape(ap.ssid or ap.bssid)))
+        self._log(pmkid_log.header(escape(ap.ssid_displayable or ap.bssid)))
         self._controls.start(PmkidHarvestAttack, array, ap,
                              log=lambda m: self._log(treelog.branch(m)))
 
     def _finish_decloak(self, camp) -> None:
         if camp.revealed:
-            self._log(treelog.leaf_ok(f"revealed [bold]{escape(camp.revealed)}[/bold]"))
+            self._log(treelog.leaf_ok(f"revealed [bold]{escape(camp.ap.ssid_displayable or camp.revealed)}[/bold]"))
             if Config.remember_decloak(camp.ap.bssid, camp.revealed):
                 self.app.persist_config()
         else:
@@ -1307,7 +1310,7 @@ class FocusViewV2(Screen):
             chip = saved_psk_chip(result.matches_saved_psk) if result is not None else None
             self._emit_lines(pmkid_log.verdict_success(hint, chip))
             # Detector skips forged MACs, so toast the active-harvest win here too.
-            name = camp.target.ssid or camp.target.bssid
+            name = camp.target.ssid_displayable or camp.target.bssid
             body = (f"[bold]{escape(name)}[/bold] on channel [bold]{camp.target.channel}[/bold] "
                     f"[dim bold](BSSID: {escape(camp.target.bssid)})[/dim bold]")
             self.notify(body, title="PMKID captured (M1)", timeout=6)
@@ -1332,7 +1335,7 @@ class FocusViewV2(Screen):
         if not ap or not array:
             self._log("[red]✗ No target / interface. Aborting Deauth.[/red]")
             return
-        self._log(f"[bold]Deauth[/bold] of [bold]{escape(ap.ssid or ap.bssid)}[/bold]: "
+        self._log(f"[bold]Deauth[/bold] of [bold]{escape(ap.ssid_displayable or ap.bssid)}[/bold]: "
                   "forcing a re-handshake")
         self._controls.start(DeauthCampaign, array, ap, log=self._log)
 
@@ -1386,7 +1389,7 @@ class FocusViewV2(Screen):
         if started is None:
             return
         self._log(f"[bold cyan]EvilTwin[/bold cyan] of [bold cyan]"
-                  f"{escape(ap.ssid or ap.bssid)}[/bold cyan] active on ch {evil_input.twin_channel}"
+                  f"{escape(ap.ssid_displayable or ap.bssid)}[/bold cyan] active on ch {evil_input.twin_channel}"
                   f" [dim]({evil_input.twin_bssid})[/dim]")
         self._log(treelog.branch(f"[italic]punting clients[/italic] [dim]on[/dim] ch {ap.channel}"))
         self._log(treelog.leaf("[dim]waiting for clients to auth…[/dim]"))
@@ -1479,7 +1482,7 @@ class FocusViewV2(Screen):
 
     def _launch_wps_pin(self, ap, array) -> None:
         try:
-            name = escape(ap.ssid or ap.bssid)
+            name = escape(ap.ssid_displayable or ap.bssid)
             self._log(f"[bold]WPS PIN brute[/bold] started on [bold cyan]{name}[/bold cyan]")
             self._controls.start(WpsCampaign, array, ap,
                                  log=lambda m: self._log(treelog.branch(m)))
@@ -1489,7 +1492,7 @@ class FocusViewV2(Screen):
 
     def _finish_wps(self, camp) -> None:
         """Reap a finished WPS PIN sweep: log/save the found PIN, else the give-up reason."""
-        ssid = escape(camp.target.ssid or camp.bssid)
+        ssid = escape(camp.target.ssid_displayable or camp.bssid)
         if camp.state.found_pin is not None:
             camp.target.wps_pin = camp.state.found_pin
             camp.target.wps_pin_psk = camp.state.found_psk

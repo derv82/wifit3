@@ -5,6 +5,7 @@ import signal
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, List, Optional, Set
 
@@ -314,7 +315,10 @@ class WifiteApp(App):
             pbc_ignore_reasons = []
             if isinstance(event, PbcWindowOpened) and ap is not None:
                 pbc_ignore_reasons = self.pbc_ignore_reasons(ap)
-            self.toasts.ap_event(event, guessid, pbc_ignore_reasons)
+            toast_event = event
+            if ap is not None:
+                toast_event = replace(event, ssid=ap.ssid_displayable)
+            self.toasts.ap_event(toast_event, guessid, pbc_ignore_reasons)
             for screen in self.screen_stack:
                 screen.post_message(self.ApEventDetected(event))
 

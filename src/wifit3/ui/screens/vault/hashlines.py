@@ -11,6 +11,7 @@ from textual.widgets.selection_list import Selection
 
 from wifit3.persist.ap_state import DatedHashline
 from wifit3.persist.exhaustion import ExhaustedWordlist
+from wifit3.text import displayable_ssid
 from wifit3.ui.screens.vault.rows import row_content, verdict_column, verdict_tooltip
 from wifit3.vault.tools.base import VaultTool
 
@@ -76,7 +77,7 @@ def hashline_prompt(group: HashlineGroup, show_client: bool, show_ssid: bool,
     if exhausted_width:
         trailing.append((exhausted_count.ljust(exhausted_width), "italic $text-accent"))
     if show_ssid:
-        trailing.append((first.line.ssid, ""))
+        trailing.append((displayable_ssid(bytes.fromhex(first.line.essid)), ""))
     return row_content(first.first_captured, first.line.pair_label, _client_text(first), verdict, show_client,
                        trailing)
 
