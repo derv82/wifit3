@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage, IdSource
+from wifit3.text import displayable_ssid
 from wifit3.dot11.eapol import AES_128_CMAC, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
@@ -474,17 +475,19 @@ class WlanSink:
 
     def decloak(self, ap: AccessPoint, ssid: str, method: str, ssid_bytes: Optional[bytes] = None) -> None:
         """Set ap.ssid to ssid, ignoring a placeholder or empty one, and ap.ssid_bytes to ssid_bytes
-        (ssid's UTF-8 when None). Sets ap.decloak_method to method only while ap has no usable SSID
-        yet, so the first source to name a hidden AP is the one recorded."""
+        (ssid's UTF-8 when None) and ap.ssid_displayable from them when they changed. Sets
+        ap.decloak_method to method only while ap has no usable SSID yet, so the first source to name
+        a hidden AP is the one recorded."""
         if not self._is_real_ssid(ssid):
             return
         if not self._is_real_ssid(ap.ssid):
             ap.decloak_method = method
-        ap.ssid = ssid
         if ssid_bytes is None:
-            ap.ssid_bytes = ssid.encode("utf-8")
-        else:
+            ssid_bytes = ssid.encode("utf-8")
+        ap.ssid = ssid
+        if ssid_bytes != ap.ssid_bytes:
             ap.ssid_bytes = ssid_bytes
+            ap.ssid_displayable = displayable_ssid(ssid_bytes)
 
     @staticmethod
     def _is_real_ssid(ssid: Optional[str]) -> bool:

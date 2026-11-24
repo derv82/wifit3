@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set
 
 from wifit3.dot11.pmf import PmfPosture
 from wifit3.dot11.rsn import AKM_OWE, ENTERPRISE_AKM_SUITES
+from wifit3.text import displayable_ssid
 
 from .handshake import Handshake
 from .identity import ApIdentity, IdKey, IdSource
@@ -59,6 +60,8 @@ class AccessPoint:
     ssid: Optional[str] = None
     # The SSID element as sent: hashlines and transmitted frames use these, not ssid.
     ssid_bytes: Optional[bytes] = None
+    # What the UI shows: displayable_ssid(ssid_bytes). Log lines and filenames use ssid.
+    ssid_displayable: Optional[str] = None
     channel: int = 1
     encryption: Optional[str] = "Unknown"
     # Structured security fields from the RSN IE; `encryption` (above) is the airodump-style string.
@@ -130,6 +133,8 @@ class AccessPoint:
     def __post_init__(self) -> None:
         if self.ssid_bytes is None and self.ssid:
             self.ssid_bytes = self.ssid.encode("utf-8")
+        if self.ssid_displayable is None and self.ssid_bytes is not None:
+            self.ssid_displayable = displayable_ssid(self.ssid_bytes)
         if self.bssid and not self.identity.get_source_value(IdKey.MANUFACTURER, IdSource.OUI):
             from wifit3.id.common import vendor_for_mac
             vendor = vendor_for_mac(self.bssid)
