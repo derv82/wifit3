@@ -77,7 +77,7 @@ class WpsPbcCampaign(Campaign):
             await asyncio.sleep(SETTLE_S)
             if lease.active_monitor_mac:
                 self.our_mac = str_to_mac(lease.active_monitor_mac)
-            assoc = Association(iface, self.bssid, self.target.ssid or "",
+            assoc = Association(iface, self.bssid, self.target.ssid_bytes or b"",
                                 self.channel, our_mac=self.our_mac,
                                 assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, wsc_2_0),
                                 should_stop=lambda: self.stopped,

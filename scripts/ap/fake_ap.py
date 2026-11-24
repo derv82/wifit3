@@ -62,7 +62,7 @@ def _synth_beacon(bssid: bytes, ssid: str, channel: int) -> bytes:
     """Fallback WPA2-PSK beacon when the real one can't be captured (AP out of range)."""
     hdr = b"\x80\x00" + b"\x00\x00" + _BCAST + bssid + bssid + b"\x00\x00"
     fixed = struct.pack("<Q", 0) + struct.pack("<H", _BEACON_INTERVAL_TU) + b"\x11\x04"
-    tags = (ssid_ie(ssid) + rates_ie() + ds_param_ie(channel) + ext_rates_ie() + GENERIC_RSN_IE)
+    tags = (ssid_ie(ssid.encode("utf-8")) + rates_ie() + ds_param_ie(channel) + ext_rates_ie() + GENERIC_RSN_IE)
     return hdr + fixed + tags
 
 

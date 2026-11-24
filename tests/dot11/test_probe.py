@@ -10,7 +10,7 @@ def test_probe_req_is_directed_at_the_bssid():
     f = probe_req(_BSSID, _OUR_MAC, "Net")
     assert f[0:2] == b"\x40\x00"
     assert f[4:10] == _BSSID and f[10:16] == _OUR_MAC and f[16:22] == _BSSID
-    assert ssid_ie("Net") in f
+    assert ssid_ie(b"Net") in f
 
 
 def test_probe_req_rates_follow_the_target_channel():

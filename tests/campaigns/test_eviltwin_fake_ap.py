@@ -105,7 +105,7 @@ async def test_auth_assoc_drives_m1_and_progress():
     assert fap.stats.auth == 1
     assert fap.stats.clients[cs].phase == ClientPhase.AUTHED
 
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     await _flush()
     rec = fap.stats.clients[cs]
     assert fap.stats.assoc == 1 and rec.phase == ClientPhase.ASSOCED and len(rec.anonce) == 32
@@ -124,7 +124,7 @@ async def test_m1_reaches_the_driver_after_the_assoc_resp():
 
     fap = FakeAP(SlowMgmtIface(), _BSSID, _SSID, 1, twin_beacon=bytes(60))
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     for _ in range(20):
         await asyncio.sleep(0)
     kinds = [f[:2] for f in fap.iface.sent]
@@ -134,7 +134,7 @@ async def test_m1_reaches_the_driver_after_the_assoc_resp():
 async def test_reassoc_req_gets_a_reassoc_resp():
     fap = _fakeap()
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    req = assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)
+    req = assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)
     fap.on_rx(_parse(b"\x20\x00" + req[2:28] + _BSSID + req[28:]))   # + current AP address
     await _flush()
     kinds = [f[:2] for f in fap.iface.sent]
@@ -145,7 +145,7 @@ async def test_assoc_resp_carries_the_twin_beacon_ht_elements():
     ht_op = bytes.fromhex("3d03" "010000")
     fap = FakeAP(FakeIface(), _BSSID, _SSID, 1, twin_beacon=bytes(36) + ht_op)
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     await _flush()
     resp = next(f for f in fap.iface.sent if f[:2] == b"\x10\x00")
     assert resp.endswith(ht_op)
@@ -155,7 +155,7 @@ async def test_cached_sae_key_assoc_is_refused_with_status_53():
     fap = _fakeap()
     sae_rsn_with_pmkid = bytes.fromhex("30260100000fac040100000fac040100000fac08c0000100") + bytes(16)
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, sae_rsn_with_pmkid)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), sae_rsn_with_pmkid)))
     await _flush()
     resp = [f for f in fap.iface.sent if f[:2] == b"\x10\x00"]
     assert len(resp) == 1 and resp[0][26:28] == (53).to_bytes(2, "little")
@@ -176,7 +176,7 @@ async def test_sae_auth_is_refused_with_status_13():
 async def test_m2_marks_client_once():
     fap = _fakeap()
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     m2 = _m2(_BSSID, _CLIENT, bytes(range(32, 64)))
     fap.on_rx(_parse(m2))
     fap.on_rx(_parse(m2))                                       # duplicate M2
@@ -199,7 +199,7 @@ async def test_every_stray_data_frame_gets_a_deauth():
 async def test_data_from_an_associated_client_is_not_deauthed():
     fap = _fakeap()
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     await _flush()
     fap.iface.sent.clear()
     fap.on_rx(_parse(data_header(to_ds=True, bssid=_BSSID, client=_CLIENT) + b"\x00\x00x"))
@@ -294,7 +294,7 @@ async def test_m1_is_resent_with_the_same_anonce_and_the_next_replay_counter(sle
     m1s: list[bytes] = []
     fap = _fakeap(m1_sink=m1s.append)
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     await _turns()
     sent = _sent_m1s(fap)
     assert [int.from_bytes(m.replay_counter, "big") for m in sent] == [1, 2, 3, 4]
@@ -307,7 +307,7 @@ async def test_m1_is_resent_with_the_same_anonce_and_the_next_replay_counter(sle
 async def test_m2_stops_the_m1_resends(sleeps):
     fap = _fakeap()
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     while len(_sent_m1s(fap)) < 2:
         await asyncio.sleep(0)
     fap.on_rx(_parse(_m2(_BSSID, _CLIENT, bytes(range(32, 64)))))
@@ -318,11 +318,11 @@ async def test_m2_stops_the_m1_resends(sleeps):
 async def test_reassoc_starts_a_fresh_m1_sequence(sleeps):
     fap = _fakeap()
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     while len(_sent_m1s(fap)) < 2:
         await asyncio.sleep(0)
     first_anonce = fap.stats.clients["02:aa:bb:cc:dd:ee"].anonce
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     await _turns()
     sent = _sent_m1s(fap)
     assert [m.nonce for m in sent].count(first_anonce) == 2
@@ -335,7 +335,7 @@ async def test_stop_cancels_the_pending_m1_resends(sleeps):
     fap = FakeAP(iface, _BSSID, _SSID, 1, twin_beacon=bytes(60), rx_source=rx)
     await fap.start()
     fap.on_rx(_parse(auth_req(_BSSID, _CLIENT)))
-    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID, GENERIC_RSN_IE)))
+    fap.on_rx(_parse(assoc_req(_BSSID, _CLIENT, _SSID.encode("utf-8"), GENERIC_RSN_IE)))
     task = fap._m1_tasks["02:aa:bb:cc:dd:ee"]
     await fap.stop()
     await fap.stop()

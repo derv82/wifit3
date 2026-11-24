@@ -159,7 +159,7 @@ async def associate_with(iface, tap: Tap, bssid: bytes, our_mac: bytes, ssid: st
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline and tap.auth_status is None:
         await asyncio.sleep(0.02)
-    await iface.send_no_wait(assoc_req(bssid, our_mac, ssid, rsn,
+    await iface.send_no_wait(assoc_req(bssid, our_mac, ssid.encode("utf-8"), rsn,
                                        channel=channel, privacy=bool(rsn)))
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline and tap.assoc_status is None:

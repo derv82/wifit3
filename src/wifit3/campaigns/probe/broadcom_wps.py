@@ -145,7 +145,7 @@ async def probe_wps_implementation(iface: WlanInterface, ap: AccessPoint) -> Wps
     async def send(payload_1x: bytes) -> None:
         await transport.send_no_wait(M.build_data_frame(bssid, our_mac, bssid, payload_1x))
 
-    assoc = Association(iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac,
+    assoc = Association(iface, ap.bssid.lower(), ap.ssid_bytes or b"", ap.channel, our_mac=our_mac,
                         assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, False),
                         beacon_frame=ap.last_beacon_frame)
     assoc.start()

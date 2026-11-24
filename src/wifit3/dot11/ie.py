@@ -40,9 +40,9 @@ _BIP_CMAC_128 = RSN_OUI + bytes([CIPHER_AES_128_CMAC])
 SSID_MAX_OCTETS = 32
 
 
-def ssid_ie(ssid: str) -> bytes:
-    """SSID IE (tag 0): UTF-8, truncated to the 32-byte spec maximum."""
-    s = ssid.encode("utf-8", "ignore")[:SSID_MAX_OCTETS]
+def ssid_ie(ssid_bytes: bytes) -> bytes:
+    """SSID IE (tag 0), truncated to the 32-byte spec maximum."""
+    s = ssid_bytes[:SSID_MAX_OCTETS]
     return bytes([0x00, len(s)]) + s
 
 

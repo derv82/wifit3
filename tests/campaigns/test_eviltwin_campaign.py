@@ -26,7 +26,7 @@ _BROADCAST = b"\xff" * 6
 _SSID = "GL-Test"
 _FIXED = struct.pack("<Q", 0) + struct.pack("<H", 100) + b"\x11\x04"   # TSF, interval, cap (ESS+Privacy)
 _BEACON = (b"\x80\x00\x00\x00" + _BROADCAST + _BSSID_B + _BSSID_B + b"\x00\x00"
-           + _FIXED + ssid_ie(_SSID) + rates_ie() + ds_param_ie(11) + GENERIC_RSN_IE)
+           + _FIXED + ssid_ie(_SSID.encode("utf-8")) + rates_ie() + ds_param_ie(11) + GENERIC_RSN_IE)
 
 
 class _FakeIface:

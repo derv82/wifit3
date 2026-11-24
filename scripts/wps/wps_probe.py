@@ -151,7 +151,7 @@ async def run_one_attempt(iface, bssid: str, ssid: str, channel: int, our_mac: b
     step(f"Attempt PIN {pin}  (expect: {expect}, WSC {'2.0' if wsc_2_0 else '1.0'}, "
          f"assoc privacy bit="
          f"{'auto' if privacy is None else ('on' if privacy else 'off')})")
-    assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
+    assoc = Association(iface, bssid, ssid.encode("utf-8"), channel, our_mac=our_mac,
                         assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, wsc_2_0),
                         privacy=privacy)
     assoc.start()

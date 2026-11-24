@@ -228,7 +228,7 @@ class DecloakCampaign(Campaign):
         logger.info("[DECLOAK] associating through %d candidate(s)",
                     len(self.candidate_ssids))
         association = Association(
-            self.iface, self.ap.bssid, "", self.ap.channel, our_mac=self.source_mac,
+            self.iface, self.ap.bssid, b"", self.ap.channel, our_mac=self.source_mac,
             auth_timeout=AUTH_TIMEOUT_S, assoc_timeout=ASSOC_TIMEOUT_S,
             assoc_trailer_ies=self.ap.rsn_ie or b"",
             should_stop=lambda: self.stopped, beacon_frame=self.ap.last_beacon_frame,

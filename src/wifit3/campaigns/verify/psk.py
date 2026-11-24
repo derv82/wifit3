@@ -31,7 +31,7 @@ class VerifyPskCampaign(VerifyCampaign):
         ap = self.target
         bssid = ap.bssid.lower()
         trailer = force_psk_akm(ap.rsn_ie or GENERIC_RSN_IE) or GENERIC_RSN_IE
-        association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
+        association = Association(iface, bssid, (ap.ssid or "").encode("utf-8"), ap.channel, our_mac=our_mac,
                                   assoc_trailer_ies=trailer, should_stop=lambda: self.stopped,
                                   beacon_frame=ap.last_beacon_frame)
         association.start()

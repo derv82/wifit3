@@ -207,7 +207,7 @@ async def wps_probe_m1(iface, bssid: str, ssid: str, channel: int, wsc_2_0: bool
         await iface.enable_rx_acks()
     except Exception as e:  # noqa: BLE001
         err(f"\r[wps] enable_rx_acks failed (continuing): {e}")
-    assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
+    assoc = Association(iface, bssid, ssid.encode("utf-8"), channel, our_mac=our_mac,
                         assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, wsc_2_0))
     transport = WlanTransport(iface, bssid_b, our_mac)
     assoc.start()

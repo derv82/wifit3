@@ -76,7 +76,7 @@ async def test_transport_queue_keeps_only_recent_frames():
 
 async def test_waits_for_auth_resp_then_sends_assoc():
     iface = _RespIface()
-    a = Association(iface, _BSSID, "Net", 1, our_mac=_US)
+    a = Association(iface, _BSSID, b"Net", 1, our_mac=_US)
     a.start()
     assert await a.associate() is True
     assert a._auth_ok and a._assoc_ok
@@ -86,7 +86,7 @@ async def test_waits_for_auth_resp_then_sends_assoc():
 async def test_falls_back_to_assoc_when_no_auth_resp():
     # AP answers Assoc but not Auth. We still associate, via the auth_timeout fallback.
     iface = _RespIface(answer_auth=False)
-    a = Association(iface, _BSSID, "Net", 1, our_mac=_US, auth_timeout=0.05)
+    a = Association(iface, _BSSID, b"Net", 1, our_mac=_US, auth_timeout=0.05)
     a.start()
     assert await a.associate() is True
     assert a._auth_ok is False                   # never saw an Auth Resp
@@ -106,7 +106,7 @@ def _disassoc(reason: int = 7) -> bytes:
 
 
 def test_rx_cb_sets_auth_ok_on_status0_resp():
-    a = Association(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
+    a = Association(_RespIface(), _BSSID, b"Net", 1, our_mac=_US)
     a._active = True
     a._rx_cb(WlanFrameParser.parse_80211_frame(_auth_resp(0), -40))
     assert a._auth_ok is True
@@ -118,7 +118,7 @@ def test_rx_cb_sets_auth_ok_on_status0_resp():
 
 
 def test_rx_cb_decodes_assoc_rejected_status():
-    a = Association(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
+    a = Association(_RespIface(), _BSSID, b"Net", 1, our_mac=_US)
     a._active = True
     a._rx_cb(WlanFrameParser.parse_80211_frame(_assoc_resp(18), -40))
     assert a._assoc_ok is False
@@ -126,7 +126,7 @@ def test_rx_cb_decodes_assoc_rejected_status():
 
 
 def test_rx_cb_decodes_deauth_and_disassoc_reason():
-    a = Association(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
+    a = Association(_RespIface(), _BSSID, b"Net", 1, our_mac=_US)
     a._active = True
     a.associated = True
     a._rx_cb(WlanFrameParser.parse_80211_frame(_deauth(6), -40))
@@ -143,13 +143,13 @@ def test_rx_cb_decodes_deauth_and_disassoc_reason():
 
 def test_assoc_req_rates_and_ht_caps_per_band():
     from wifit3.dot11.auth_assoc import assoc_req
-    f_24 = assoc_req(_BSSID_B, _US, "Net", channel=6)
+    f_24 = assoc_req(_BSSID_B, _US, b"Net", channel=6)
     # 2.4 GHz has DSSS basic rate 0x82 (1 Mbps) and extended rates tag 50
     assert b"\x82" in f_24
     assert b"\x32\x04" in f_24       # Tag 50, len 4
     assert b"\x2d\x1a" in f_24       # Tag 45 (HT Caps), len 26
 
-    f_5g = assoc_req(_BSSID_B, _US, "Net", channel=36)
+    f_5g = assoc_req(_BSSID_B, _US, b"Net", channel=36)
     # 5 GHz has OFDM basic rate 0x8C (6 Mbps), no tag 50, and HT caps
     assert b"\x8c" in f_5g
     assert b"\x82" not in f_5g
@@ -162,11 +162,11 @@ def test_assoc_req_dynamic_privacy():
     wps_trailer = b"\xdd\x08\x00\x50\xf2\x04\x00\x01\x00\x01"
     rsn_trailer = b"\x30\x14\x01\x00\x00\x0f\xac\x04\x01\x00\x00\x0f\xac\x04\x01\x00\x00\x0f\xac\x02\x00\x00"
 
-    f_wps = assoc_req(_BSSID_B, _US, "Net", trailer_ies=wps_trailer)
+    f_wps = assoc_req(_BSSID_B, _US, b"Net", trailer_ies=wps_trailer)
     cap_wps = struct.unpack("<H", f_wps[24:26])[0]
     assert (cap_wps & 0x0010) == 0   # Privacy bit CLEAR for WPS
 
-    f_rsn = assoc_req(_BSSID_B, _US, "Net", trailer_ies=rsn_trailer)
+    f_rsn = assoc_req(_BSSID_B, _US, b"Net", trailer_ies=rsn_trailer)
     cap_rsn = struct.unpack("<H", f_rsn[24:26])[0]
     assert (cap_rsn & 0x0010) != 0   # Privacy bit SET for RSN
 
@@ -181,7 +181,7 @@ def _auth_resp_from(bssid: bytes, status: int = 0) -> bytes:
 
 
 def test_rx_cb_ignores_a_response_from_another_bssid():
-    a = Association(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
+    a = Association(_RespIface(), _BSSID, b"Net", 1, our_mac=_US)
     a._active = True
     a._rx_cb(WlanFrameParser.parse_80211_frame(_auth_resp_from(_OTHER_AP), -40))
     assert a._auth_ok is False and a.fail_reason is None
