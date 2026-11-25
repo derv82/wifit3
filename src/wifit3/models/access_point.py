@@ -106,6 +106,7 @@ class AccessPoint:
     # How this AP's SSID was learned, if it was ever hidden.
     # None = we never saw it hidden, or it's still hidden.
     decloak_method: Optional[str] = None
+    decloak_reveal_frame: Optional[bytes] = None  # Frame that names a hidden AP
 
     # BSSIDs we believe are virtual interfaces of the same physical radio (Main + Guest +
     # IoT on one router). Bidirectional.

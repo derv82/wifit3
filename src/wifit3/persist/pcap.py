@@ -240,15 +240,17 @@ class FourWayHandshake:
     client_mac: str
     ssid: str                       # "" when unknown (hidden AP, beacon without an SSID)
     beacon: bytes
+    decloak_reveal_frame: Optional[bytes]
     messages: tuple[HandshakeMessage, ...]
     authorized: bool                # the crackable pair is M2+M3 / M3+M4 / M1+M4: the AP accepted the M2
     hashline: Optional[Hc22000Line] # the pair's WPA*02/04 line; None without an SSID
 
     @classmethod
-    def from_pair(cls, hs: Handshake, pair: CrackablePair, ssid: str, ssid_bytes: bytes) -> FourWayHandshake:
+    def from_pair(cls, hs: Handshake, pair: CrackablePair, ssid: str, ssid_bytes: bytes,
+                  decloak_reveal_frame: Optional[bytes]) -> FourWayHandshake:
         first, second = sorted((pair.anonce_frame.msg_num, pair.mic_frame.msg_num))
         hashline = parse_hc22000(hc22000_line(ssid_bytes, hs, pair)) if ssid_bytes else None
-        return cls(hs.bssid, hs.client_mac, ssid, hs.beacon_frame or b"",
+        return cls(hs.bssid, hs.client_mac, ssid, hs.beacon_frame or b"", decloak_reveal_frame,
                    tuple(handshake_messages(hs, pair)), second > 2, hashline)
 
     @property
@@ -266,6 +268,8 @@ class FourWayHandshake:
     def write(self, path: Path) -> int:
         """The beacon, then every frame, as a pcap at ``path``; returns the frame count."""
         records = [(self.beacon, self.first_seen)]
+        if self.decloak_reveal_frame is not None:
+            records.append((self.decloak_reveal_frame, self.first_seen))
         records += [(message.raw, message.timestamp) for message in self.messages]
         return write_pcap(path, records)
 
@@ -285,7 +289,7 @@ class HandshakePcaps:
             return []
         written: list[Path] = []
         for anonce, pair in hs.valid_pairs_by_instance().items():
-            handshake = FourWayHandshake.from_pair(hs, pair, ap.ssid or "", ap.ssid_bytes or b"")
+            handshake = FourWayHandshake.from_pair(hs, pair, ap.ssid or "", ap.ssid_bytes or b"", ap.decloak_reveal_frame)
             key = (ap.bssid, client_mac, anonce)
             if key in self._written:
                 path, frame_count = self._written[key]
@@ -333,7 +337,7 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
         hs.vendor_akm_offered = beacon.elements.vendor_akm_offered
         hs.rsn_ie_seen = beacon.elements.rsn_element_raw is not None
         for pair in hs.valid_pairs_by_instance().values():
-            handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid, ssid_bytes))
+            handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid, ssid_bytes, None))
     handshakes.sort(key=lambda handshake: handshake.first_seen, reverse=True)
     return handshakes
 

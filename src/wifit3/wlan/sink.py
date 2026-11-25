@@ -226,7 +226,8 @@ class WlanSink:
             if frame_type == "beacon":
                 ap.beacons += 1
 
-            self.decloak(ap, ssid, frame_type, pkt.ssid_bytes)
+            reveal_frame = pkt.raw if isinstance(pkt, ProbeResponsePacket) else None
+            self.decloak(ap, ssid, frame_type, pkt.ssid_bytes, reveal_frame)
 
             self._record_ap_signal(ap, card_id, rssi)
 
@@ -363,7 +364,7 @@ class WlanSink:
             if assoc_request is not None and ap is not None and pkt.status == 0:
                 request_pkt, request_time = assoc_request
                 if timestamp - request_time <= self.ASSOC_RESPONSE_WINDOW_S:
-                    self.decloak(ap, request_pkt.ssid, request_pkt.type, request_pkt.ssid_bytes)
+                    self.decloak(ap, request_pkt.ssid, request_pkt.type, request_pkt.ssid_bytes, request_pkt.raw)
         return True
 
     def _on_eapol_frame(self, pkt: Packet, timestamp: float) -> bool:
@@ -474,9 +475,10 @@ class WlanSink:
         ap.wps = True
         return True
 
-    def decloak(self, ap: AccessPoint, ssid: Optional[str], method: str, ssid_bytes: Optional[bytes] = None) -> None:
+    def decloak(self, ap: AccessPoint, ssid: Optional[str], method: str, ssid_bytes: Optional[bytes] = None,
+                reveal_frame: Optional[bytes] = None) -> None:
         """Set ap.ssid to ssid, ignoring a missing or empty one, and ap.ssid_bytes to ssid_bytes
-        (ssid's UTF-8 when None) and ap.ssid_displayable from them when they changed. Sets
+        (ssid's UTF-8 when None), ap.ssid_displayable and ap.decloak_reveal_frame when they changed. Sets
         ap.decloak_method to method only while ap has no usable SSID yet, so the first source to name
         a hidden AP is the one recorded."""
         if not ssid:
@@ -489,6 +491,7 @@ class WlanSink:
         if ssid_bytes != ap.ssid_bytes:
             ap.ssid_bytes = ssid_bytes
             ap.ssid_displayable = displayable_ssid(ssid_bytes)
+            ap.decloak_reveal_frame = reveal_frame
 
     @staticmethod
     def mac_octets(mac: str) -> Optional[bytes]:

@@ -111,6 +111,9 @@ class _FakeAssociation:
         self.state = AssocState.AUTHENTICATED
         return True
 
+    def assoc_req_frame(self, ssid_bytes: bytes) -> bytes:
+        return b"assoc req " + ssid_bytes
+
     async def associate_as(self, ssid: str):
         self.calls.append(f"assoc:{ssid}")
         status = self._verdicts.get(ssid)
@@ -128,7 +131,7 @@ async def test_sweep_authenticates_once_for_every_candidate():
 
     assert found == "C"
     assert association.calls == ["assoc:A", "assoc:B", "assoc:C"]   # no re-auth
-    campaign.array.decloak.assert_called_once_with(campaign.ap, "C", "assoc")
+    campaign.array.decloak.assert_called_once_with(campaign.ap, "C", "assoc", b"assoc req C")
 
 
 async def test_sweep_reauthenticates_only_after_a_deauth():

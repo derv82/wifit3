@@ -268,7 +268,7 @@ class DecloakCampaign(Campaign):
             self.sent += 1
             logger.debug("[DECLOAK] %s: association request for %r", self.ap.bssid, ssid)
             if await association.associate_as(ssid) == 0:
-                self.array.decloak(self.ap, ssid, "assoc")
+                self.array.decloak(self.ap, ssid, "assoc", association.assoc_req_frame(ssid.encode("utf-8")))
                 logger.info("[DECLOAK] %s accepted %r", self.ap.bssid, ssid)
                 return ssid
         return None

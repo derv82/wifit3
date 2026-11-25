@@ -176,7 +176,7 @@ class Association:
                 break
             # Send Assoc whether or not the Auth Resp surfaced
             logger.info("-> Assoc Req to %s", self.bssid)
-            await self._send_until(self._assoc_req(self.ssid_bytes),
+            await self._send_until(self.assoc_req_frame(self.ssid_bytes),
                                    lambda: self.assoc_status is not None, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
@@ -207,12 +207,12 @@ class Association:
         self.assoc_status = None
         self.ssid_bytes = ssid.encode("utf-8")
         logger.info("-> Assoc Req to %s as %r", self.bssid, ssid)
-        await self._send_until(self._assoc_req(self.ssid_bytes),
+        await self._send_until(self.assoc_req_frame(self.ssid_bytes),
                                lambda: self.assoc_status is not None, self.assoc_timeout)
         self.associated = self._assoc_ok
         return self.assoc_status
 
-    def _assoc_req(self, ssid_bytes: bytes) -> bytes:
+    def assoc_req_frame(self, ssid_bytes: bytes) -> bytes:
         return assoc_req(self.bssid_bytes, self.our_mac, ssid_bytes, self.assoc_trailer_ies,
                          channel=self.channel, privacy=self.privacy, beacon_frame=self.beacon_frame)
 

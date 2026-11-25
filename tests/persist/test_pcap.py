@@ -434,7 +434,7 @@ def test_read_access_points_uses_a_probe_response_as_the_beacon_of_an_ap_without
     hs = ap.handshakes[_CLIENT_MAC]
     assert hs.beacon_frame == _probe_response()
     [pair] = hs.valid_pairs_by_instance().values()
-    assert FourWayHandshake.from_pair(hs, pair, ap.ssid, ap.ssid_bytes).matches_psk(_PSK)
+    assert FourWayHandshake.from_pair(hs, pair, ap.ssid, ap.ssid_bytes, None).matches_psk(_PSK)
 
 
 @pytest.mark.parametrize("naming_frames", [
