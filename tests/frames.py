@@ -8,7 +8,7 @@ call sites, even though the parser itself now builds the subclasses directly.
 """
 from wifit3.dot11.ie import Elements
 from wifit3.dot11.packet import (
-    AssocRequestPacket, BeaconPacket, EapolPacket, Packet, ProbeReqPacket, ProbeResponsePacket,
+    AssocRequestPacket, AssocRespPacket, BeaconPacket, EapolPacket, Packet, ProbeReqPacket, ProbeResponsePacket,
     WepDataPacket,
 )
 from wifit3.dot11.rsn import RsnElement, WpaElement
@@ -67,6 +67,8 @@ def pkt(d: dict) -> Packet:
         return ProbeResponsePacket(**base, elements=_elements(r))
     if t in ("assoc_req", "reassoc_req"):
         return AssocRequestPacket(**r)
+    if t in ("assoc_resp", "reassoc_resp"):
+        return AssocRespPacket(**r)
     if t == "probe_req":
         return ProbeReqPacket(**r)
     base = {k: r[k] for k in _BASE_FIELDS if k in r}

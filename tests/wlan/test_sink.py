@@ -494,26 +494,30 @@ def test_reassoc_with_different_akm_gives_newest():
     assert all(message.akm == 8 for message in hs.messages)
 
 
-def test_decloak_via_assoc_req():
-    """A client's assoc-req SSID IE decloaks the hidden AP it's joining."""
+@pytest.mark.parametrize("request_type, response_type", [("assoc_req", "assoc_resp"), ("reassoc_req", "reassoc_resp")])
+def test_decloak_via_accepted_assoc_req(request_type, response_type):
     s = WlanSink()
+    client = "12:22:33:44:55:66"
     s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": b""}), W0)
+    s.update(pkt({"type": request_type, "bssid": BSSID, "source": client, "dest": BSSID,
+                  "rssi": -45, "ssid": "Real_Name"}), W0, timestamp=100.0)
     assert s.access_points[BSSID].ssid is None
-    s.update(pkt({"type": "assoc_req", "bssid": BSSID, "source": "12:22:33:44:55:66",
-                  "dest": BSSID, "rssi": -45, "ssid": "Real_Name"}), W0)
+    s.update(pkt({"type": response_type, "bssid": BSSID, "source": BSSID, "dest": client,
+                  "rssi": -45, "status": 0}), W0, timestamp=100.0)
     ap = s.access_points[BSSID]
-    assert ap.ssid == "Real_Name" and ap.decloak_method == "assoc_req"
+    assert ap.ssid == "Real_Name" and ap.decloak_method == request_type
 
 
-def test_decloak_via_reassoc_req():
-    """Reassoc-req carries the SSID too (PMF doesn't protect it), so it decloaks as well."""
+@pytest.mark.parametrize("status, response_time", [(1, 100.0), (0, 100.0 + WlanSink.ASSOC_RESPONSE_WINDOW_S + 0.01)])
+def test_no_decloak_on_rejected_or_late_assoc_resp(status, response_time):
     s = WlanSink()
+    client = "12:22:33:44:55:66"
     s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": b""}), W0)
+    s.update(pkt({"type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+                  "rssi": -45, "ssid": "Wrong_Guess"}), W0, timestamp=100.0)
+    s.update(pkt({"type": "assoc_resp", "bssid": BSSID, "source": BSSID, "dest": client,
+                  "rssi": -45, "status": status}), W0, timestamp=response_time)
     assert s.access_points[BSSID].ssid is None
-    s.update(pkt({"type": "reassoc_req", "bssid": BSSID, "source": "12:22:33:44:55:66",
-                  "dest": BSSID, "rssi": -45, "ssid": "Real_Name"}), W0)
-    ap = s.access_points[BSSID]
-    assert ap.ssid == "Real_Name" and ap.decloak_method == "reassoc_req"
 
 
 def test_from_ds_client_is_receiver_not_addr3_origin():

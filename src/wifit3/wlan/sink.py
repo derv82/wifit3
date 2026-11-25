@@ -64,6 +64,7 @@ class WlanSink:
 
     SIBLING_BIT_DIFF_MAX = 4
     SIGNAL_WINDOW_SIZE = 8
+    ASSOC_RESPONSE_WINDOW_S = 0.1  # Max time gap between an Assoc Req & Assoc Resp
 
     def __init__(self):
         self.access_points: Dict[str, AccessPoint] = {}
@@ -74,6 +75,7 @@ class WlanSink:
         self.probed_ssids: Set[str] = set()  # every SSID probed for this session, by any client
         # (bssid, client) -> the PMKID-carrying M1 whose AKM the next M2 may confirm
         self._pmkid_m1_awaiting_m2: Dict[tuple[str, str], EapolPacket] = {}
+        self._assoc_request_by_client: Dict[tuple[str, str], tuple[AssocRequestPacket, float]] = {}
         self._waiters: list = []            # (match, future, loop) for the next_frame await-API
         self._waiters_lock = threading.Lock()
 
@@ -126,7 +128,7 @@ class WlanSink:
 
         self._on_beacon_frame(pkt, card_id, channel_hint, timestamp)
         self._on_wepdata_frame(pkt)
-        self._track_client(pkt, card_id)
+        self._track_client(pkt, card_id, timestamp)
         self._on_eapol_frame(pkt, timestamp)
         self._on_eap_frame(pkt)
 
@@ -302,7 +304,7 @@ class WlanSink:
                 ap.wep = stats
         return True
 
-    def _track_client(self, pkt: Packet, card_id: str) -> bool:
+    def _track_client(self, pkt: Packet, card_id: str, timestamp: float) -> bool:
         """Register/refresh the client STA behind a frame (assoc, probed SSIDs, decloak)."""
         frame_type = pkt.type
         if frame_type not in (
@@ -353,10 +355,15 @@ class WlanSink:
         if frame_type in ("deauth", "disassoc") and client.bssid == bssid:
             client.akm_selected = None
 
-        if frame_type in ("assoc_req", "reassoc_req"):
+        if isinstance(pkt, AssocRequestPacket):
+            self._assoc_request_by_client[(bssid, client_mac)] = (pkt, timestamp)
+        elif isinstance(pkt, AssocRespPacket):
+            assoc_request = self._assoc_request_by_client.pop((bssid, client_mac), None)
             ap = self.access_points.get(bssid)
-            if ap is not None:
-                self.decloak(ap, pkt.ssid, frame_type, pkt.ssid_bytes)
+            if assoc_request is not None and ap is not None and pkt.status == 0:
+                request_pkt, request_time = assoc_request
+                if timestamp - request_time <= self.ASSOC_RESPONSE_WINDOW_S:
+                    self.decloak(ap, request_pkt.ssid, request_pkt.type, request_pkt.ssid_bytes)
         return True
 
     def _on_eapol_frame(self, pkt: Packet, timestamp: float) -> bool:

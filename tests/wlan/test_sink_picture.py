@@ -142,6 +142,8 @@ def test_decloak_via_assoc_req_and_method_not_overwritten():
     s.update(pkt({"type": "beacon", "bssid": b, "rssi": -60, "ssid_bytes": b""}), W0)
     s.update(pkt({"type": "assoc_req", "bssid": b, "source": "aa:aa:aa:aa:aa:aa", "dest": b,
                   "rssi": -65, "ssid": "TestSSID"}), W0)
+    s.update(pkt({"type": "assoc_resp", "bssid": b, "source": b, "dest": "aa:aa:aa:aa:aa:aa",
+                  "rssi": -60, "status": 0}), W0)
     ap = s.access_points[b]
     assert ap.ssid == "TestSSID" and ap.decloak_method == "assoc_req"
     s.update(pkt({"type": "probe_resp", "bssid": b, "rssi": -60, "ssid": "TestSSID"}), W0)

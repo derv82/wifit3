@@ -417,6 +417,10 @@ def _assoc_request() -> bytes:
     return mac_header(b"\x00\x00", _AA, _SPA, _AA) + bytes.fromhex("11040a00") + b"\x00\x07HomeNet" + _RSN_IE_PSK
 
 
+def _assoc_response() -> bytes:
+    return mac_header(b"\x10\x00", _SPA, _AA, _AA) + bytes.fromhex("1104000001c0") + b"\x01\x01\x82"
+
+
 def test_read_access_points_stamps_messages_and_last_seen_with_frame_times(tmp_path):
     write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), *_m1_m2(1, 1000.0), (_beacon(), 1001.0)])
     [ap] = read_access_points(tmp_path / "a.pcap")
@@ -433,9 +437,12 @@ def test_read_access_points_uses_a_probe_response_as_the_beacon_of_an_ap_without
     assert FourWayHandshake.from_pair(hs, pair, ap.ssid, ap.ssid_bytes).matches_psk(_PSK)
 
 
-@pytest.mark.parametrize("naming_frame", [_probe_response(), _assoc_request()])
-def test_read_access_points_decloaks_a_hidden_ap(tmp_path, naming_frame):
-    write_pcap(tmp_path / "a.pcap", [(_hidden_beacon(), 999.0), (naming_frame, 999.5), *_m1_m2(1, 1000.0)])
+@pytest.mark.parametrize("naming_frames", [
+    [(_probe_response(), 999.5)],
+    [(_assoc_request(), 999.5), (_assoc_response(), 999.5)],
+])
+def test_read_access_points_decloaks_a_hidden_ap(tmp_path, naming_frames):
+    write_pcap(tmp_path / "a.pcap", [(_hidden_beacon(), 999.0), *naming_frames, *_m1_m2(1, 1000.0)])
     [ap] = read_access_points(tmp_path / "a.pcap")
     assert ap.ssid == _SSID
 
