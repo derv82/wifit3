@@ -12,7 +12,7 @@ from typing import Iterable, Iterator, Optional
 from wifit3.crack.handshake import CrackablePair, handshake_messages, hc22000_line, messages_label
 from wifit3.crack.hc22000_format import Hc22000Line, parse_hc22000
 from wifit3.crack.wpa_psk import psk_matches
-from wifit3.dot11.packet import BeaconPacket, EapolPacket, ProbeResponsePacket
+from wifit3.dot11.packet import AssocRequestPacket, BeaconPacket, EapolPacket, ProbeResponsePacket
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.models import AccessPoint, Handshake, HandshakeMessage
 from wifit3.persist.config import Config
@@ -311,6 +311,7 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
         for frame, timestamp in read_pcap(path):
             timestamps.setdefault(frame, timestamp)
     beacon: Optional[BeaconPacket] = None
+    reveal_packet: Optional[ProbeResponsePacket | AssocRequestPacket] = None
     by_client: dict[str, Handshake] = {}
     for frame, timestamp in sorted(timestamps.items(), key=lambda item: item[1]):
         packet = WlanFrameParser.parse_80211_frame(frame, 0)
@@ -318,18 +319,25 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
             continue
         if isinstance(packet, BeaconPacket):
             beacon = packet
+        elif isinstance(packet, (ProbeResponsePacket, AssocRequestPacket)) and packet.ssid:
+            reveal_packet = packet
         elif isinstance(packet, EapolPacket) and packet.client_mac and packet.replay_counter:
             if packet.client_mac not in by_client:
                 by_client[packet.client_mac] = Handshake(bssid=bssid, client_mac=packet.client_mac)
             by_client[packet.client_mac].messages.append(HandshakeMessage.from_packet(packet, packet.akm, timestamp))
     if beacon is None:
         return []
-    if beacon.ssid is None:              # hidden, or no SSID element: the caller's SSID
-        ssid = ssid or ""
-        ssid_bytes = ssid.encode("utf-8")
-    else:
+    decloak_reveal_frame: Optional[bytes] = None
+    if beacon.ssid is not None:
         ssid = beacon.ssid
         ssid_bytes = beacon.ssid_bytes
+    elif reveal_packet is not None:
+        ssid = reveal_packet.ssid
+        ssid_bytes = reveal_packet.ssid_bytes
+        decloak_reveal_frame = reveal_packet.raw
+    else:                                # hidden, nothing names it: the caller's SSID
+        ssid = ssid or ""
+        ssid_bytes = ssid.encode("utf-8")
     handshakes: list[FourWayHandshake] = []
     for hs in by_client.values():
         hs.beacon_frame = beacon.raw
@@ -337,16 +345,17 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
         hs.vendor_akm_offered = beacon.elements.vendor_akm_offered
         hs.rsn_ie_seen = beacon.elements.rsn_element_raw is not None
         for pair in hs.valid_pairs_by_instance().values():
-            handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid, ssid_bytes, None))
+            handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid, ssid_bytes, decloak_reveal_frame))
     handshakes.sort(key=lambda handshake: handshake.first_seen, reverse=True)
     return handshakes
 
 
 def read_access_points(path: Path) -> list[AccessPoint]:
     """Every AP in the capture with its handshakes and PMKIDs, stamped with the file's frame times.
-    A handshake on an AP heard only through probe responses gets the first probe response as its beacon."""
+    A hidden AP's SSID comes from the last probe response or association request in the capture."""
     sink = WlanSink()
     probe_response_by_bssid: dict[str, bytes] = {}
+    reveal_packet_by_bssid: dict[str, ProbeResponsePacket | AssocRequestPacket] = {}
     for frame, timestamp in read_pcap(path):
         packet = WlanFrameParser.parse_80211_frame(frame, 0)
         if packet is None:
@@ -354,7 +363,12 @@ def read_access_points(path: Path) -> list[AccessPoint]:
         sink.update(packet, path.name, timestamp=timestamp)
         if isinstance(packet, ProbeResponsePacket):
             probe_response_by_bssid.setdefault(packet.bssid, packet.raw)
+        if isinstance(packet, (ProbeResponsePacket, AssocRequestPacket)) and packet.ssid:
+            reveal_packet_by_bssid[packet.bssid] = packet
     for ap in sink.get_access_points():
+        if ap.is_hidden and ap.bssid in reveal_packet_by_bssid:
+            packet = reveal_packet_by_bssid[ap.bssid]
+            sink.decloak(ap, packet.ssid, packet.type, packet.ssid_bytes, packet.raw)
         for hs in ap.handshakes.values():
             if not hs.beacon_frame and ap.bssid in probe_response_by_bssid:
                 hs.beacon_frame = probe_response_by_bssid[ap.bssid]
