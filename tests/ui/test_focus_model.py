@@ -578,6 +578,7 @@ def _wep_btn_ap() -> AccessPoint:
 def _wep_hidden_ap() -> AccessPoint:
     ap = _wep_btn_ap()
     ap.ssid = None
+    ap.ssid_bytes = None
     return ap
 
 

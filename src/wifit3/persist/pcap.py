@@ -320,10 +320,11 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
             by_client[packet.client_mac].messages.append(HandshakeMessage.from_packet(packet, packet.akm, timestamp))
     if beacon is None:
         return []
-    ssid = beacon.ssid or ssid or ""
-    if beacon.ssid_bytes is None:
+    if beacon.ssid is None:              # hidden, or no SSID element: the caller's SSID
+        ssid = ssid or ""
         ssid_bytes = ssid.encode("utf-8")
     else:
+        ssid = beacon.ssid
         ssid_bytes = beacon.ssid_bytes
     handshakes: list[FourWayHandshake] = []
     for hs in by_client.values():

@@ -22,9 +22,8 @@ def test_access_point_model_defaults():
 
 
 def test_is_hidden():
-    """Hidden until we hold a usable SSID: None and the '<hidden>' placeholder both count."""
+    """Hidden until we hold a usable SSID's bytes."""
     assert AccessPoint(bssid="00:11:22:33:44:55").is_hidden is True
-    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="<hidden>").is_hidden is True
     assert AccessPoint(bssid="00:11:22:33:44:55", ssid="").is_hidden is True
     assert AccessPoint(bssid="00:11:22:33:44:55", ssid="Rai2.4").is_hidden is False
 

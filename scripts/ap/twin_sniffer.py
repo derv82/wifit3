@@ -153,7 +153,7 @@ class TwinSniffer:
             if ssid == self.ssid:
                 to = self._name(a1) or ("broadcast" if a1[0] & 1 else mac_to_str(a1))
                 self._event(a2, f"probe for SSID -> {to}", raw)
-            elif ssid in (None, "", "<hidden>"):
+            elif ssid in (None, ""):
                 self._event(a2, "wildcard probe", raw)
             return
         label = _SUBTYPES.get(sub)

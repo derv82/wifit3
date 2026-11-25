@@ -58,10 +58,12 @@ class PersistedCapture:
 class AccessPoint:
     bssid: str
     ssid: Optional[str] = None
-    # The SSID element as sent: hashlines and transmitted frames use these, not ssid.
+    # The SSID element as sent: hashlines and transmitted frames use these, not ssid. None while hidden.
     ssid_bytes: Optional[bytes] = None
     # What the UI shows: displayable_ssid(ssid_bytes). Log lines and filenames use ssid.
     ssid_displayable: Optional[str] = None
+    # The NUL count of a hidden beacon's SSID element; None when unknown (no NULs, or not hidden).
+    hidden_ssid_len: Optional[int] = None
     channel: int = 1
     encryption: Optional[str] = "Unknown"
     # Structured security fields from the RSN IE; `encryption` (above) is the airodump-style string.
@@ -158,8 +160,8 @@ class AccessPoint:
 
     @property
     def is_hidden(self) -> bool:
-        """No usable SSID: never seen, or still the "<hidden>" placeholder."""
-        return not (self.ssid and self.ssid != "<hidden>")
+        """No usable SSID: never seen, or only hidden (empty or NUL-filled) SSID elements."""
+        return self.ssid_bytes is None
 
     @property
     def pmf_posture(self) -> PmfPosture:

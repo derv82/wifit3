@@ -256,8 +256,8 @@ def parse_elements(elements: bytes, privacy: bool) -> Elements:
     for tag_id, tag_data, raw_elem in iter_information_elements(elements):
         if tag_id == 0 and not seen_ssid: # SSID (only the first)
             seen_ssid = True
-            if len(tag_data) <= 32 and not tag_data.strip(b"\x00"):   # empty or NUL-filled
-                ssid = "<hidden>"
+            if len(tag_data) <= 32 and not tag_data.strip(b"\x00"):   # hidden: empty or NUL-filled, no text
+                ssid_bytes = tag_data
             elif len(tag_data) <= 32:
                 ssid = ssid_text(tag_data)
                 ssid_bytes = tag_data

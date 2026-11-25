@@ -20,6 +20,7 @@ def test_no_reasons_for_a_visible_unsilenced_ap_without_a_current_psk(monkeypatc
 def test_every_reason_is_listed(monkeypatch):
     ap = build_ap()
     ap.ssid = ""
+    ap.ssid_bytes = None
     monkeypatch.setattr(Config, "silenced_bssids", [ap.bssid.lower()])
     assert ap.is_hidden
     assert WifiteApp.pbc_ignore_reasons(_app(PasswordStatus.CURRENT, False), ap) == [

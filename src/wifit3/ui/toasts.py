@@ -31,7 +31,7 @@ class Toasts:
         self._shown_capture_ranks: Dict[str, ShownCaptureRank] = {}
 
     def ap_event(self, event: ApEvent, guessid: str, pbc_ignore_reasons: List[str]) -> None:
-        if event.ssid and event.ssid != "<hidden>":
+        if event.ssid:
             name = f"[bold]{escape(event.ssid)}[/bold]"
             location = (f"on channel [bold]{event.channel}[/bold] "
                         f"[dim bold](BSSID: {event.bssid})[/dim bold]")

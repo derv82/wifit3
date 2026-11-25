@@ -185,7 +185,7 @@ class FakeAP:
         self._tx(build_deauth(client, self.bssid, self.bssid, 7))
 
     def _on_probe(self, pkt, client: bytes) -> None:
-        if not pkt.ssid_bytes:                    # wildcard: the parser leaves it None
+        if not pkt.ssid_bytes:                    # wildcard: an empty SSID element
             self.stats.probes_wildcard += 1
         elif pkt.ssid_bytes == self.ssid_bytes:
             self.stats.probes_direct += 1

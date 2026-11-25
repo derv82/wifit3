@@ -139,7 +139,7 @@ def test_wpa3_and_pmf_flags_propagate_and_refresh():
 def test_decloak_via_assoc_req_and_method_not_overwritten():
     s = WlanSink()
     b = "12:22:33:44:55:66"
-    s.update(pkt({"type": "beacon", "bssid": b, "rssi": -60, "ssid": "<hidden>"}), W0)
+    s.update(pkt({"type": "beacon", "bssid": b, "rssi": -60, "ssid_bytes": b""}), W0)
     s.update(pkt({"type": "assoc_req", "bssid": b, "source": "aa:aa:aa:aa:aa:aa", "dest": b,
                   "rssi": -65, "ssid": "TestSSID"}), W0)
     ap = s.access_points[b]
@@ -151,7 +151,7 @@ def test_decloak_via_assoc_req_and_method_not_overwritten():
 def test_siblings_first_byte_differs():
     s = WlanSink()
     _seed_beacon(s, "00:bb:cc:dd:ee:ff", 10, "TestSSID")
-    _seed_beacon(s, "07:bb:cc:dd:ee:ff", 10, "<hidden>")
+    _seed_beacon(s, "07:bb:cc:dd:ee:ff", 10, None)
     assert s.access_points["00:bb:cc:dd:ee:ff"].siblings == ["07:bb:cc:dd:ee:ff"]
     assert s.access_points["07:bb:cc:dd:ee:ff"].siblings == ["00:bb:cc:dd:ee:ff"]
 
@@ -167,14 +167,14 @@ def test_siblings_different_channel_no_match():
 def test_siblings_two_bytes_two_bits_matches():
     s = WlanSink()
     _seed_beacon(s, "02:bb:cc:00:ee:ff", 11, "TestSSID")
-    _seed_beacon(s, "00:bb:cc:01:ee:ff", 11, "<hidden>")
+    _seed_beacon(s, "00:bb:cc:01:ee:ff", 11, None)
     assert s.access_points["02:bb:cc:00:ee:ff"].siblings == ["00:bb:cc:01:ee:ff"]
 
 
 def test_siblings_one_byte_many_bits_matches():
     s = WlanSink()
     _seed_beacon(s, "00:bb:cc:dd:ee:ff", 2, "TestSSID")
-    _seed_beacon(s, "3f:bb:cc:dd:ee:ff", 2, "<hidden>")
+    _seed_beacon(s, "3f:bb:cc:dd:ee:ff", 2, None)
     assert s.access_points["00:bb:cc:dd:ee:ff"].siblings == ["3f:bb:cc:dd:ee:ff"]
 
 

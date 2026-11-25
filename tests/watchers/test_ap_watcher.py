@@ -183,18 +183,11 @@ def test_decloak_reported_once_with_its_method():
     assert det.poll(ap) == []
 
     ap.ssid = "TestSSID"
+    ap.ssid_bytes = b"TestSSID"
     ap.decloak_method = "probe_resp"
     assert det.poll(ap) == [ApDecloaked(bssid=ap.bssid, ssid="TestSSID", channel=ap.channel,
                                         method="probe_resp")]
     assert det.poll(ap) == []
-
-
-def test_hidden_marker_counts_as_hidden():
-    det = DecloakDetector()
-    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="<hidden>")
-    assert det.poll(ap) == []
-    ap.ssid = "Foo"
-    assert len(det.poll(ap)) == 1
 
 
 def test_no_decloak_for_an_ap_never_seen_hidden():
@@ -363,6 +356,7 @@ def test_watcher_saves_a_hidden_aps_handshake_once_its_ssid_is_known(monkeypatch
     monkeypatch.setattr(Config, "auto_crack", None)
     array, ap = _array_with_handshake()
     ap.ssid = None
+    ap.ssid_bytes = None
     watcher = ApWatcher(Vault())
     assert [e.save_result for e in _handshakes(watcher.poll(array))] == [None]
     assert watcher.poll(array) == []

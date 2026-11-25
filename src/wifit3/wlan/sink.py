@@ -116,7 +116,7 @@ class WlanSink:
         ) and logger.isEnabledFor(TRACE):
             logger.trace("%s", _fmt_frame("RXFRAME", frame_type, pkt.source, pkt.dest, bssid))
 
-        if isinstance(pkt, ProbeReqPacket) and self._is_real_ssid(pkt.ssid):
+        if isinstance(pkt, ProbeReqPacket) and pkt.ssid:
             self.probed_ssids.add(pkt.ssid)
 
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
@@ -180,8 +180,8 @@ class WlanSink:
         if bssid not in self.access_points:
             ap = AccessPoint(
                 bssid=bssid,
-                ssid=ssid if self._is_real_ssid(ssid) else None,
-                ssid_bytes=pkt.ssid_bytes if self._is_real_ssid(ssid) else None,
+                ssid=ssid,
+                ssid_bytes=pkt.ssid_bytes if ssid else None,
                 channel=channel,
                 encryption=enc,
                 akms=list(akms),
@@ -215,7 +215,7 @@ class WlanSink:
             self.access_points[bssid] = ap
             self._record_ap_signal(ap, card_id, rssi)
             self._recompute_siblings_for(bssid)
-            if self._is_real_ssid(ssid):
+            if ssid:
                 logger.trace('[RXFRAME] %-9s New AP on Ch %s: %s ("%s")',
                              "beacon", channel, bssid, ssid)
         else:
@@ -270,6 +270,9 @@ class WlanSink:
         rsn_ie = elements.rsn_element_raw
         if rsn_ie and (rsn_valid or not ap.rsn_valid):
             ap.rsn_ie = rsn_ie
+
+        if frame_type == "beacon" and pkt.ssid_bytes and not pkt.ssid_bytes.strip(b"\x00"):
+            ap.hidden_ssid_len = len(pkt.ssid_bytes)
 
         # Stash the latest beacon and back-fill handshakes missing one.
         if frame_type == "beacon":
@@ -464,14 +467,14 @@ class WlanSink:
         ap.wps = True
         return True
 
-    def decloak(self, ap: AccessPoint, ssid: str, method: str, ssid_bytes: Optional[bytes] = None) -> None:
-        """Set ap.ssid to ssid, ignoring a placeholder or empty one, and ap.ssid_bytes to ssid_bytes
+    def decloak(self, ap: AccessPoint, ssid: Optional[str], method: str, ssid_bytes: Optional[bytes] = None) -> None:
+        """Set ap.ssid to ssid, ignoring a missing or empty one, and ap.ssid_bytes to ssid_bytes
         (ssid's UTF-8 when None) and ap.ssid_displayable from them when they changed. Sets
         ap.decloak_method to method only while ap has no usable SSID yet, so the first source to name
         a hidden AP is the one recorded."""
-        if not self._is_real_ssid(ssid):
+        if not ssid:
             return
-        if not self._is_real_ssid(ap.ssid):
+        if ap.is_hidden:
             ap.decloak_method = method
         if ssid_bytes is None:
             ssid_bytes = ssid.encode("utf-8")
@@ -479,11 +482,6 @@ class WlanSink:
         if ssid_bytes != ap.ssid_bytes:
             ap.ssid_bytes = ssid_bytes
             ap.ssid_displayable = displayable_ssid(ssid_bytes)
-
-    @staticmethod
-    def _is_real_ssid(ssid: Optional[str]) -> bool:
-        """True for a usable SSID (not hidden)."""
-        return bool(ssid) and ssid != "<hidden>"
 
     @staticmethod
     def mac_octets(mac: str) -> Optional[bytes]:

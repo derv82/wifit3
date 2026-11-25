@@ -226,8 +226,9 @@ def test_wlan_frame_parser_ignores_second_ssid_ie():
 
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed is not None
-    # Stays "<hidden>". The late tag-0 must be ignored.
-    assert parsed.ssid == "<hidden>"
+    # Stays hidden. The late tag-0 must be ignored.
+    assert parsed.ssid is None
+    assert parsed.ssid_bytes == b""
 
 
 @pytest.mark.parametrize("length", [1, 8, 32])
@@ -244,7 +245,8 @@ def test_wlan_frame_parser_reads_a_zero_filled_ssid_as_hidden(length):
     parsed = WlanFrameParser.parse_80211_frame(mac_hdr + fixed + zero_filled_ssid + rates, -50)
 
     assert isinstance(parsed, BeaconPacket)
-    assert parsed.ssid == "<hidden>"
+    assert parsed.ssid is None
+    assert parsed.ssid_bytes == bytes(length)
 
 
 def test_wlan_frame_parser_escapes_nul_bytes_inside_an_ssid():

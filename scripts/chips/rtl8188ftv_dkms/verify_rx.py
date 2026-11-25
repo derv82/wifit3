@@ -83,11 +83,9 @@ def _mismatches(packet, row: list[str]) -> list[str]:
 
 def _tshark_ssid(field: str) -> str | None:
     """tshark's SSID field (hex bytes; ``<MISSING>`` for a zero-length IE) in the parser's
-    text form: ``<hidden>`` when empty, UTF-8 with undecodable bytes dropped."""
-    if not field:
+    text form: None when empty, UTF-8 with undecodable bytes dropped."""
+    if not field or field == "<MISSING>":
         return None
-    if field == "<MISSING>":
-        return "<hidden>"
     return bytes.fromhex(field.replace(":", "")).decode("utf-8", errors="ignore")
 
 

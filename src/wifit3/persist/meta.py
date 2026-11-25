@@ -88,7 +88,7 @@ def update_meta(ssid: Optional[str], bssid: str, **fields: Any) -> Path:
     path = meta_path(ssid, bssid)
     data = read_meta(path)
     data["bssid"] = bssid_to_colon(bssid)
-    if ssid and ssid != "<hidden>":
+    if ssid:
         data["ssid"] = ssid
     _write_meta(path, data, fields)
     return path

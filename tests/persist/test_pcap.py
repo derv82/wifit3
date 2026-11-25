@@ -377,6 +377,14 @@ def test_read_handshakes_keeps_the_beacon_when_a_probe_response_comes_later(tmp_
     assert handshake.beacon == _beacon()
 
 
+def test_read_handshakes_of_a_hidden_beacon_use_the_callers_ssid(tmp_path):
+    hidden_beacon = _beacon().replace(b"\x00\x07HomeNet", b"\x00\x00")
+    write_pcap(tmp_path / "a.pcap", [(hidden_beacon, 999.0), *_m1_m2(1, 1000.0)])
+    [handshake] = read_handshakes(_BSSID, _SSID, [tmp_path / "a.pcap"])
+    assert handshake.ssid == _SSID
+    assert handshake.hashline.essid == _SSID.encode().hex()
+
+
 def test_four_way_handshake_write_round_trips_through_read_pcap(tmp_path):
     write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), *_m1_m2(1, 1000.0)])
     [handshake] = read_handshakes(_BSSID, None, [tmp_path / "a.pcap"])

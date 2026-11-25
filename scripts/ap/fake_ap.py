@@ -122,7 +122,7 @@ class ApResponder:
         subtype = pkt.subtype_id
         if subtype == 0x04:                           # probe request
             ssid = getattr(pkt, "ssid", None)
-            if ssid in (None, "", "<hidden>", self.ssid):
+            if ssid in (None, "", self.ssid):
                 frame = self._probe_resp[:4] + client + self._probe_resp[10:]
                 self._send(frame, "probe", client)
         elif addr1 != self.bssid:                     # auth/assoc must be to us
