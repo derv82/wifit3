@@ -370,6 +370,13 @@ def test_read_handshakes_without_a_beacon_is_empty(tmp_path):
     assert read_handshakes(_BSSID, _SSID, [tmp_path / "a.pcap"]) == []
 
 
+def test_read_handshakes_keeps_the_beacon_when_a_probe_response_comes_later(tmp_path):
+    probe_response = b"\x50\x00" + _beacon()[2:]
+    write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), *_m1_m2(1, 1000.0), (probe_response, 1001.0)])
+    [handshake] = read_handshakes(_BSSID, None, [tmp_path / "a.pcap"])
+    assert handshake.beacon == _beacon()
+
+
 def test_four_way_handshake_write_round_trips_through_read_pcap(tmp_path):
     write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), *_m1_m2(1, 1000.0)])
     [handshake] = read_handshakes(_BSSID, None, [tmp_path / "a.pcap"])

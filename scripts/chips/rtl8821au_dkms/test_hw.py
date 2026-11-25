@@ -105,7 +105,7 @@ class BeaconTally:
         r = parsed.rssi
         if r and (bssid not in self.rssi or r > self.rssi[bssid]):
             self.rssi[bssid] = r
-        ch = parsed.channel   # the AP's own advertised channel
+        ch = parsed.elements.channel   # the AP's own advertised channel
         if ch:
             self.channel[bssid] = ch
 

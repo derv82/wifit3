@@ -12,7 +12,7 @@ from typing import Iterable, Iterator, Optional
 from wifit3.crack.handshake import CrackablePair, handshake_messages, hc22000_line, messages_label
 from wifit3.crack.hc22000_format import Hc22000Line, parse_hc22000
 from wifit3.crack.wpa_psk import psk_matches
-from wifit3.dot11.packet import BeaconPacket, EapolPacket
+from wifit3.dot11.packet import BeaconPacket, EapolPacket, ProbeResponsePacket
 from wifit3.dot11.parser import WlanFrameParser
 from wifit3.models import AccessPoint, Handshake, HandshakeMessage
 from wifit3.persist.config import Config
@@ -328,9 +328,9 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
     handshakes: list[FourWayHandshake] = []
     for hs in by_client.values():
         hs.beacon_frame = beacon.raw
-        hs.akm_offered = list(beacon.akm_suites)
-        hs.vendor_akm_offered = beacon.vendor_akm_offered
-        hs.rsn_ie_seen = beacon.rsn_ie_raw is not None
+        hs.akm_offered = list(beacon.elements.akm_suites)
+        hs.vendor_akm_offered = beacon.elements.vendor_akm_offered
+        hs.rsn_ie_seen = beacon.elements.rsn_element_raw is not None
         for pair in hs.valid_pairs_by_instance().values():
             handshakes.append(FourWayHandshake.from_pair(hs, pair, ssid, ssid_bytes))
     handshakes.sort(key=lambda handshake: handshake.first_seen, reverse=True)
@@ -347,7 +347,7 @@ def read_access_points(path: Path) -> list[AccessPoint]:
         if packet is None:
             continue
         sink.update(packet, path.name, timestamp=timestamp)
-        if isinstance(packet, BeaconPacket) and packet.type == "probe_resp":
+        if isinstance(packet, ProbeResponsePacket):
             probe_response_by_bssid.setdefault(packet.bssid, packet.raw)
     for ap in sink.get_access_points():
         for hs in ap.handshakes.values():

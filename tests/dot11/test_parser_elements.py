@@ -46,34 +46,34 @@ def test_an_ssid_element_over_32_bytes_gives_no_ssid():
 
 def test_a_ds_element_not_1_byte_long_is_ignored_for_the_channel():
     packet = parse_beacon(element(3, b"\x06\x00") + element(61, b"\x24" + bytes(21)))
-    assert packet.channel == 36
+    assert packet.elements.channel == 36
 
 
 def test_empty_ht_and_1_byte_vht_operation_elements_give_no_channel():
     packet = parse_beacon(element(61, b"") + element(192, b"\x00"))
-    assert packet.channel is None
+    assert packet.elements.channel is None
 
 
 def test_an_extended_capabilities_element_under_11_bytes_gives_no_beacon_protection():
     packet = parse_beacon(element(127, b"\xff" * 10))
-    assert packet.beacon_protection is False
+    assert packet.elements.beacon_protection is False
 
 
 def test_a_second_unparseable_rsn_element_keeps_the_first_parsed_one():
     good = element(48, bytes.fromhex("0100000fac040100000fac040100000fac020000"))
     bad = element(48, b"\x02\x00" + bytes(10))
     packet = parse_beacon(good + bad)
-    assert packet.rsn_valid is True
-    assert packet.rsn_ie_raw == good
-    assert packet.akms == ["PSK"]
+    assert packet.elements.rsn is not None
+    assert packet.elements.rsn_element_raw == good
+    assert packet.elements.akms == ["PSK"]
 
 
 def test_two_unparseable_rsn_elements_keep_the_first_raw_element():
     first = element(48, b"\x02\x00" + bytes(10))
     second = element(48, b"\x03\x00" + bytes(10))
     packet = parse_beacon(first + second)
-    assert packet.rsn_valid is False
-    assert packet.rsn_ie_raw == first
+    assert packet.elements.rsn is None
+    assert packet.elements.rsn_element_raw == first
 
 
 def test_a_second_wpa_element_is_ignored():
@@ -82,27 +82,27 @@ def test_a_second_wpa_element_is_ignored():
     second = element(221, WPA_OUI + b"\x01\x01\x00" + WPA_OUI + b"\x04\x01\x00" + WPA_OUI + b"\x04"
                      + b"\x01\x00" + WPA_OUI + b"\x01")
     packet = parse_beacon(first + second)
-    assert packet.pairwise_cipher == "TKIP"
-    assert packet.akms == ["PSK"]
+    assert packet.elements.pairwise_cipher == "TKIP"
+    assert packet.elements.akms == ["PSK"]
 
 
 def test_a_vendor_element_under_4_bytes_is_ignored():
     packet = parse_beacon(element(221, WPA_OUI))
-    assert packet.wps is False
-    assert packet.chipset is None
-    assert packet.encryption == "OPEN"
+    assert packet.elements.wps is None
+    assert packet.elements.chipset is None
+    assert packet.elements.encryption == "OPEN"
 
 
 def test_a_wpa_oui_element_that_is_neither_wpa_nor_wps_is_ignored():
     packet = parse_beacon(element(221, WPA_OUI + b"\x02\x01\x01\x00"))      # WMM
-    assert packet.wps is False
-    assert packet.encryption == "OPEN"
-    assert packet.akms == []
+    assert packet.elements.wps is None
+    assert packet.elements.encryption == "OPEN"
+    assert packet.elements.akms == []
 
 
 def test_a_vendor_element_with_an_unknown_oui_sets_no_chipset():
     packet = parse_beacon(element(221, b"\xaa\xbb\xcc\x01\x00"))
-    assert packet.chipset is None
+    assert packet.elements.chipset is None
 
 
 # ---- RSN element ------------------------------------------------------------------------
@@ -172,21 +172,21 @@ def test_a_wpa_element_with_no_akm_suites():
 
 def test_wps_selected_registrar_and_device_type():
     packet = parse_beacon(wps_element(tlv(0x1041, b"\x01") + tlv(0x1054, b"\x00\x01" + bytes(6))))
-    assert packet.wps_selected_registrar is True
-    assert packet.wsc_device_type == "computer"
+    assert packet.elements.wps.selected_registrar is True
+    assert packet.elements.wps.device_type == "computer"
 
 
 def test_wps_empty_identity_text_and_an_unknown_device_category_are_not_set():
     attributes = (tlv(0x1021, b"\x00\x00") + tlv(0x1023, b"") + tlv(0x1024, b" ")
                   + tlv(0x1011, b"\x00") + tlv(0x1054, b"\x00\xff" + bytes(6)) + tlv(0x104A, b""))
     packet = parse_beacon(wps_element(attributes))
-    assert packet.wps is True
-    assert packet.wsc_manufacturer is None
-    assert packet.wsc_model_name is None
-    assert packet.wsc_model_number is None
-    assert packet.wsc_device_name is None
-    assert packet.wsc_device_type is None
-    assert packet.wps_version is None
+    assert packet.elements.wps is not None
+    assert packet.elements.wps.manufacturer is None
+    assert packet.elements.wps.model_name is None
+    assert packet.elements.wps.model_number is None
+    assert packet.elements.wps.device_name is None
+    assert packet.elements.wps.device_type is None
+    assert packet.elements.wps.version is None
 
 
 @pytest.mark.parametrize("vendor_extension, wps_version", [
@@ -197,4 +197,4 @@ def test_wps_empty_identity_text_and_an_unknown_device_category_are_not_set():
 ])
 def test_wps_version2_from_the_vendor_extension(vendor_extension, wps_version):
     packet = parse_beacon(wps_element(tlv(0x104A, b"\x10") + tlv(0x1049, vendor_extension)))
-    assert packet.wps_version == wps_version
+    assert packet.elements.wps.version == wps_version

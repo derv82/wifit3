@@ -48,7 +48,7 @@ class Health:
             return
         aps = self._ch.setdefault(channel, {})
         ap = aps.setdefault(
-            bssid, {"beacons": 0, "rssi": [], "secs": {}, "adv_channel": parsed.channel}
+            bssid, {"beacons": 0, "rssi": [], "secs": {}, "adv_channel": parsed.elements.channel}
         )
         ap["beacons"] += 1
         if rssi is not None:

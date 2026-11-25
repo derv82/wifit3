@@ -13,7 +13,7 @@ from typing import AsyncIterator, Callable, Dict, List, Optional, Set
 
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.dot11.chan import is_dfs_channel
-from wifit3.dot11.packet import BeaconPacket, Packet
+from wifit3.dot11.packet import BeaconPacket, Packet, ProbeResponsePacket
 from wifit3.errors import SetChannelError
 from wifit3.models import AccessPoint, Client
 from wifit3.wlan.dedupe import StreamMerger
@@ -211,8 +211,8 @@ class WlanArray:
         self._stray_beacon_channels.pop(bssid, None)
 
     def _is_stray_beacon(self, pkt: Packet) -> bool:
-        return (isinstance(pkt, BeaconPacket)
-                and self._stray_beacon_channels.get(pkt.bssid) == pkt.channel)
+        return (isinstance(pkt, (BeaconPacket, ProbeResponsePacket))
+                and self._stray_beacon_channels.get(pkt.bssid) == pkt.elements.channel)
 
     # ----- sink facade -------------------------------------------------------
 

@@ -34,6 +34,6 @@ def test_every_profile_parses(parsed):
 def test_wpa3_enterprise_classification(parsed, bssid):
     packet = parsed[bssid]
     encryption, wpa3, transition = EXPECTED[bssid]
-    assert packet.encryption == encryption
-    assert packet.wpa3 is wpa3
-    assert packet.transition_mode is transition
+    assert packet.elements.encryption == encryption
+    assert packet.elements.wpa3 is wpa3
+    assert packet.elements.transition_mode is transition

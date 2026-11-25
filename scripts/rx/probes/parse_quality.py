@@ -127,7 +127,7 @@ class ParseQualityProbe(Probe):
 
         if pkt.type == "beacon":
             self._beacons += 1
-            beacon_ch = pkt.channel
+            beacon_ch = pkt.elements.channel
             if beacon_ch is not None:
                 self._beacons_with_ds += 1
                 # iface.current_channel may legitimately have moved on

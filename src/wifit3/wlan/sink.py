@@ -24,7 +24,7 @@ from wifit3.dot11.rsn import AKM_FT_PSK, AKM_PSK, AKM_PSK_SHA256
 from wifit3.dot11.wsc import messages as WSC
 from wifit3.dot11.wsc.identity import apply_wsc_identity
 from wifit3.dot11.packet import (
-    Packet, BeaconPacket, EapolPacket, EapPacket, WepDataPacket, AssocRequestPacket,
+    Packet, BeaconPacket, ProbeResponsePacket, EapolPacket, EapPacket, WepDataPacket, AssocRequestPacket,
     AssocRespPacket, ProbeReqPacket, is_group_mac,
 )
 from wifit3.wlan.packet_stats import PacketStats
@@ -156,35 +156,26 @@ class WlanSink:
 
     def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int, timestamp: float) -> bool:
         """Build/refresh the AP from a beacon or probe response."""
-        if not isinstance(pkt, BeaconPacket):
+        if not isinstance(pkt, (BeaconPacket, ProbeResponsePacket)):
             return False
+        elements = pkt.elements
         frame_type = pkt.type
         bssid = pkt.bssid
         rssi = pkt.rssi
         ssid = pkt.ssid
-        channel = pkt.channel if pkt.channel is not None else channel_hint
-        enc = pkt.encryption
-        akms = pkt.akms
-        akm_suites = pkt.akm_suites
-        rsn_valid = pkt.rsn_valid
-        vendor_akm_offered = pkt.vendor_akm_offered
-        pairwise_cipher = pkt.pairwise_cipher
-        wpa3 = pkt.wpa3
-        transition_mode = pkt.transition_mode
-        pmf_capable = pkt.pmf_capable
-        pmf_required = pkt.pmf_required
-        beacon_protection = pkt.beacon_protection
-        wps = pkt.wps
-        wps_locked = pkt.wps_locked
-        wps_version = pkt.wps_version
-        wps_config_methods = pkt.wps_config_methods
-        wps_device_password_id = pkt.wps_device_password_id
-        wps_selected_registrar = pkt.wps_selected_registrar
-        wsc_manufacturer = pkt.wsc_manufacturer
-        wsc_model_name = pkt.wsc_model_name
-        wsc_model_number = pkt.wsc_model_number
-        wsc_device_name = pkt.wsc_device_name
-        wsc_device_type = pkt.wsc_device_type
+        channel = elements.channel if elements.channel is not None else channel_hint
+        enc = elements.encryption
+        akms = elements.akms
+        akm_suites = elements.akm_suites
+        rsn_valid = elements.rsn is not None
+        vendor_akm_offered = elements.vendor_akm_offered
+        pairwise_cipher = elements.pairwise_cipher
+        wpa3 = elements.wpa3
+        transition_mode = elements.transition_mode
+        pmf_capable = elements.pmf_capable
+        pmf_required = elements.pmf_required
+        beacon_protection = elements.beacon_protection
+        wps = elements.wps
 
         if bssid not in self.access_points:
             ap = AccessPoint(
@@ -204,22 +195,22 @@ class WlanSink:
                 pmf_capable=pmf_capable,
                 pmf_required=pmf_required,
                 beacon_protection=beacon_protection,
-                wps=wps,
-                wps_locked=wps_locked,
-                wps_version=wps_version,
-                wps_config_methods=wps_config_methods,
-                wps_device_password_id=wps_device_password_id,
-                wps_selected_registrar=wps_selected_registrar,
-                chipset=pkt.chipset,
+                chipset=elements.chipset,
             )
-            if wps:
+            if wps is not None:
+                ap.wps = True
+                ap.wps_locked = wps.locked
+                ap.wps_version = wps.version
+                ap.wps_config_methods = wps.config_methods
+                ap.wps_device_password_id = wps.device_password_id
+                ap.wps_selected_registrar = wps.selected_registrar
                 ap.identity.update(
                     IdSource.WSC_BEACON,
-                    manufacturer=wsc_manufacturer,
-                    model_name=wsc_model_name,
-                    model_number=wsc_model_number,
-                    device_name=wsc_device_name,
-                    device_type=wsc_device_type,
+                    manufacturer=wps.manufacturer,
+                    model_name=wps.model_name,
+                    model_number=wps.model_number,
+                    device_name=wps.device_name,
+                    device_type=wps.device_type,
                 )
             self.access_points[bssid] = ap
             self._record_ap_signal(ap, card_id, rssi)
@@ -253,30 +244,30 @@ class WlanSink:
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
                 ap.beacon_protection = beacon_protection
-            if pkt.chipset:
-                ap.chipset = pkt.chipset
+            if elements.chipset:
+                ap.chipset = elements.chipset
             # Only refresh WPS when this frame carried the IE.
-            if wps:
+            if wps is not None:
                 ap.wps = True
-                ap.wps_locked = wps_locked
-                ap.wps_version = wps_version
-                ap.wps_config_methods = wps_config_methods
-                ap.wps_device_password_id = wps_device_password_id
-                ap.wps_selected_registrar = wps_selected_registrar
+                ap.wps_locked = wps.locked
+                ap.wps_version = wps.version
+                ap.wps_config_methods = wps.config_methods
+                ap.wps_device_password_id = wps.device_password_id
+                ap.wps_selected_registrar = wps.selected_registrar
                 ap.identity.update(
                     IdSource.WSC_BEACON,
-                    manufacturer=wsc_manufacturer,
-                    model_name=wsc_model_name,
-                    model_number=wsc_model_number,
-                    device_name=wsc_device_name,
-                    device_type=wsc_device_type,
+                    manufacturer=wps.manufacturer,
+                    model_name=wps.model_name,
+                    model_number=wps.model_number,
+                    device_name=wps.device_name,
+                    device_type=wps.device_type,
                 )
 
         ap = self.access_points[bssid]
         ap.last_seen = timestamp
 
         # Stash the latest RSNIE
-        rsn_ie = pkt.rsn_ie_raw
+        rsn_ie = elements.rsn_element_raw
         if rsn_ie and (rsn_valid or not ap.rsn_valid):
             ap.rsn_ie = rsn_ie
 

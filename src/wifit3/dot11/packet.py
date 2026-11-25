@@ -3,8 +3,9 @@ bytes by ``dot11.parser.WlanFrameParser``. Pure data (no parsing, no device), so
 foundational leaf that ``parser`` and everything upstream can import.
 """
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional
 
+from wifit3.dot11.ie import Elements
 from wifit3.dot11.mac import mac_to_str
 
 
@@ -61,33 +62,14 @@ class Packet:
 
 @dataclass(slots=True, kw_only=True)
 class BeaconPacket(Packet):
-    """A beacon or probe response: carries the AP's advertised capabilities (IEs)."""
-    channel: Optional[int] = None
-    encryption: str = "OPEN"
-    akms: List[str] = field(default_factory=list)
-    akm_suites: List[int] = field(default_factory=list)
-    rsn_valid: bool = False
-    vendor_akm_offered: bool = False
-    pairwise_cipher: Optional[str] = None
-    wpa3: bool = False
-    transition_mode: bool = False
-    pmf_capable: bool = False
-    pmf_required: bool = False
-    beacon_protection: bool = False
-    wps: bool = False
-    wps_locked: bool = False
-    wps_state: Optional[int] = None
-    wps_version: Optional[str] = None
-    wps_config_methods: int = 0
-    wps_device_password_id: Optional[int] = None
-    wps_selected_registrar: bool = False
-    wsc_manufacturer: Optional[str] = None
-    wsc_model_name: Optional[str] = None
-    wsc_model_number: Optional[str] = None
-    wsc_device_name: Optional[str] = None
-    wsc_device_type: Optional[str] = None
-    chipset: Optional[str] = None
-    rsn_ie_raw: Optional[bytes] = None
+    """A beacon."""
+    elements: Elements
+
+
+@dataclass(slots=True, kw_only=True)
+class ProbeResponsePacket(Packet):
+    """A probe response."""
+    elements: Elements
 
 
 @dataclass(slots=True, kw_only=True)

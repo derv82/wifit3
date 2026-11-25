@@ -12,14 +12,14 @@ from wifit3.dot11.eap import (
     EAP_TYPE_EXPANDED,
 )
 from wifit3.dot11.eapol import EAPOL_TYPE_EAP, EAPOL_TYPE_KEY, LLC_SNAP_EAPOL
-from wifit3.dot11.ie import iter_information_elements, parse_elements, rsn_akm_selection
+from wifit3.dot11.ie import Elements, iter_information_elements, parse_elements, rsn_akm_selection
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.wsc.messages import (
     WFA_VENDOR_ID,
     WFA_VENDOR_TYPE_SIMPLECONFIG,
 )
 from wifit3.dot11.packet import (
-    Packet, BeaconPacket, EapolPacket, EapPacket, WepDataPacket, AssocRequestPacket,
+    Packet, BeaconPacket, ProbeResponsePacket, EapolPacket, EapPacket, WepDataPacket, AssocRequestPacket,
     AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
 )
 from wifit3.dot11.rsn import (
@@ -97,64 +97,43 @@ class WlanFrameParser:
     def _parse_mgmt(cls, frame: bytes, subtype: int, base: Dict[str, Any]) -> Optional["Packet"]:
         """Build the Packet for a management frame.
 
-        Beacon / Probe Response carry the AP's IEs (-> BeaconPacket); (Re)Assoc Request
+        Beacon -> BeaconPacket, Probe Response -> ProbeResponsePacket; (Re)Assoc Request
         carries the client's chosen AKM (-> AssocRequestPacket); every other subtype is a
         bare Packet with a type label.
         """
         if subtype in (cls.SUBTYPE_BEACON, cls.SUBTYPE_PROBE_RESP):
-            tags = cls._parse_tags(frame, subtype)
-            if tags is None:
+            elements = cls._parse_tags(frame, subtype)
+            if elements is None:
                 return None
-            type_str = "beacon" if subtype == cls.SUBTYPE_BEACON else "probe_resp"
-            fields: Dict[str, Any] = {
-                "type": type_str,
-                "ssid": tags.get("ssid"),
-                "ssid_bytes": tags.get("ssid_bytes"),
-                "encryption": tags.get("encryption", "OPEN"),
-                "wpa3": tags.get("wpa3", False),
-                "transition_mode": tags.get("transition_mode", False),
-                "pmf_capable": tags.get("pmf_capable", False),
-                "pmf_required": tags.get("pmf_required", False),
-                "beacon_protection": tags.get("beacon_protection", False),
-                "pairwise_cipher": tags.get("pairwise_cipher"),
-                "akms": tags.get("akms", []),
-                "akm_suites": tags.get("akm_suites", []),
-                "rsn_valid": tags.get("rsn_valid", False),
-                "vendor_akm_offered": tags.get("vendor_akm_offered", False),
-            }
-            # Copy channel / rsn_ie_raw / WPS only when the walker found them, so a missing
-            # value keeps the field default.
-            for key in ("channel", "rsn_ie_raw", "wps", "wps_locked", "wps_version",
-                        "wps_state", "wps_config_methods", "wps_device_password_id",
-                        "wps_selected_registrar", "wsc_manufacturer", "wsc_model_name",
-                        "wsc_model_number", "wsc_device_name", "wsc_device_type", "chipset"):
-                if key in tags:
-                    fields[key] = tags[key]
-            return BeaconPacket(**base, **fields)
+            if subtype == cls.SUBTYPE_BEACON:
+                return BeaconPacket(**base, type="beacon", ssid=elements.ssid, ssid_bytes=elements.ssid_bytes,
+                                    elements=elements)
+            return ProbeResponsePacket(**base, type="probe_resp", ssid=elements.ssid,
+                                       ssid_bytes=elements.ssid_bytes, elements=elements)
 
         if subtype == cls.SUBTYPE_PROBE_REQ:
-            tags = cls._parse_tags(frame, subtype)
-            if tags is None:
+            elements = cls._parse_tags(frame, subtype)
+            if elements is None:
                 return None
-            return ProbeReqPacket(**base, type="probe_req", ssid=tags.get("ssid"),
-                                  ssid_bytes=tags.get("ssid_bytes"))
+            return ProbeReqPacket(**base, type="probe_req", ssid=elements.ssid,
+                                  ssid_bytes=elements.ssid_bytes)
 
         if subtype == cls.SUBTYPE_ASSOC_REQ:
-            tags = cls._parse_tags(frame, subtype)
-            if tags is None:
+            elements = cls._parse_tags(frame, subtype)
+            if elements is None:
                 return None
             # Client's selected AKM from the RSN IE (24 hdr + cap + listen = 28).
             return AssocRequestPacket(
-                **base, type="assoc_req", ssid=tags.get("ssid"), ssid_bytes=tags.get("ssid_bytes"),
+                **base, type="assoc_req", ssid=elements.ssid, ssid_bytes=elements.ssid_bytes,
                 assoc_akm=rsn_akm_selection(frame, 28)[0])
 
         if subtype == cls.SUBTYPE_REASSOC_REQ:
-            tags = cls._parse_tags(frame, subtype)
-            if tags is None:
+            elements = cls._parse_tags(frame, subtype)
+            if elements is None:
                 return None
             # 34 = assoc's 28 + 6-byte Current AP Address.
             return AssocRequestPacket(
-                **base, type="reassoc_req", ssid=tags.get("ssid"), ssid_bytes=tags.get("ssid_bytes"),
+                **base, type="reassoc_req", ssid=elements.ssid, ssid_bytes=elements.ssid_bytes,
                 assoc_akm=rsn_akm_selection(frame, 34)[0])
 
         if subtype in (cls.SUBTYPE_ASSOC_RESP, cls.SUBTYPE_REASSOC_RESP):
@@ -452,13 +431,12 @@ class WlanFrameParser:
         return False
 
     @classmethod
-    def _parse_tags(cls, frame: bytes, subtype: int) -> Optional[Dict[str, Any]]:
-        """Parse a management frame's Information Elements into a dict (ssid, channel,
-        encryption, …), or None if the frame is corrupt.
-        """
+    def _parse_tags(cls, frame: bytes, subtype: int) -> Optional[Elements]:
+        """Decode a management frame's Information Elements, or None if the frame is corrupt
+        or its subtype carries none."""
         ptr = cls._ie_offset(subtype)
         if ptr is None:
-            return {}
+            return None
         if len(frame) < ptr + 2:
             return None
         # Strict validation: The first tag MUST be Tag 0 (SSID)

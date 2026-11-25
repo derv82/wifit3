@@ -1,5 +1,6 @@
 """Decoding of the WPS vendor element (221, 00-50-F2 type 4) that beacons and probe responses carry."""
-from typing import Any, Dict, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 from wifit3.dot11.wsc.identity import device_type_label, wps_text
 from wifit3.dot11.wsc.messages import (
@@ -38,56 +39,94 @@ def _wps_version2(vext: bytes) -> Optional[int]:
         j += sub_len
     return None
 
-def parse_wps_element(data: bytes) -> Dict[str, Any]:
+
+@dataclass(frozen=True, slots=True)
+class WpsElement:
+    """The WPS vendor element's attributes wifit3 reads; missing attributes keep these defaults."""
+    locked: bool = False
+    state: Optional[int] = None            # 1 = unconfigured, 2 = configured
+    version: Optional[str] = None
+    config_methods: int = 0
+    device_password_id: Optional[int] = None
+    selected_registrar: bool = False
+    manufacturer: Optional[str] = None
+    model_name: Optional[str] = None
+    model_number: Optional[str] = None
+    device_name: Optional[str] = None
+    device_type: Optional[str] = None
+
+
+def parse_wps_element(data: bytes) -> WpsElement:
     """Walk the WPS IE's nested big-endian TLVs (``data`` = bytes after
     the OUI + OUI-type) and surface the attacker-relevant subset.
 
     Each TLV is a 2-byte attribute id, 2-byte length, then value.
-    Missing attributes leave their fields at the model defaults.
     """
-    out: Dict[str, Any] = {"wps": True}
+    locked = False
+    state: Optional[int] = None
+    config_methods = 0
+    device_password_id: Optional[int] = None
+    selected_registrar = False
+    manufacturer: Optional[str] = None
+    model_name: Optional[str] = None
+    model_number: Optional[str] = None
+    device_name: Optional[str] = None
+    device_type: Optional[str] = None
     version1 = False
     version2 = 0
     for attr, val in iter_wsc_tlvs(data):
         ln = len(val)
         if attr == ATTR_AP_SETUP_LOCKED and ln >= 1:
-            out["wps_locked"] = val[0] == 0x01
+            locked = val[0] == 0x01
         elif attr == ATTR_STATE and ln >= 1:
-            out["wps_state"] = val[0]          # 1=unconfigured, 2=configured
+            state = val[0]
         elif attr == ATTR_CONFIG_METHODS and ln >= 2:
-            out["wps_config_methods"] = (val[0] << 8) | val[1]
+            config_methods = (val[0] << 8) | val[1]
         elif attr == ATTR_DEVICE_PASSWORD_ID and ln >= 2:
-            out["wps_device_password_id"] = (val[0] << 8) | val[1]
+            device_password_id = (val[0] << 8) | val[1]
         elif attr == ATTR_SELECTED_REGISTRAR and ln >= 1:
-            out["wps_selected_registrar"] = val[0] == 0x01
+            selected_registrar = val[0] == 0x01
         elif attr == ATTR_MANUFACTURER:
             text = wps_text(val)
             if text:
-                out["wsc_manufacturer"] = text
+                manufacturer = text
         elif attr == ATTR_MODEL_NAME:
             text = wps_text(val)
             if text:
-                out["wsc_model_name"] = text
+                model_name = text
         elif attr == ATTR_MODEL_NUMBER:
             text = wps_text(val)
             if text:
-                out["wsc_model_number"] = text
+                model_number = text
         elif attr == ATTR_DEVICE_NAME:
             text = wps_text(val)
             if text:
-                out["wsc_device_name"] = text
+                device_name = text
         elif attr == ATTR_PRIMARY_DEV_TYPE:
             label = device_type_label(val)
             if label:
-                out["wsc_device_type"] = label
+                device_type = label
         elif attr == ATTR_VERSION and ln >= 1:
             version1 = True
         elif attr == ATTR_VENDOR_EXTENSION:
             v2 = _wps_version2(val)
             if v2 is not None:
                 version2 = v2
+    version: Optional[str] = None
     if version2 >= 0x20:
-        out["wps_version"] = "2.0"
+        version = "2.0"
     elif version1:
-        out["wps_version"] = "1.0"
-    return out
+        version = "1.0"
+    return WpsElement(
+        locked=locked,
+        state=state,
+        version=version,
+        config_methods=config_methods,
+        device_password_id=device_password_id,
+        selected_registrar=selected_registrar,
+        manufacturer=manufacturer,
+        model_name=model_name,
+        model_number=model_number,
+        device_name=device_name,
+        device_type=device_type,
+    )

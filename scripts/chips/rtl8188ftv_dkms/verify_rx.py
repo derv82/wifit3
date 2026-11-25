@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
 from wifit3.chips.rtl8188ftv_dkms import rx
-from wifit3.dot11.packet import BeaconPacket
+from wifit3.dot11.packet import BeaconPacket, ProbeResponsePacket
 from wifit3.dot11.parser import WlanFrameParser
 
 LINKTYPE_IEEE802_11 = 105
@@ -76,7 +76,7 @@ def _mismatches(packet, row: list[str]) -> list[str]:
                                ("da", packet.dest, da)):
         if theirs and ours != theirs:
             found.append(f"{name} {ours} vs tshark {theirs}")
-    if isinstance(packet, BeaconPacket) and packet.ssid != _tshark_ssid(ssid):
+    if isinstance(packet, (BeaconPacket, ProbeResponsePacket)) and packet.ssid != _tshark_ssid(ssid):
         found.append(f"ssid {packet.ssid!r} vs tshark {ssid!r}")
     return found
 

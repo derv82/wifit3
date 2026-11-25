@@ -791,7 +791,7 @@ class MT76x0UDriver(Driver):
                     ch_bssids.add(bssid)
                     entry = bssids_seen.setdefault(bssid, {
                         "ssid": parsed.ssid,
-                        "encryption": parsed.encryption,
+                        "encryption": parsed.elements.encryption,
                         "channel_seen_on": ch,
                         "beacons": 0,
                         "rssi_dbm_max": rx.rssi_dbm,

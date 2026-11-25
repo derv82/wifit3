@@ -7,7 +7,8 @@ attack uses.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import List, Optional
 
 from wifit3.dot11.rsn import (
     AKM_PSK,
@@ -22,7 +23,7 @@ from wifit3.dot11.rsn import (
     parse_rsn_element,
     parse_wpa_element,
 )
-from wifit3.dot11.wsc.element import parse_wps_element
+from wifit3.dot11.wsc.element import WpsElement, parse_wps_element
 
 
 def iter_information_elements(data: bytes, start: int = 0) -> Iterator[tuple[int, bytes, bytes]]:
@@ -171,23 +172,77 @@ def rsn_akm_selection(data: bytes, start: int = 0) -> tuple[Optional[int], bool]
     return None, end < len(data) and data[end] == 48
 
 
-def parse_elements(elements: bytes, privacy: bool) -> Dict[str, Any]:
-    """Decode a beacon's, probe response's or (re)association request's Information Elements into a
-    dict (ssid, channel, encryption, …). ``privacy``: the Capability field's Privacy bit."""
-    parsed: Dict[str, Any] = {}
+@dataclass(frozen=True, slots=True)
+class Elements:
+    """A frame's Information Elements, decoded."""
+    ssid: Optional[str]
+    ssid_bytes: Optional[bytes]
+    channel: Optional[int]
+    encryption: str
+    rsn: Optional[RsnElement]
+    rsn_element_raw: Optional[bytes]
+    wpa: Optional[WpaElement]
+    wps: Optional[WpsElement]
+    chipset: Optional[str]
+    beacon_protection: bool
+    wpa3: bool
+    transition_mode: bool
+
+    @property
+    def pairwise_cipher(self) -> Optional[str]:
+        if self.rsn is not None:
+            return self.rsn.pairwise_cipher
+        if self.wpa is not None:
+            return self.wpa.pairwise_cipher
+        return None
+
+    @property
+    def akms(self) -> list[str]:
+        if self.rsn is not None:
+            return list(self.rsn.akms)
+        if self.wpa is not None:
+            return list(self.wpa.akms)
+        return []
+
+    @property
+    def akm_suites(self) -> list[int]:
+        if self.rsn is not None:
+            return list(self.rsn.akm_suites)
+        if self.wpa is not None:
+            return list(self.wpa.akm_suites)
+        return []
+
+    @property
+    def vendor_akm_offered(self) -> bool:
+        if self.rsn is not None:
+            return self.rsn.vendor_akm_offered
+        if self.wpa is not None:
+            return self.wpa.vendor_akm_offered
+        return False
+
+    @property
+    def pmf_capable(self) -> bool:
+        return self.rsn is not None and self.rsn.pmf_capable
+
+    @property
+    def pmf_required(self) -> bool:
+        return self.rsn is not None and self.rsn.pmf_required
+
+
+def parse_elements(elements: bytes, privacy: bool) -> Elements:
+    """Decode a beacon's, probe response's or (re)association request's Information Elements.
+    ``privacy``: the Capability field's Privacy bit."""
+    ssid: Optional[str] = None
+    ssid_bytes: Optional[bytes] = None
     has_wpa = False
     has_rsn = False
     has_wpa3 = False
     transition_mode = False
-    pmf_capable = False
-    pmf_required = False
     beacon_protection = False
-    pairwise_cipher: Optional[str] = None
-    akms: List[str] = []
-    akm_suites: List[int] = []
-    vendor_akm_offered = False
     rsn_element: Optional[RsnElement] = None
+    rsn_element_raw: Optional[bytes] = None
     wpa_element: Optional[WpaElement] = None
+    chipset: Optional[str] = None
     channel_ds: Optional[int] = None
     channel_ht: Optional[int] = None
     channel_vht: Optional[int] = None
@@ -202,10 +257,10 @@ def parse_elements(elements: bytes, privacy: bool) -> Dict[str, Any]:
         if tag_id == 0 and not seen_ssid: # SSID (only the first)
             seen_ssid = True
             if len(tag_data) <= 32 and not tag_data.strip(b"\x00"):   # empty or NUL-filled
-                parsed["ssid"] = "<hidden>"
+                ssid = "<hidden>"
             elif len(tag_data) <= 32:
-                parsed["ssid"] = ssid_text(tag_data)
-                parsed["ssid_bytes"] = tag_data
+                ssid = ssid_text(tag_data)
+                ssid_bytes = tag_data
         elif tag_id == 3: # DS Parameter Set (Channel)
             if len(tag_data) == 1:
                 channel_ds = tag_data[0]
@@ -222,22 +277,16 @@ def parse_elements(elements: bytes, privacy: bool) -> Dict[str, Any]:
             has_rsn = True
             rsn = parse_rsn_element(tag_data)
             if rsn is not None:
-                parsed["rsn_ie_raw"] = bytes(raw_elem)
+                rsn_element_raw = bytes(raw_elem)
                 rsn_element = rsn
-                pairwise_cipher = rsn.pairwise_cipher
-                akms = list(rsn.akms)
-                akm_suites = list(rsn.akm_suites)
-                vendor_akm_offered = rsn.vendor_akm_offered
-                pmf_capable = rsn.pmf_capable
-                pmf_required = rsn.pmf_required
                 # SAE-family => WPA3; SAE + a PSK-family suite => transition.
                 # Suite-number based so WPA3-H2E (SAE-EXT-KEY, 24) is caught.
-                has_wpa3 = bool(SAE_AKM_SUITES.intersection(akm_suites))
+                has_wpa3 = bool(SAE_AKM_SUITES.intersection(rsn.akm_suites))
                 transition_mode = has_wpa3 and bool(
-                    PSK_AKM_SUITES.intersection(akm_suites)
+                    PSK_AKM_SUITES.intersection(rsn.akm_suites)
                 )
-            elif rsn_element is None and "rsn_ie_raw" not in parsed:
-                parsed["rsn_ie_raw"] = bytes(raw_elem)
+            elif rsn_element is None and rsn_element_raw is None:
+                rsn_element_raw = bytes(raw_elem)
         elif tag_id == 221: # Vendor Specific
             if len(tag_data) >= 4:
                 oui = tag_data[:3]
@@ -250,18 +299,15 @@ def parse_elements(elements: bytes, privacy: bool) -> Dict[str, Any]:
                     elif oui_type == 4: # WPS
                         # tag_data = OUI(3) + type(1) + WPS TLVs.
                         wps_payloads.append(tag_data[4:])
-                elif oui in CHIPSET_BY_VENDOR_IE_OUI:
-                    parsed.setdefault("chipset", CHIPSET_BY_VENDOR_IE_OUI[oui])
+                elif oui in CHIPSET_BY_VENDOR_IE_OUI and chipset is None:
+                    chipset = CHIPSET_BY_VENDOR_IE_OUI[oui]
 
+    wps_element: Optional[WpsElement] = None
     if wps_payloads:
-        parsed.update(parse_wps_element(b"".join(wps_payloads)))
+        wps_element = parse_wps_element(b"".join(wps_payloads))
 
     if rsn_element is None and wpa_element is not None:
         has_rsn = False
-        pairwise_cipher = wpa_element.pairwise_cipher
-        akms = list(wpa_element.akms)
-        akm_suites = list(wpa_element.akm_suites)
-        vendor_akm_offered = wpa_element.vendor_akm_offered
 
     if rsn_element is not None:
         wpa3_enterprise, enterprise_transition = classify_wpa3_enterprise(
@@ -273,24 +319,23 @@ def parse_elements(elements: bytes, privacy: bool) -> Dict[str, Any]:
     # Channel preference: DS Param (tag 3, 2.4 GHz authoritative) → HT Op (tag 61, the
     # only cross-band source; 5 GHz often omits DS per 802.11-2020 9.4.2.3) → VHT Op
     # (tag 192, last resort). Caller falls back to its tuned channel if none present.
+    channel: Optional[int] = None
     if channel_ds is not None:
-        parsed["channel"] = channel_ds
+        channel = channel_ds
     elif channel_ht is not None:
-        parsed["channel"] = channel_ht
+        channel = channel_ht
     elif channel_vht is not None:
-        parsed["channel"] = channel_vht
+        channel = channel_vht
 
-    parsed["wpa3"] = has_wpa3
-    parsed["transition_mode"] = transition_mode
-    parsed["pmf_capable"] = pmf_capable
-    parsed["pmf_required"] = pmf_required
-    parsed["beacon_protection"] = beacon_protection
-    parsed["pairwise_cipher"] = pairwise_cipher
-    parsed["akms"] = akms
-    parsed["akm_suites"] = akm_suites
-    parsed["rsn_valid"] = rsn_element is not None
-    parsed["vendor_akm_offered"] = vendor_akm_offered
-    parsed["encryption"] = encryption_label(
+    akms: List[str] = []
+    pairwise_cipher: Optional[str] = None
+    if rsn_element is not None:
+        akms = list(rsn_element.akms)
+        pairwise_cipher = rsn_element.pairwise_cipher
+    elif wpa_element is not None:
+        akms = list(wpa_element.akms)
+        pairwise_cipher = wpa_element.pairwise_cipher
+    encryption = encryption_label(
         privacy=privacy,
         has_rsn=has_rsn,
         has_wpa=has_wpa,
@@ -299,7 +344,20 @@ def parse_elements(elements: bytes, privacy: bool) -> Dict[str, Any]:
         akms=akms,
         pairwise_cipher=pairwise_cipher,
     )
-    return parsed
+    return Elements(
+        ssid=ssid,
+        ssid_bytes=ssid_bytes,
+        channel=channel,
+        encryption=encryption,
+        rsn=rsn_element,
+        rsn_element_raw=rsn_element_raw,
+        wpa=wpa_element,
+        wps=wps_element,
+        chipset=chipset,
+        beacon_protection=beacon_protection,
+        wpa3=has_wpa3,
+        transition_mode=transition_mode,
+    )
 
 
 def encryption_label(

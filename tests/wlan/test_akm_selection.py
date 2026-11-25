@@ -87,7 +87,7 @@ def test_truncated_rsn_tail_cannot_replace_required_pmf(tail):
     body = _rsn(5)[2:-2] + tail
     invalid = bytes([48, len(body)]) + body
     parsed = _ingest(sink, _beacon(invalid))
-    assert not parsed.rsn_valid
+    assert parsed.elements.rsn is None
     ap = sink.access_points[_BSSID]
     assert ap.rsn_valid and ap.pmf_capable and ap.pmf_required
     assert ap.rsn_ie == valid
