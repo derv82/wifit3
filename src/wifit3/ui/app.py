@@ -360,8 +360,10 @@ class WifiteApp(App):
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
 
     def _vault_changed(self, bssid: Optional[str]) -> None:
-        """Any thread: the table reloads once notices stop for VAULT_TABLE_RELOAD_DELAY_S. None once the
-        app has stopped (a PSK propagation can finish after quit)."""
+        """Any thread: the table reloads once notices stop for VAULT_TABLE_RELOAD_DELAY_S. Nothing while the
+        app isn't running (a save before it starts, or a PSK propagation finishing after quit)."""
+        if not self.is_running:
+            return
         with self._vault_notices_lock:
             self._vault_last_notice = time.monotonic()
             if self._vault_refresh_pending:
@@ -369,7 +371,7 @@ class WifiteApp(App):
             self._vault_refresh_pending = True
         if threading.current_thread() is threading.main_thread():    # the app runs on the main thread
             self.set_timer(VAULT_TABLE_RELOAD_DELAY_S, self._refresh_vault_table)
-        elif self.is_running:
+        else:
             self.call_from_thread(self.set_timer, VAULT_TABLE_RELOAD_DELAY_S, self._refresh_vault_table)
 
     def _refresh_vault_table(self) -> None:
