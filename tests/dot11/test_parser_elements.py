@@ -1,10 +1,10 @@
-"""Information-element decoding in WlanFrameParser: the paths no other test reaches."""
+"""Information-element decoding: the paths no other test reaches."""
 import struct
 
 import pytest
 
 from wifit3.dot11.parser import WlanFrameParser
-from wifit3.dot11.rsn import RsnElement, WpaElement
+from wifit3.dot11.rsn import RsnElement, WpaElement, parse_rsn_element, parse_wpa_element
 
 RSN_OUI = b"\x00\x0f\xac"
 WPA_OUI = b"\x00\x50\xf2"
@@ -115,7 +115,7 @@ def test_a_vendor_element_with_an_unknown_oui_sets_no_chipset():
     bytes.fromhex("0100000fac040100000fac040200000fac02"),  # 2 AKM suites, room for 1
 ])
 def test_a_truncated_or_unknown_version_rsn_element_is_not_parsed(body):
-    assert WlanFrameParser._parse_rsn_ie(body) is None
+    assert parse_rsn_element(body) is None
 
 
 def test_rsn_pairwise_and_akm_suites_outside_00_0f_ac():
@@ -123,7 +123,7 @@ def test_rsn_pairwise_and_akm_suites_outside_00_0f_ac():
             + b"\x02\x00" + b"\xaa\xbb\xcc\x04" + RSN_OUI + b"\x04"
             + b"\x05\x00" + RSN_OUI + b"\x02" + RSN_OUI + b"\x02" + RSN_OUI + b"\x63"
             + b"\xaa\xbb\xcc\x01" + b"\xdd\xee\xff\x01")
-    assert WlanFrameParser._parse_rsn_ie(body) == RsnElement(
+    assert parse_rsn_element(body) == RsnElement(
         group_cipher_suite=4,
         pairwise_cipher="CCMP",
         pairwise_cipher_suites=(4,),
@@ -146,7 +146,7 @@ def test_rsn_pairwise_and_akm_suites_outside_00_0f_ac():
     WPA_OUI + b"\x01\x01\x00" + WPA_OUI + b"\x02\x02\x00" + WPA_OUI + b"\x02" + b"\x01\x00",  # 2 pairwise, room for 1
 ])
 def test_a_short_or_unknown_version_wpa_element_is_not_parsed(body):
-    assert WlanFrameParser._parse_wpa_ie(body) is None
+    assert parse_wpa_element(body) is None
 
 
 def test_wpa_pairwise_and_akm_suites_outside_00_50_f2():
@@ -154,7 +154,7 @@ def test_wpa_pairwise_and_akm_suites_outside_00_50_f2():
             + b"\x02\x00" + b"\xaa\xbb\xcc\x04" + WPA_OUI + b"\x02"
             + b"\x05\x00" + WPA_OUI + b"\x02" + WPA_OUI + b"\x02" + WPA_OUI + b"\x09"
             + b"\xaa\xbb\xcc\x01" + WPA_OUI + b"\x01")
-    assert WlanFrameParser._parse_wpa_ie(body) == WpaElement(
+    assert parse_wpa_element(body) == WpaElement(
         pairwise_cipher="TKIP",
         akms=("PSK", "Vendor", "EAP"),
         akm_suites=(2, 1),
@@ -164,7 +164,7 @@ def test_wpa_pairwise_and_akm_suites_outside_00_50_f2():
 
 def test_a_wpa_element_with_no_akm_suites():
     body = WPA_OUI + b"\x01" + b"\x01\x00" + WPA_OUI + b"\x02" + b"\x01\x00" + WPA_OUI + b"\x04" + b"\x00\x00"
-    assert WlanFrameParser._parse_wpa_ie(body) == WpaElement(
+    assert parse_wpa_element(body) == WpaElement(
         pairwise_cipher="CCMP", akms=(), akm_suites=(), vendor_akm_offered=False)
 
 

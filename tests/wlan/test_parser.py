@@ -3,6 +3,7 @@ import struct
 import pytest
 
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.rsn import parse_rsn_element
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, data_header, eapol_key
 from wifit3.dot11.packet import (
     WepDataPacket, BeaconPacket, AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
@@ -100,7 +101,7 @@ def _rsn_ie(
 def test_rsn_optional_fields_must_end_on_field_boundaries(length):
     body = bytes.fromhex("0100000fac040100000fac040100000fac05c0000100")
     body += bytes(range(16)) + bytes.fromhex("000fac06")
-    rsn = WlanFrameParser._parse_rsn_ie(body[:length])
+    rsn = parse_rsn_element(body[:length])
     assert (rsn is not None) is (length in {18, 20, 38, 42})
     if rsn is not None:
         assert rsn.pmf_required is (length >= 20)
@@ -565,7 +566,7 @@ def test_wfa_vendor_akms_are_named():
 def test_rsn_version_other_than_one_is_rejected():
     rsn = _rsn_ie(akms=(0x05,), rsn_caps=0x00C0)
     invalid = rsn[:2] + b"\x02\x00" + rsn[4:]
-    assert WlanFrameParser._parse_rsn_ie(invalid[2:]) is None
+    assert parse_rsn_element(invalid[2:]) is None
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=invalid), -50)
     assert parsed.akm_suites == []
     assert parsed.rsn_valid is False
@@ -575,7 +576,7 @@ def test_truncated_rsn_pmkid_list_is_rejected():
     rsn = _rsn_ie(akms=(0x05,), rsn_caps=0x00C0)
     body = rsn[2:] + b"\x01\x00"
     invalid = bytes((48, len(body))) + body
-    assert WlanFrameParser._parse_rsn_ie(body) is None
+    assert parse_rsn_element(body) is None
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=invalid), -50)
     assert parsed.akm_suites == []
     assert parsed.rsn_valid is False
