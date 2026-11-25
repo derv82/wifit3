@@ -244,6 +244,13 @@ def test_a_nul_filled_beacon_gives_the_hidden_ssid_length():
     assert ap.hidden_ssid_len == 8
 
 
+def test_last_seen_is_the_latest_frame_time_not_the_last_in_order():
+    s = WlanSink()
+    s.update(_beacon(), W0, timestamp=200.0)
+    s.update(_beacon(), W0, timestamp=100.0)
+    assert s.access_points[BSSID].last_seen == 200.0
+
+
 def test_an_empty_ssid_beacon_gives_no_hidden_ssid_length():
     s = WlanSink()
     s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": b""}), W0)

@@ -198,6 +198,7 @@ class WlanSink:
                 pmf_required=pmf_required,
                 beacon_protection=beacon_protection,
                 chipset=elements.chipset,
+                last_seen=timestamp,
             )
             if wps is not None:
                 ap.wps = True
@@ -267,7 +268,7 @@ class WlanSink:
                 )
 
         ap = self.access_points[bssid]
-        ap.last_seen = timestamp
+        ap.last_seen = max(ap.last_seen, timestamp)
 
         # Stash the latest RSNIE
         rsn_ie = elements.rsn_element_raw

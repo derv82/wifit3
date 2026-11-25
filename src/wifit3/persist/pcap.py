@@ -365,11 +365,12 @@ def read_access_points(path: Path) -> list[AccessPoint]:
             probe_response_by_bssid.setdefault(packet.bssid, packet.raw)
         if isinstance(packet, (ProbeResponsePacket, AssocRequestPacket)) and packet.ssid:
             reveal_packet_by_bssid[packet.bssid] = packet
-    for ap in sink.get_access_points():
+    access_points = sink.get_access_points()
+    for ap in access_points:
         if ap.is_hidden and ap.bssid in reveal_packet_by_bssid:
             packet = reveal_packet_by_bssid[ap.bssid]
             sink.decloak(ap, packet.ssid, packet.type, packet.ssid_bytes, packet.raw)
-        for hs in ap.handshakes.values():
-            if not hs.beacon_frame and ap.bssid in probe_response_by_bssid:
-                hs.beacon_frame = probe_response_by_bssid[ap.bssid]
-    return sink.get_access_points()
+        for handshake in ap.handshakes.values():
+            if not handshake.beacon_frame and ap.bssid in probe_response_by_bssid:
+                handshake.beacon_frame = probe_response_by_bssid[ap.bssid]
+    return access_points
