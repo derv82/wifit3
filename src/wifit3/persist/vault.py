@@ -361,7 +361,7 @@ class Vault:
         result = write()
         if not result:
             return None
-        update_meta(ap.ssid, ap.bssid)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
         if not result.was_new:
             return HashlineSaveResult(result.path, was_new=False)
         capture = PersistedCapture(type=kind, timestamp=int(time.time()), path=str(result.path),
@@ -421,7 +421,7 @@ class Vault:
             result = SaveResult(Path(saved.path), was_new=False)
         else:
             result = SaveResult(save.write_wep_key(ap, key), was_new=True)
-        update_meta(ap.ssid, ap.bssid)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
         if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ap.ssid, ap.bssid, result.path)
@@ -442,7 +442,7 @@ class Vault:
             result = SaveResult(Path(saved.path), was_new=False)
         else:
             result = SaveResult(save.write_wps_pin(ap, pin, psk), was_new=True)
-        update_meta(ap.ssid, ap.bssid)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
         if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ap.ssid, ap.bssid, result.path)
@@ -461,7 +461,7 @@ class Vault:
             result = SaveResult(Path(saved.path), was_new=False)
         else:
             result = SaveResult(save.write_wps_pbc(ap, psk), was_new=True)
-        update_meta(ap.ssid, ap.bssid)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
         if result.was_new:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PBC, timestamp=int(time.time()), path=str(result.path),

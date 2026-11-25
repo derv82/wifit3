@@ -83,13 +83,15 @@ def read_meta(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def update_meta(ssid: Optional[str], bssid: str, **fields: Any) -> Path:
+def update_meta(ssid: Optional[str], bssid: str, ssid_bytes: Optional[bytes] = None, **fields: Any) -> Path:
     """Merge ``fields`` into the AP's .meta (a None value removes that key)."""
     path = meta_path(ssid, bssid)
     data = read_meta(path)
     data["bssid"] = bssid_to_colon(bssid)
     if ssid:
         data["ssid"] = ssid
+    if ssid_bytes:
+        data["ssid_hex"] = ssid_bytes.hex()
     _write_meta(path, data, fields)
     return path
 
