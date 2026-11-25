@@ -180,7 +180,7 @@ class VaultDrawer(ModalScreen):
         widget = self.query_one("#vault-item", VaultItemView)
         if bssid and self.app.vault.persisted(bssid):
             ssids = self.app.vault.ap_state(bssid).ssids
-            ssid = ssids[0].ssid if ssids else self.app.vault.ssid(bssid)
+            ssid = ssids[0].displayed_ssid if ssids else self.app.vault.displayed_ssid(bssid)
             widget.load(bssid, self.query_one("#vault-table", VaultTable).display_name(bssid, ssid))
         else:
             widget.load("", None)

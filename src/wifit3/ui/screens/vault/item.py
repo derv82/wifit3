@@ -64,11 +64,11 @@ def _status_markup(state: ApState) -> str:
 def _ssid_texts(state: ApState) -> list[tuple[str, str, Optional[str]]]:
     ssids = state.ssids
     if len(ssids) <= 1:
-        return [("SSID", ssids[0].ssid if ssids else "‹hidden›", None)]
+        return [("SSID", ssids[0].displayed_ssid if ssids else "‹hidden›", None)]
     texts: list[tuple[str, str, Optional[str]]] = []
     for i, history in enumerate(ssids):
         first, last = date_text(history.first_seen), date_text(history.last_seen)
-        texts.append(("" if i else "SSID", history.ssid, first if first == last else f"{first} → {last}"))
+        texts.append(("" if i else "SSID", history.displayed_ssid, first if first == last else f"{first} → {last}"))
     return texts
 
 

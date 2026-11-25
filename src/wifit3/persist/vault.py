@@ -26,6 +26,7 @@ from wifit3.persist.config import Config
 from wifit3.persist.meta import clear_meta_paths_cache, meta_path, read_meta, update_meta, update_meta_file
 from wifit3.persist.pcap import FourWayHandshake, HandshakePcaps, read_handshakes
 from wifit3.persist.save import SaveResult
+from wifit3.text import displayable_ssid
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
 
@@ -218,9 +219,30 @@ class Vault:
     def ssid(self, bssid: str) -> Optional[str]:
         """The AP's SSID from its newest capture. A PSK is saved under the SSID it cracked, whenever
         it cracked, so PSK files come last; a .pcap only knows the filename-safe form."""
+        capture = self._ssid_capture(bssid)
+        if capture is None:
+            return None
+        return capture.ssid
+
+    def displayed_ssid(self, bssid: str) -> Optional[str]:
+        """``ssid`` as the UI shows it: from its hashline's SSID bytes when it has them."""
+        capture = self._ssid_capture(bssid)
+        if capture is None:
+            return None
+        if capture.ssid_bytes is None:
+            return capture.ssid
+        return displayable_ssid(capture.ssid_bytes)
+
+    def _ssid_capture(self, bssid: str) -> Optional[PersistedCapture]:
         captures = sorted(self.persisted(bssid), key=lambda c: c.type == CaptureType.WPA_PSK)
-        return next((c.ssid for c in captures if c.ssid and not c.path.endswith(".pcap")),
-                    next((c.ssid for c in captures if c.ssid), None))
+        pcap_capture: Optional[PersistedCapture] = None
+        for capture in captures:
+            if capture.ssid:
+                if not capture.path.endswith(".pcap"):
+                    return capture
+                if pcap_capture is None:
+                    pcap_capture = capture
+        return pcap_capture
 
     def all_captures(self) -> List[PersistedCapture]:
         """Every saved capture across all APs, unordered (callers sort as needed)."""

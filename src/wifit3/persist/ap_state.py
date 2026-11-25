@@ -18,6 +18,7 @@ from wifit3.persist.exhaustion import ExhaustedWordlist, read_exhausted_wordlist
 from wifit3.persist.meta import (bssid_meta_paths, meta_path, read_bssid_metas, read_meta, update_meta,
                                  update_meta_file)
 from wifit3.persist.pcap import read_pcap
+from wifit3.text import displayable_ssid
 
 _HASHLINES_KEY = "hashlines"
 _LIVE_VERIFICATIONS_KEY = "live_verifications"
@@ -84,8 +85,15 @@ class Key:
 @dataclass(frozen=True)
 class SsidHistory:
     ssid: str
+    ssid_bytes: Optional[bytes]     # a hashline's ESSID; None when only key captures name it
     first_seen: Optional[int]
     last_seen: Optional[int]
+
+    @property
+    def displayed_ssid(self) -> str:
+        if self.ssid_bytes is None:
+            return self.ssid
+        return displayable_ssid(self.ssid_bytes)
 
 
 @dataclass(frozen=True)
@@ -342,13 +350,15 @@ def load_ap_state(bssid: str, captures: list[PersistedCapture]) -> ApState:
 
 def _ssid_histories(hashlines: list[DatedHashline], keys: list[Key]) -> tuple[SsidHistory, ...]:
     seen: dict[str, list[int]] = {}
+    ssid_bytes_by_ssid: dict[str, bytes] = {}
     for h in hashlines:
         seen.setdefault(h.line.ssid, []).extend(h.captured)
+        ssid_bytes_by_ssid.setdefault(h.line.ssid, bytes.fromhex(h.line.essid))
     for key in keys:
         for capture in key.captures:
             if capture.ssid and capture.ssid not in seen:
                 seen[capture.ssid] = [capture.timestamp]
-    histories = [SsidHistory(ssid, min(epochs, default=None), max(epochs, default=None))
+    histories = [SsidHistory(ssid, ssid_bytes_by_ssid.get(ssid), min(epochs, default=None), max(epochs, default=None))
                  for ssid, epochs in seen.items()]
     return tuple(sorted(histories, key=lambda s: epoch_sort_key(s.last_seen), reverse=True))
 

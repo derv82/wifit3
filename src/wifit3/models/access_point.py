@@ -52,6 +52,7 @@ class PersistedCapture:
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
     ssid: Optional[str] = None      # parsed from the filename, for display (VAULT)
     pin: Optional[str] = None       # WPS PIN (WPS_PIN captures only)
+    ssid_bytes: Optional[bytes] = None  # .hc22000 only: the first hashline's ESSID, when its SSID names the file
 
 
 @dataclass

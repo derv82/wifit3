@@ -148,7 +148,7 @@ class VaultTable(Widget):
         captures_by_bssid: Dict[str, List[PersistedCapture]] = {}
         for cap in self.app.vault.all_captures():
             captures_by_bssid.setdefault(cap.bssid, []).append(cap)
-        return {bssid: (self.app.vault.ssid(bssid), caps)
+        return {bssid: (self.app.vault.displayed_ssid(bssid), caps)
                 for bssid, caps in captures_by_bssid.items()}
 
     def reload_table(self) -> None:
