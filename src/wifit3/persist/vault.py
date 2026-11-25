@@ -387,7 +387,7 @@ class Vault:
         if not result.was_new:
             return HashlineSaveResult(result.path, was_new=False)
         capture = PersistedCapture(type=kind, timestamp=int(time.time()), path=str(result.path),
-                                   bssid=ap.bssid, ssid=ap.ssid)
+                                   bssid=ap.bssid, ssid=ap.ssid, ssid_bytes=ap.ssid_bytes)
         after = read_hashlines(ap.bssid, [*self.persisted(ap.bssid), capture])
         before = {h.id: h.line for h in state.hashlines}
         new_lines = {hid: raw_and_line for hid, raw_and_line in after.items() if hid not in before}
