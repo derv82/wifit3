@@ -92,6 +92,7 @@ class SsidHistory:
 class ApState:
     bssid: str
     ssids: tuple[SsidHistory, ...]          # newest first
+    ssid_bytes: Optional[bytes]             # newest hashline's ESSID, else the newest SSID's .meta ssid_hex
     hashlines: tuple[DatedHashline, ...]    # newest first, undated last
     keys: tuple[Key, ...]                   # most recently confirmed first
     status: PasswordStatus
@@ -316,6 +317,16 @@ def load_ap_state(bssid: str, captures: list[PersistedCapture]) -> ApState:
     status, status_key = password_status(hashlines, keys)
     ssids = _ssid_histories(hashlines, keys)
     newest_ssid = safe_ssid(ssids[0].ssid) if ssids else None
+    ssid_bytes: Optional[bytes] = None
+    if hashlines:
+        ssid_bytes = bytes.fromhex(hashlines[0].line.essid)
+    elif ssids:
+        ssid_hex = read_meta(meta_path(ssids[0].ssid, bssid)).get("ssid_hex")
+        if isinstance(ssid_hex, str):
+            try:
+                ssid_bytes = bytes.fromhex(ssid_hex)
+            except ValueError:
+                pass
     hc22000 = sorted((c for c in captures if c.path.endswith(".hc22000")),
                      key=lambda c: (safe_ssid(c.ssid) == newest_ssid, c.timestamp), reverse=True)
     cracked = {hid for key in keys for hid in key.hashline_ids}
@@ -323,7 +334,7 @@ def load_ap_state(bssid: str, captures: list[PersistedCapture]) -> ApState:
     exhausted = read_exhausted_wordlists(metas, [h.id for h in uncracked]) if uncracked else {}
     handshake_and_pmkid_files = {c.path: c for c in sorted(captures, key=lambda c: c.timestamp)
                                  if c.type in (CaptureType.HS, CaptureType.PMKID)}
-    return ApState(bssid, ssids, tuple(hashlines), tuple(keys), status, status_key,
+    return ApState(bssid, ssids, ssid_bytes, tuple(hashlines), tuple(keys), status, status_key,
                    key_statuses(keys, hashlines, status, status_key),
                    hc22000[0] if hc22000 else None, uncracked, MappingProxyType(exhausted),
                    tuple(reversed(handshake_and_pmkid_files.values())))

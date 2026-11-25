@@ -12,6 +12,7 @@ from textual.widgets import Button, Input, Label, Select
 from wifit3.crack.wpa_psk import RAW_PMK_RE
 from wifit3.dot11.wpa import is_valid_psk
 from wifit3.models import CaptureType
+from wifit3.text import displayable_ssid
 
 _BSSID_RE = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
 _WPS_PIN_RE = re.compile(r"[0-9]{4}|[0-9]{8}")
@@ -31,11 +32,12 @@ class ManualCredential:
     ssid: str
     bssid: str
     value: str
+    ssid_bytes: Optional[bytes] = None
 
 
-def credential_error(ssid: str, bssid: str, kind: CaptureType, value: str) -> Optional[str]:
+def credential_error(ssid_bytes: bytes, bssid: str, kind: CaptureType, value: str) -> Optional[str]:
     """Why the typed credential can't be saved, or None when it is valid."""
-    if not ssid or len(ssid.encode("utf-8")) > 32:
+    if not ssid_bytes or len(ssid_bytes) > 32:
         return "SSID must be 1-32 bytes"
     if not _BSSID_RE.fullmatch(bssid):
         return "Enter a colon-separated BSSID"
@@ -70,16 +72,23 @@ class AddCredentialModal(ModalScreen[Optional[ManualCredential]]):
     AddCredentialModal #buttons Button { margin-left: 1; }
     """
 
-    def __init__(self, ssid: str = "", bssid: str = "") -> None:
+    def __init__(self, ssid: str = "", bssid: str = "", ssid_bytes: Optional[bytes] = None) -> None:
+        """``ssid_bytes``: the AP's SSID; when ``ssid`` doesn't encode to them, the SSID box is locked."""
         super().__init__()
         self._ssid = ssid
         self._bssid = bssid
+        self._locked_ssid_bytes: Optional[bytes] = None
+        if ssid_bytes is not None and ssid.encode("utf-8") != ssid_bytes:
+            self._locked_ssid_bytes = ssid_bytes
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Label("Add Credential", id="title")
             yield Label("Network", classes="field-label")
-            yield Input(self._ssid, placeholder="SSID", id="ssid")
+            if self._locked_ssid_bytes is None:
+                yield Input(self._ssid, placeholder="SSID", id="ssid")
+            else:
+                yield Input(displayable_ssid(self._locked_ssid_bytes), id="ssid", disabled=True)
             yield Label("BSSID", classes="field-label")
             yield Input(self._bssid, placeholder="aa:bb:cc:dd:ee:ff", id="bssid")
             yield Label("Credential type", classes="field-label")
@@ -102,15 +111,20 @@ class AddCredentialModal(ModalScreen[Optional[ManualCredential]]):
     @on(Input.Submitted, "#value")
     @on(Button.Pressed, "#add")
     def _add(self) -> None:
-        ssid = self.query_one("#ssid", Input).value.strip()
+        if self._locked_ssid_bytes is None:
+            ssid = self.query_one("#ssid", Input).value.strip()
+            ssid_bytes = ssid.encode("utf-8")
+        else:
+            ssid = self._ssid
+            ssid_bytes = self._locked_ssid_bytes
         bssid = self.query_one("#bssid", Input).value.strip().lower()
         kind = CaptureType(self.query_one("#kind", Select).value)
         value = self.query_one("#value", Input).value
-        error = credential_error(ssid, bssid, kind, value)
+        error = credential_error(ssid_bytes, bssid, kind, value)
         if error:
             self.query_one("#status", Label).update(error)
             return
-        self.dismiss(ManualCredential(kind, ssid, bssid, value))
+        self.dismiss(ManualCredential(kind, ssid, bssid, value, ssid_bytes))
 
     @on(Button.Pressed, "#cancel")
     def _cancel_pressed(self) -> None:

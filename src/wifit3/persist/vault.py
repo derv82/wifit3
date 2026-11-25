@@ -476,7 +476,8 @@ class Vault:
         if key is not None:
             self.record_live_verification(key, True)
 
-    def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str, manual: bool = False) -> Optional[SaveResult]:
+    def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str, manual: bool = False,
+                     ssid_bytes: Optional[bytes] = None) -> Optional[SaveResult]:
         """``manual``: typed in, not cracked or recovered from the AP."""
         if not psk:
             return None
@@ -485,7 +486,7 @@ class Vault:
             result = SaveResult(Path(saved.path), was_new=False)
         else:
             result = SaveResult(save.write_wpa_psk(ssid, bssid, psk), was_new=True)
-        update_meta(ssid, bssid)
+        update_meta(ssid, bssid, ssid_bytes)
         if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ssid, bssid, result.path)

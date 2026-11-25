@@ -306,17 +306,18 @@ class VaultDrawer(ModalScreen):
 
     def action_add_credential(self) -> None:
         ssid, bssid = self._selected_network()
-        self.app.push_screen(AddCredentialModal(ssid or "", bssid), self._credential_added)
+        ssid_bytes = self.app.vault.ap_state(bssid).ssid_bytes if bssid else None
+        self.app.push_screen(AddCredentialModal(ssid or "", bssid, ssid_bytes), self._credential_added)
 
     def _credential_added(self, credential: Optional[ManualCredential]) -> None:
         if credential is None:
             return
         vault = self.app.vault
-        ap = AccessPoint(bssid=credential.bssid, ssid=credential.ssid)
+        ap = AccessPoint(bssid=credential.bssid, ssid=credential.ssid, ssid_bytes=credential.ssid_bytes)
         verified = False
         try:
             if credential.kind == CaptureType.WPA_PSK:
-                result = vault.save_wpa_psk(ap.ssid, ap.bssid, credential.value, manual=True)
+                result = vault.save_wpa_psk(ap.ssid, ap.bssid, credential.value, manual=True, ssid_bytes=ap.ssid_bytes)
                 if result is not None:
                     state = vault.ap_state(ap.bssid)
                     key = next(k for k in state.keys if k.id == (CaptureType.WPA_PSK, credential.value))

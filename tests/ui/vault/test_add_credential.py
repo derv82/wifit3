@@ -19,7 +19,7 @@ _BSSID = "aa:bb:cc:dd:ee:ff"
     (CaptureType.WEP, "0a1b2c3d4e" * 2 + "0a1b2c"),
 ])
 def test_valid_credentials(kind, value):
-    assert credential_error("HomeNet", _BSSID, kind, value) is None
+    assert credential_error(b"HomeNet", _BSSID, kind, value) is None
 
 
 @pytest.mark.parametrize("ssid, bssid, kind, value", [
@@ -35,4 +35,4 @@ def test_valid_credentials(kind, value):
     ("HomeNet", _BSSID, CaptureType.WEP, "abcdefghij"),
 ])
 def test_invalid_credentials(ssid, bssid, kind, value):
-    assert credential_error(ssid, bssid, kind, value) is not None
+    assert credential_error(ssid.encode("utf-8"), bssid, kind, value) is not None

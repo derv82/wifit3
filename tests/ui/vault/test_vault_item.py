@@ -54,7 +54,7 @@ async def test_key_row_takes_its_keys_status_and_says_why():
                                                                       path="x.txt", bssid="aa:bb:cc:dd:ee:ff",
                                                                       value="hunter22"),), frozenset(), ())
     guess = _key(CaptureType.WPA_PSK, "guess")
-    state = ApState("aa:bb:cc:dd:ee:ff", (), hashlines, (current, guess), PasswordStatus.CURRENT, current,
+    state = ApState("aa:bb:cc:dd:ee:ff", (), None, hashlines, (current, guess), PasswordStatus.CURRENT, current,
                     {current.id: PasswordStatus.CURRENT, guess.id: PasswordStatus.NOT_VERIFIED}, None, hashlines, (), ())
     current_row, guess_row = await _row(current, state), await _row(guess, state)
 
