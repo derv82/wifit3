@@ -541,14 +541,18 @@ class WlanSink:
                         other_ap.siblings.append(bssid)
         ap.siblings = new_siblings
 
-    def guessid(self, ap: AccessPoint) -> str:
-        """The alphabetically first SSID among ap's named siblings; "" when none."""
+    def guessid_bytes(self, ap: AccessPoint) -> bytes:
+        """The lowest SSID among ap's named siblings; b"" when none."""
         sibling_ssids = []
         for bssid in ap.siblings:
             sibling = self.access_points.get(bssid)
-            if sibling is not None and not sibling.is_hidden:
-                sibling_ssids.append(sibling.ssid)
-        return min(sibling_ssids, default="")
+            if sibling is not None and not sibling.is_hidden and sibling.ssid_bytes:
+                sibling_ssids.append(sibling.ssid_bytes)
+        return min(sibling_ssids, default=b"")
+
+    def guessid(self, ap: AccessPoint) -> str:
+        """guessid_bytes as the UI shows it."""
+        return displayable_ssid(self.guessid_bytes(ap))
 
     # ----- reads / forged-MAC bookkeeping / TX stats -------------------------
 

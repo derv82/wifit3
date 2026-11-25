@@ -29,6 +29,7 @@ from wifit3.campaigns.wps.pixie import PixieBundle
 from wifit3.dot11.deauth import reason_description
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
+from wifit3.text import displayable_ssid
 
 logger = logging.getLogger(__name__)
 
@@ -393,6 +394,6 @@ class WpsRegistrar:
         ssid = creds.get("ssid")
         key = creds.get("network_key")
         return (
-            ssid.decode("utf-8", "replace") if ssid else None,
+            displayable_ssid(ssid) if ssid else None,
             key.decode("utf-8", "replace") if key else None,
         )

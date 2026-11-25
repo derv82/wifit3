@@ -97,8 +97,7 @@ def test_an_explicit_empty_list_does_not_fall_back_to_sibling_guesses():
 
 
 def test_no_input_falls_back_to_sibling_guesses():
-    sibling = AccessPoint(bssid="aa:bb:cc:dd:ee:f0", channel=6)
-    sibling.ssid = "Loud"
+    sibling = AccessPoint(bssid="aa:bb:cc:dd:ee:f0", channel=6, ssid="Loud")
     array = WlanArray()
     array.access_points[sibling.bssid] = sibling
     hidden = AccessPoint(bssid=_BSSID, channel=6)
