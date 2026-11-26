@@ -18,7 +18,7 @@ class ImportProblemsModal(ModalScreen[None]):
         width: 100; max-width: 95%; height: auto; max-height: 80%;
         border: thick $warning; background: $surface; padding: 1 2;
     }
-    ImportProblemsModal #title { text-style: bold; margin-bottom: 1; }
+    ImportProblemsModal #title { width: 100%; text-align: center; text-style: bold; color: $accent; margin-bottom: 1; }
     ImportProblemsModal #summary { margin-bottom: 1; }
     ImportProblemsModal VerticalScroll { height: auto; max-height: 20; }
     ImportProblemsModal Horizontal { align: right middle; height: auto; margin-top: 1; }

@@ -375,18 +375,19 @@ class WifiteApp(App):
             self.call_from_thread(self.set_timer, VAULT_TABLE_RELOAD_DELAY_S, self._refresh_vault_table)
 
     def _refresh_vault_table(self) -> None:
-        """Reload the vault table if its drawer is open; wait again if a notice came in meanwhile."""
+        """Reload the vault table if its drawer is open, under a modal too; wait again if a notice came in meanwhile."""
         with self._vault_notices_lock:
             quiet_for = time.monotonic() - self._vault_last_notice
             if quiet_for < VAULT_TABLE_RELOAD_DELAY_S:
                 self.set_timer(VAULT_TABLE_RELOAD_DELAY_S - quiet_for, self._refresh_vault_table)
                 return
             self._vault_refresh_pending = False
-        if isinstance(self.screen, VaultDrawer):
-            try:
-                self.screen.vault_changed()
-            except Exception:
-                logger.debug("Vault table refresh skipped", exc_info=True)
+        for screen in self.screen_stack:
+            if isinstance(screen, VaultDrawer):
+                try:
+                    screen.vault_changed()
+                except Exception:
+                    logger.debug("Vault table refresh skipped", exc_info=True)
 
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:

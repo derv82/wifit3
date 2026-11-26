@@ -280,6 +280,20 @@ async def test_a_burst_of_vault_changes_refreshes_the_drawer_once(mocker):
         vault_changed.assert_called_once_with()
 
 
+async def test_a_vault_change_refreshes_the_drawer_under_a_modal(mocker):
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        drawer = _DrawerWithoutWidgets()
+        await app.push_screen(drawer)
+        await app.push_screen(ImportProblemsModal("", []))
+        vault_changed = mocker.patch.object(drawer, "vault_changed")
+
+        app.vault.notify_changed(None)
+        await pilot.pause(VAULT_TABLE_RELOAD_DELAY_S * 2)
+
+        vault_changed.assert_called_once_with()
+
+
 def test_a_vault_change_from_another_thread_after_quit_logs_no_error(caplog):
     app = _VaultApp()
 
