@@ -384,6 +384,7 @@ class VaultDrawer(ModalScreen):
         except OSError as exc:
             self.app.call_from_thread(self.notify, f"Import failed: {exc}", severity="error")
         self.app.vault.refresh()
+        result.save_psks(self.app.vault)
         if result.problems:
             self.app.call_from_thread(self.app.push_screen, ImportProblemsModal(result.summary, result.problems))
         else:

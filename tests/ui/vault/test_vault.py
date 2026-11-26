@@ -433,7 +433,7 @@ async def test_an_import_without_problems_says_what_it_imported(tmp_path_factory
         drawer._import_paths_chosen([selected_dir])
         await app.workers.wait_for_complete()
         await pilot.pause(0)
-        assert app.notified[-1] == "Imported 0 handshakes & 1 PMKIDs (1 APs) from 1 files"
+        assert app.notified[-1] == "Imported 0 handshakes, 1 PMKIDs & 0 keys (1 APs) from 1 files"
         assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").hashlines
 
 

@@ -9,6 +9,7 @@ from wifit3.persist.capture_import import CaptureImport
 from wifit3.persist.config import Config
 from wifit3.persist.meta import meta_path, read_meta
 from wifit3.persist.pcap import write_pcap
+from wifit3.persist.vault import Vault
 from tests.persist.test_pcap import _BSSID, _SSID, _beacon, _m1_m2
 
 PMKID = f"WPA*01*{'33' * 16}*aabbccddeeff*112233445566*5465737431***"
@@ -31,11 +32,12 @@ def _imported(paths: list[Path]) -> CaptureImport:
 def test_a_directory_is_walked_recursively_and_other_file_types_are_skipped(selected_dir: Path):
     (selected_dir / "sub").mkdir()
     (selected_dir / "sub" / "a.HC22000").write_text(PMKID + "\n")
-    (selected_dir / "b.txt").write_bytes(b"")
+    (selected_dir / "b.meta").write_bytes(b"")
     (selected_dir / "c.jpg").write_bytes(b"")
+    (selected_dir / "wordlist.txt").write_bytes(b"")
     result = _imported([selected_dir])
     assert (result.files, result.pmkids) == (2, 1)
-    assert result.problems == [("old/b.txt", "not supported yet")]
+    assert result.problems == [("old/b.meta", "not supported yet")]
 
 
 def test_a_zip_is_read_with_its_subdirectories_and_a_zip_inside_it_is_skipped(selected_dir: Path):
@@ -67,7 +69,7 @@ def test_the_summary_counts_what_was_imported_and_what_the_vault_already_had(sel
     (selected_dir / "a.hc22000").write_text(PMKID + "\n")
     (selected_dir / "b.hc22000").write_text(PMKID + "\n" + OTHER_PMKID + "\n")
     result = _imported([selected_dir])
-    assert result.summary == "Imported 0 handshakes & 2 PMKIDs (1 APs) from 2 files, 1 already in Vault"
+    assert result.summary == "Imported 0 handshakes, 2 PMKIDs & 0 keys (1 APs) from 2 files, 1 already in Vault"
 
 
 def _handshake_pcaps() -> list[str]:
@@ -116,3 +118,30 @@ def test_an_ap_with_no_ssid_and_a_pcap_with_nothing_crackable_are_problems(selec
     result = _imported([selected_dir])
     assert result.problems == [("old/beacon.pcap", "no handshakes or PMKIDs found"),
                                ("old/hidden.pcap", f"AP {_BSSID} has no SSID, skipped")]
+
+
+WEP_KEY_FILE = "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_wep_key.txt"
+WEP_KEY_TEXT = "SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nWEP key (hex):   6162636465\n"
+
+
+def test_a_wep_key_file_is_copied_in_under_its_own_name_once(selected_dir: Path):
+    (selected_dir / WEP_KEY_FILE).write_text(WEP_KEY_TEXT)
+    result = _imported([selected_dir])
+    assert (result.keys, result.bssids) == (1, {"aa:bb:cc:dd:ee:ff"})
+    assert (Path(Config.captures_dir) / WEP_KEY_FILE).read_text() == WEP_KEY_TEXT
+    result = _imported([selected_dir])
+    assert (result.keys, result.duplicates) == (0, 1)
+
+
+def test_a_psk_is_saved_only_for_an_ap_with_a_handshake_or_pmkid(selected_dir: Path):
+    (selected_dir / "a.hc22000").write_text(PMKID + "\n")
+    psk_text = "SSID: Test1\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: rightpass\n"
+    (selected_dir / "Test1_aa-bb-cc-dd-ee-ff_1700000000_wpa_psk.txt").write_text(psk_text)
+    (selected_dir / "Other_11-22-33-44-55-66_1700000000_wpa_psk.txt").write_text(psk_text)
+    result = _imported([selected_dir])
+    vault = Vault()
+    result.save_psks(vault)
+    assert result.keys == 1
+    assert [key.value for key in vault.ap_state("aa:bb:cc:dd:ee:ff").keys] == ["rightpass"]
+    assert result.problems == [("old/Other_11-22-33-44-55-66_1700000000_wpa_psk.txt",
+                                "no handshake or PMKID of this AP, PSK skipped")]

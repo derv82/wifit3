@@ -36,19 +36,19 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def _read_wep_key(text: str) -> str | None:
+def read_wep_key(text: str) -> str | None:
     """Extract the hex WEP key from a ``_wep_key.txt`` body, or None."""
     m = WEP_KEY_HEX_RE.search(text)
     return m.group(1).lower() if m else None
 
 
-def _read_wps_psk(text: str) -> str | None:
+def read_wps_psk(text: str) -> str | None:
     """Extract the PSK from a ``_wps_pin.txt`` or ``_wps_pbc.txt`` body, or None."""
     m = WPS_PSK_RE.search(text)
     return m.group(1).strip() if m else None
 
 
-def _body_ssid(text: str, filename_ssid: str) -> str:
+def body_ssid(text: str, filename_ssid: str) -> str:
     m = _SSID_LINE_RE.search(text)
     if m and m.group(1) and safe_ssid(m.group(1)) == filename_ssid:
         return m.group(1)
@@ -97,25 +97,25 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     if ext == "hc22000":
         ssid, ssid_bytes = _essid(lines, m.group("ssid"))
     elif ext == "txt":
-        ssid = _body_ssid(text, m.group("ssid"))
+        ssid = body_ssid(text, m.group("ssid"))
     else:
         ssid = m.group("ssid")
 
     if kind == "wep_key" and ext == "txt":
-        key = _read_wep_key(text)
+        key = read_wep_key(text)
         if key is None:
             return []
         return [PersistedCapture(type=CaptureType.WEP, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=key, ssid=ssid)]
     if kind == "wps_pin" and ext == "txt":
         return [PersistedCapture(type=CaptureType.WPS_PIN, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(text), ssid=ssid,
+                                 bssid=bssid, value=read_wps_psk(text), ssid=ssid,
                                  pin=parse_wps_pin(text))]
     if kind == "wps_pbc" and ext == "txt":
         return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(text), ssid=ssid)]
+                                 bssid=bssid, value=read_wps_psk(text), ssid=ssid)]
     if kind == "wpa_psk" and ext == "txt":
-        psk = _read_wps_psk(text)
+        psk = read_wps_psk(text)
         if psk is None:
             return []
         return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=epoch, path=str(path),
