@@ -121,7 +121,7 @@ class _PickerTree(DirectoryTree):
 
     def refresh_path(self, path: Path) -> None:
         """Repaint the row for ``path``: the tree renders each row once and caches the result."""
-        pending = list(self.root.children)
+        pending = [self.root]
         while pending:
             node = pending.pop()
             if node.data is not None and node.data.path == path:

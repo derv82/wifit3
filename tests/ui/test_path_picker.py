@@ -95,3 +95,16 @@ async def test_spacebar_checks_a_directory_only_when_directories_are_checkable(
         picker.query_one("#picker-select", Button).press()
         await pilot.pause(0)
     assert [[path.name for path in paths] for paths in chosen] == chosen_paths
+
+
+async def test_checking_the_root_directory_repaints_its_row(tree_fixture, mocker):
+    app = _Host()
+    async with app.run_test() as pilot:
+        picker = PathPickerModal(tree_fixture, multiple=True, checkable_directories=True)
+        app.push_screen(picker)
+        await pilot.pause(0)
+        tree = picker.query_one("#picker-tree", DirectoryTree)
+        repaint = mocker.spy(tree.root, "refresh")
+        tree.move_cursor(tree.root)
+        await pilot.press("space")
+        repaint.assert_called_once_with()
