@@ -66,11 +66,12 @@ def test_files_in_the_captures_directory_are_skipped(selected_dir: Path):
     assert (result.files, result.pmkids, result.problems) == (0, 0, [])
 
 
-def test_the_summary_counts_what_was_imported_and_what_the_vault_already_had(selected_dir: Path):
+def test_an_import_counts_what_was_imported_and_what_the_vault_already_had(selected_dir: Path):
     (selected_dir / "a.hc22000").write_text(PMKID + "\n")
     (selected_dir / "b.hc22000").write_text(PMKID + "\n" + OTHER_PMKID + "\n")
     result = _imported([selected_dir])
-    assert result.summary == "Imported 0 handshakes, 2 PMKIDs & 0 keys (1 APs) from 2 files, 1 already in Vault"
+    assert (result.files, result.handshakes, result.pmkids, result.duplicates, result.bssids) == (
+        2, 0, 2, 1, {"aa:bb:cc:dd:ee:ff"})
 
 
 def _handshake_pcaps() -> list[str]:
@@ -118,7 +119,7 @@ def test_an_ap_with_no_ssid_and_a_pcap_with_nothing_crackable_are_problems(selec
     write_pcap(selected_dir / "beacon.pcap", [(_beacon(), 999.0)])
     result = _imported([selected_dir])
     assert result.problems == [("old/beacon.pcap", "no handshakes or PMKIDs found"),
-                               ("old/hidden.pcap", f"AP {_BSSID} has no SSID, skipped")]
+                               ("old/hidden.pcap", "SSID not found in beacon/probe/assoc frames")]
 
 
 WEP_KEY_FILE = "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_wep_key.txt"

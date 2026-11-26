@@ -22,7 +22,7 @@ from wifit3.ui.path_picker import PathPickerModal
 from wifit3.ui.screens.vault.job_pane import JobTrackerPane
 from wifit3.ui.screens.vault.modals.add_credential import AddCredentialModal, ManualCredential
 from wifit3.ui.screens.vault.modals.confirm import ConfirmModal
-from wifit3.ui.screens.vault.modals.import_problems import ImportProblemsModal
+from wifit3.ui.screens.vault.modals.import_results import ImportResultsModal, import_summary
 from wifit3.ui.modals.nickname import NicknameModal
 
 
@@ -388,9 +388,9 @@ class VaultDrawer(ModalScreen):
         if result.nicknames:
             self.app.call_from_thread(self.app.persist_config)
         if result.problems:
-            self.app.call_from_thread(self.app.push_screen, ImportProblemsModal(result.summary, result.problems))
+            self.app.call_from_thread(self.app.push_screen, ImportResultsModal(result))
         else:
-            self.app.call_from_thread(self.notify, result.summary)
+            self.app.call_from_thread(self.notify, import_summary(result))
 
     def action_export_zip(self) -> None:
         try:

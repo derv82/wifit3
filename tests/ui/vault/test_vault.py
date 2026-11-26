@@ -28,7 +28,8 @@ from wifit3.ui.screens.vault.item import VaultItemView, _ApStatePanel, _no_crack
 from wifit3.ui.screens.vault.key_row import DeleteKeyPressed
 from wifit3.ui.screens.vault.rows import date_text
 from wifit3.ui.screens.vault.modals.add_credential import ManualCredential
-from wifit3.ui.screens.vault.modals.import_problems import ImportProblemsModal
+from wifit3.persist.capture_import import CaptureImport
+from wifit3.ui.screens.vault.modals.import_results import ImportResultsModal
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
@@ -285,7 +286,7 @@ async def test_a_vault_change_refreshes_the_drawer_under_a_modal(mocker):
     async with app.run_test() as pilot:
         drawer = _DrawerWithoutWidgets()
         await app.push_screen(drawer)
-        await app.push_screen(ImportProblemsModal("", []))
+        await app.push_screen(ImportResultsModal(CaptureImport()))
         vault_changed = mocker.patch.object(drawer, "vault_changed")
 
         app.vault.notify_changed(None)
@@ -433,7 +434,8 @@ async def test_an_import_without_problems_says_what_it_imported(tmp_path_factory
         drawer._import_paths_chosen([selected_dir])
         await app.workers.wait_for_complete()
         await pilot.pause(0)
-        assert app.notified[-1] == "Imported 0 handshakes, 1 PMKIDs & 0 keys (1 APs) from 1 files"
+        assert app.notified[-1] == ("[bold]Imported 1 file:[/]\n  [$text-success]1 Access Point[/]\n"
+                                    "  [$text-success]1 PMKID[/]")
         assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").hashlines
 
 
@@ -447,6 +449,6 @@ async def test_an_import_with_problems_lists_them_in_a_modal(tmp_path_factory):
         drawer._import_paths_chosen([selected_dir])
         await app.workers.wait_for_complete()
         await pilot.pause(0)
-        assert isinstance(app.screen, ImportProblemsModal)
+        assert isinstance(app.screen, ImportResultsModal)
         problems = str(app.screen.query_one("VerticalScroll > Static", Static).render())
         assert problems == f"{selected_dir.name}/a.hc22000:2 - not a hashline"

@@ -38,15 +38,6 @@ class CaptureImport(Hc22000Import):
     keys: int = 0
     nicknames: int = 0
 
-    @property
-    def summary(self) -> str:
-        """``Imported 41 handshakes, 12 PMKIDs & 3 keys (38 APs) from 120 files, 9 already in Vault``."""
-        text = (f"Imported {self.handshakes} handshakes, {self.pmkids} PMKIDs & {self.keys} keys "
-                f"({len(self.bssids)} APs) from {self.files} files")
-        if self.duplicates:
-            text += f", {self.duplicates} already in Vault"
-        return text
-
     def add_paths(self, paths: list[Path]) -> None:
         captures_dir = Path(Config.captures_dir).resolve()
         for path in paths:
@@ -194,6 +185,7 @@ class CaptureImport(Hc22000Import):
     def _add_pcap(self, name: str, data: bytes) -> None:
         """Each 4-way's and PMKID's hashline, dated by its frame; the 4-ways are kept for _write_pcaps."""
         found = False
+        ssid_missing = False
         for ap in read_access_points(name, pcap_frames(data)):
             pairs_by_client = {hs.client_mac: hs.valid_pairs_by_instance() for hs in ap.handshakes.values()}
             crackable = [hs for hs in ap.handshakes.values() if pairs_by_client[hs.client_mac] or hs.pmkid]
@@ -201,7 +193,7 @@ class CaptureImport(Hc22000Import):
                 continue
             found = True
             if not ap.ssid_bytes:
-                self.problems.append((name, f"AP {ap.bssid} has no SSID, skipped"))
+                ssid_missing = True
                 continue
             for hs in crackable:
                 for anonce, pair in pairs_by_client[hs.client_mac].items():
@@ -218,6 +210,8 @@ class CaptureImport(Hc22000Import):
                     self.add_hashline(pmkid, parse_hc22000(pmkid), int(date))
         if not found:
             self.problems.append((name, "no handshakes or PMKIDs found"))
+        if ssid_missing:
+            self.problems.append((name, "SSID not found in beacon/probe/assoc frames"))
 
     def _write_pcaps(self) -> None:
         """Each 4-way the AP has no pcap of, in its own pcap named by its first frame's time."""
