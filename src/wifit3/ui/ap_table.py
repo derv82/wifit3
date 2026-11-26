@@ -49,6 +49,7 @@ class APRow:
     clients: int = 0
     encryption: Optional[EncryptionSummary] = None
     wps: bool = False
+    wps_version: Optional[str] = None
     wps_locked: bool = False
     chipset: str = ""
     identity: str = ""
@@ -123,7 +124,8 @@ def _render_encryption(row: APRow, fg: str) -> Text:
 def _render_wps(row: APRow, fg: str) -> Text:
     if not row.wps:
         return Text("", style=fg)
-    return Text("WPS 🔒" if row.wps_locked else "WPS", style=fg)
+    label = row.wps_version or "?"
+    return Text(f"{label} 🔒" if row.wps_locked else label, style=fg)
 
 
 def _render_identity(row: APRow, fg: str) -> Text:
@@ -182,7 +184,13 @@ def _encryption_key(row: APRow, reverse: bool) -> tuple:
 
 def _wps_key(row: APRow, reverse: bool) -> tuple:
     rank = (1 if row.wps_locked else 2) if row.wps else 0
-    return (_sink_empty(rank == 0, reverse), rank,
+    if row.wps_version == "2.0":
+        version_rank = 2
+    elif row.wps_version == "1.0":
+        version_rank = 1
+    else:
+        version_rank = 0
+    return (_sink_empty(rank == 0, reverse), rank, version_rank,
             _secondary_signal(row, reverse), row.bssid)
 
 
@@ -225,7 +233,7 @@ COLUMNS: Tuple[Column, ...] = (
            _render_clients, _clients_key, right_aligned=True),
     Column("encryption", "ENCRYPT", ("encryption", "is_stale"),
            _render_encryption, _encryption_key),
-    Column("wps", "WPS", ("wps", "wps_locked", "is_stale"),
+    Column("wps", "WPS", ("wps", "wps_version", "wps_locked", "is_stale"),
            _render_wps, _wps_key),
     Column("chipset", "CHIPSET", ("chipset", "is_stale"),
            _render_chipset, _chipset_key),

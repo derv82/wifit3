@@ -334,6 +334,7 @@ class ScannerView(Screen):
             clients=clients,
             encryption=EncryptionSummary.from_ap(ap),
             wps=ap.wps,
+            wps_version=ap.wps_version,
             wps_locked=ap.wps_locked,
             chipset=ap.chipset or "",
             identity=ap.identity.summary,
