@@ -2,7 +2,12 @@
 4-way handshake (or PMKID) they assemble into.
 """
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional, List, Set, Dict, Tuple
+from typing import TYPE_CHECKING, ClassVar, Optional, List, Set, Dict, Tuple
+
+from wifit3.dot11.packet import EapolPacket
+
+if TYPE_CHECKING:
+    from wifit3.crack.handshake import CrackablePair
 
 
 @dataclass
@@ -30,6 +35,25 @@ class HandshakeMessage:
     mdid: bytes = b""
     r0khid: bytes = b""
     r1khid: bytes = b""
+
+    @classmethod
+    def from_packet(cls, packet: EapolPacket, akm: Optional[int], timestamp: float) -> "HandshakeMessage":
+        """``packet`` as a stored message; ``akm`` is the negotiated AKM (the frame's own RSN IE, else
+        the client's association). The caller checks ``packet.replay_counter`` is set."""
+        return cls(
+            raw=packet.raw,
+            msg_num=packet.msg_num,
+            replay_hex=packet.replay_counter.hex(),
+            nonce=packet.nonce or b"",
+            mic=packet.mic or b"",
+            eapol_payload=packet.payload,
+            timestamp=timestamp,
+            akm=akm,
+            akm_selection_rejected=packet.akm_selection_rejected,
+            mdid=packet.mdid,
+            r0khid=packet.r0khid,
+            r1khid=packet.r1khid,
+        )
 
 
 @dataclass
@@ -85,13 +109,13 @@ class Handshake:
         pairs = self._crackable_pairs()
         return self._ordered(pairs[0]) if pairs else None
 
-    def valid_pairs_by_instance(self) -> Dict[bytes, Tuple[HandshakeMessage, HandshakeMessage]]:
+    def valid_pairs_by_instance(self) -> Dict[bytes, "CrackablePair"]:
         """Each crackable handshake instance (keyed by its ANonce, fresh per
-        association) mapped to its (lower-msg, higher-msg) pair. Gated on a
-        beacon: we don't announce a capture for an AP we've never heard beacon."""
+        association) mapped to its pair. Gated on a beacon: we don't announce a
+        capture for an AP we've never heard beacon."""
         if not self.beacon_frame:
             return {}
-        return {p.instance_key: self._ordered(p) for p in self._crackable_pairs()}
+        return {p.instance_key: p for p in self._crackable_pairs()}
 
     @property
     def complete_instances(self) -> int:

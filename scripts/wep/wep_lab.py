@@ -209,7 +209,7 @@ async def fake_auth(iface, tap: Tap, bssid: bytes, our_mac: bytes, essid: str,
     for attempt in range(3):
         await iface.send_no_wait(auth_req(bssid, our_mac))
         await asyncio.sleep(0.1)
-        await iface.send_no_wait(assoc_req(bssid, our_mac, essid))
+        await iface.send_no_wait(assoc_req(bssid, our_mac, essid.encode("utf-8")))
         t0 = time.time()
         while time.time() - t0 < 1.2:
             await asyncio.sleep(0.05)

@@ -163,7 +163,7 @@ async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap, wsc_
         await iface.clear_fake_mac()
     if tap is not None:                 # arm the sniffer on the ACTUAL inject MAC (post fake-mac)
         tap.reset(our_mac, str_to_mac(bssid))
-    assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
+    assoc = Association(iface, bssid, ssid.encode("utf-8"), channel, our_mac=our_mac,
                         assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, wsc_2_0))
     assoc.start()
     # auto_ack is now armed via set_fake_mac (active monitor) above; WlanTransport no longer

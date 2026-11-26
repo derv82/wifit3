@@ -4,6 +4,8 @@ import os
 import signal
 import sys
 import threading
+import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, List, Optional, Set
 
@@ -36,7 +38,7 @@ from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
 from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 from .screens.new_device import NewDeviceDialog
-from .screens.vault_drawer import VaultDrawer
+from .screens.vault.drawer import VaultDrawer
 from .clipboard import copy_copyq_text, copy_macos_text, copy_windows_text
 from .pref import PreferencesModal
 from .themes import register_app_themes
@@ -48,6 +50,8 @@ Header.ALLOW_SELECT = False
 HeaderTitle.ALLOW_SELECT = False
 HeaderIcon.ALLOW_SELECT = False
 HeaderClock.ALLOW_SELECT = False
+
+VAULT_TABLE_RELOAD_DELAY_S = 0.2
 
 
 class WifiteApp(App):
@@ -178,9 +182,14 @@ class WifiteApp(App):
         self.scanner_view = ScannerView()
         self.focus_view = FocusViewV2()
         self.vault = Vault()
+        if self._config_error is None:
+            try:
+                self.vault.move_nicknames_to_config()
+            except ConfigError as e:
+                self._config_error = str(e)
         self._vault_notices_lock = threading.Lock()
         self._vault_refresh_pending = False     # a table refresh is scheduled for the notices so far
-        self._vault_full_refresh = False        # one of them was a full refresh (BSSID None)
+        self._vault_last_notice = 0.0
         self.vault.subscribe(self._vault_changed)
         self.vault.set_probed_ssids_source(self._probed_ssids)
 
@@ -306,7 +315,10 @@ class WifiteApp(App):
             pbc_ignore_reasons = []
             if isinstance(event, PbcWindowOpened) and ap is not None:
                 pbc_ignore_reasons = self.pbc_ignore_reasons(ap)
-            self.toasts.ap_event(event, guessid, pbc_ignore_reasons)
+            toast_event = event
+            if ap is not None:
+                toast_event = replace(event, ssid=ap.ssid_displayable)
+            self.toasts.ap_event(toast_event, guessid, pbc_ignore_reasons)
             for screen in self.screen_stack:
                 screen.post_message(self.ApEventDetected(event))
 
@@ -348,28 +360,34 @@ class WifiteApp(App):
         self._job_status = {k: v for k, v in self._job_status.items() if k in live}
 
     def _vault_changed(self, bssid: Optional[str]) -> None:
-        """Any thread: one table refresh per tick, however many notices the Vault sends. None once the
-        app has stopped (a PSK propagation can finish after quit)."""
+        """Any thread: the table reloads once notices stop for VAULT_TABLE_RELOAD_DELAY_S. Nothing while the
+        app isn't running (a save before it starts, or a PSK propagation finishing after quit)."""
+        if not self.is_running:
+            return
         with self._vault_notices_lock:
-            self._vault_full_refresh |= bssid is None
+            self._vault_last_notice = time.monotonic()
             if self._vault_refresh_pending:
                 return
             self._vault_refresh_pending = True
         if threading.current_thread() is threading.main_thread():    # the app runs on the main thread
-            self.call_later(self._refresh_vault_table)
-        elif self.is_running:
-            self.call_from_thread(self.call_later, self._refresh_vault_table)
+            self.set_timer(VAULT_TABLE_RELOAD_DELAY_S, self._refresh_vault_table)
+        else:
+            self.call_from_thread(self.set_timer, VAULT_TABLE_RELOAD_DELAY_S, self._refresh_vault_table)
 
     def _refresh_vault_table(self) -> None:
-        """Reload the vault table if its drawer is open."""
+        """Reload the vault table if its drawer is open, under a modal too; wait again if a notice came in meanwhile."""
         with self._vault_notices_lock:
-            full_refresh, self._vault_full_refresh = self._vault_full_refresh, False
+            quiet_for = time.monotonic() - self._vault_last_notice
+            if quiet_for < VAULT_TABLE_RELOAD_DELAY_S:
+                self.set_timer(VAULT_TABLE_RELOAD_DELAY_S - quiet_for, self._refresh_vault_table)
+                return
             self._vault_refresh_pending = False
-        if isinstance(self.screen, VaultDrawer):
-            try:
-                self.screen.vault_changed(full_refresh)
-            except Exception:
-                logger.debug("Vault table refresh skipped", exc_info=True)
+        for screen in self.screen_stack:
+            if isinstance(screen, VaultDrawer):
+                try:
+                    screen.vault_changed()
+                except Exception:
+                    logger.debug("Vault table refresh skipped", exc_info=True)
 
     def _toast_job(self, job: JobState) -> None:
         if job.status == ToolStatus.SUCCESS:

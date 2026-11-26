@@ -1,3 +1,4 @@
+from wifit3.dot11.packet import EapolPacket
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.models.access_point import eap_only, no_passphrase
 from wifit3.models.jobs import JobAction, ToolResult, ToolStatus
@@ -21,9 +22,8 @@ def test_access_point_model_defaults():
 
 
 def test_is_hidden():
-    """Hidden until we hold a usable SSID: None and the '<hidden>' placeholder both count."""
+    """Hidden until we hold a usable SSID's bytes."""
     assert AccessPoint(bssid="00:11:22:33:44:55").is_hidden is True
-    assert AccessPoint(bssid="00:11:22:33:44:55", ssid="<hidden>").is_hidden is True
     assert AccessPoint(bssid="00:11:22:33:44:55", ssid="").is_hidden is True
     assert AccessPoint(bssid="00:11:22:33:44:55", ssid="Rai2.4").is_hidden is False
 
@@ -137,6 +137,21 @@ def test_handshake_is_complete():
     # A matching M2 (same replay counter) completes the pair
     hs.messages.append(_eapol(2, replay=5))
     assert hs.is_complete
+
+
+def test_handshake_message_from_packet_copies_every_field():
+    packet = EapolPacket(
+        type="eapol", type_id=2, subtype_id=8, bssid="02:00:00:00:00:01", source="02:00:00:00:00:02",
+        dest="02:00:00:00:00:01", to_ds=True, from_ds=False, rssi=-40, raw=b"frame",
+        msg_num=2, replay_counter=bytes.fromhex("0000000000000005"), nonce=b"\x22" * 32,
+        mic=b"\x11" * 16, payload=b"payload", akm=6, akm_selection_rejected=True,
+        mdid=b"md", r0khid=b"r0", r1khid=b"r1",
+    )
+    assert HandshakeMessage.from_packet(packet, 2, 100.25) == HandshakeMessage(
+        raw=b"frame", msg_num=2, replay_hex="0000000000000005", nonce=b"\x22" * 32,
+        mic=b"\x11" * 16, eapol_payload=b"payload", timestamp=100.25, akm=2,
+        akm_selection_rejected=True, mdid=b"md", r0khid=b"r0", r1khid=b"r1",
+    )
 
 
 def test_vendor_akm_disqualifies_eap_only_and_no_passphrase():

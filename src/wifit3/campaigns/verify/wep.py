@@ -46,7 +46,7 @@ class VerifyWepCampaign(VerifyCampaign):
             self._log_step("WEP data decrypted")
             return VerifyOutcome.VERIFIED, None
 
-        association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
+        association = Association(iface, bssid, ap.ssid_bytes or b"", ap.channel, our_mac=our_mac,
                                   should_stop=lambda: self.stopped,
                                   beacon_frame=ap.last_beacon_frame)
         association.start()

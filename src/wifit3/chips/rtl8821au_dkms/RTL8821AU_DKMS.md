@@ -41,7 +41,8 @@ normal chip like the AWUS036ACS.
 RCR; all 3 cold-boot pcaps show 8 bulk-IN submits ahead of `RCR=0x9000382F`. `RxReaderThread`
 starts before `enter_monitor` to match.
 
-**Claim interface 0 before the first EP0 transfer (Windows).** Unclaimed, libusb/WinUSB claims and
+**Claim the WLAN interface before the first EP0 transfer (Windows).** It is the vendor-class (0xFF)
+interface: 0 on single-interface parts, 2 on the multi-function 0x0820/0x0823 (0-1 are Bluetooth). Unclaimed, libusb/WinUSB claims and
 releases it around every control transfer; that churn intermittently fails with `[170] The
 requested resource is in use` (pyusb: `Entity not found`), worst when the RX reader's first read
 claims it concurrently. Measured on one Windows host: 12/50 bring-ups failed unclaimed, 0/100 claimed.

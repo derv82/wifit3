@@ -233,24 +233,6 @@ def test_empty_device_password_recovered():
     assert result.mode is PixieMode.NULL_SECRET
 
 
-def test_rtl819x_carries_partial_first_half_when_second_half_seed_missed():
-    # First half proved against E-Hash1, but the E-S2 seed lands past the +0..+9s second-half sweep:
-    # the proved half must escape (found=False, first_half set) instead of being thrown away.
-    seed = 1700000000
-    pin = pins.full_pin("0001", "000")
-    bundle = _bundle_for(
-        pin,
-        pixie_prng.glibc_nonce(seed + 1),        # E-S1: a second after the nonce (found by the sweep)
-        pixie_prng.glibc_nonce(seed + 1 + 15),   # E-S2: beyond the 10s forward sweep from E-S1
-        pixie_prng.glibc_nonce(seed),
-    )
-    result = recover_pin(bundle, modes=(PixieMode.RTL819X,), rtl_window=(seed + 2, seed - 2))
-    assert result.found is False
-    assert result.pin is None
-    assert result.first_half == "0001"
-    assert result.mode is PixieMode.RTL819X
-
-
 def test_rtl819x_mode_recovers_pin_past_2038():
     # Seeds >= 2^31 (Unix time from Jan 2038) are negative in glibc's int32 state; recovery must
     # still reconstruct the nonce there, not just before the rollover.

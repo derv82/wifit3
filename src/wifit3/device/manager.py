@@ -407,6 +407,9 @@ class DeviceManager:
         except OSError as e:
             logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
+        except Exception as e:
+            logger.exception("%s: bring-up failed", device_id.chipset)
+            return BringupResult.failed(f"{device_id.chipset}: bring-up failed: {e}")
 
         device_id = await self.setup.install(device_id, self.prompter)
         if device_id is None:
@@ -421,6 +424,9 @@ class DeviceManager:
         except OSError as e:
             logger.exception("%s: USB error during bring-up", device_id.chipset)
             return BringupResult.failed(self._usb_fault_message(device_id, e))
+        except Exception as e:
+            logger.exception("%s: bring-up failed", device_id.chipset)
+            return BringupResult.failed(f"{device_id.chipset}: bring-up failed: {e}")
 
     async def uninstall(self, device_id) -> SetupResult:
         """Reverse a prior setup for ``device_id`` (the splash's ✕ button). Shows the progress modal

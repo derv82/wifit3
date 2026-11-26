@@ -9,9 +9,13 @@ rotate the MAC + retry when the AP stays silent (no M1).
 from types import SimpleNamespace
 from wifit3.dot11.parser import WlanFrameParser
 
+import pytest
+
 from wifit3.campaigns.pmkid import PmkidFail, PmkidHarvestAttack
 from wifit3.dot11.ie import force_psk_akm
+from wifit3.dot11.mac import BROADCAST_MAC, mac_header
 from wifit3.models import AccessPoint
+from wifit3.wlan.sink import WlanSink
 
 _BSSID = "aa:bb:cc:dd:ee:01"
 _BSSID_B = bytes.fromhex("aabbccddee01")
@@ -249,3 +253,22 @@ def test_build_deauth_frame():
     assert f[16:22] == _BSSID_B                                # addr3 = AP
     assert f[24:26] == b"\x03\x00"                             # reason 3 = STA leaving
     assert len(f) == 26
+
+
+@pytest.mark.parametrize("ssid_element", [
+    pytest.param(b"\x00\x05Caf\xc3\xa9", id="utf-8"),
+    pytest.param(b"\x00\x04Caf\xe9", id="latin-1"),
+])
+async def test_assoc_req_sends_the_beacons_ssid_element(ssid_element):
+    rsn_psk = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
+    beacon = (mac_header(b"\x80\x00", BROADCAST_MAC, _BSSID_B, _BSSID_B) + bytes(8) + bytes.fromhex("64001104")
+              + ssid_element + b"\x01\x01\x82" + rsn_psk)
+    sink = WlanSink()
+    sink.update(WlanFrameParser.parse_80211_frame(beacon, -40), "test")
+    [ap] = sink.get_access_points()
+    iface = _FakeIface(deliver_m1=True, pmkid=bytes(range(16)))
+    attack = PmkidHarvestAttack(iface, ap, m1_timeout=0.05)
+    await attack._loop()
+    await attack.teardown()
+    [assoc_req] = _assoc_reqs(iface)
+    assert ssid_element in assoc_req

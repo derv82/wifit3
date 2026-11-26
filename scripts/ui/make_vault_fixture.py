@@ -9,6 +9,7 @@ from typing import NamedTuple
 from wifit3.crack.hc22000_format import hashline_id
 from wifit3.crack.wpa_psk import pmkid
 from wifit3.dot11.eapol import eapol_key, set_mic
+from wifit3.dot11.mac import BROADCAST_MAC, mac_header
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic
 from wifit3.persist.common import bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
@@ -71,11 +72,15 @@ class ApFilesWriter:
         return f"{safe_ssid(self.ssid)}_{bssid_to_dashed(self.bssid)}"
 
     def add_handshake(self, psk: str, client: str, epoch: int) -> None:
-        """An M1+M2 pcap and its M2+M3 hashline, which ``psk`` cracks."""
+        """A beacon+M1+M2 pcap and its M2+M3 hashline, which ``psk`` cracks."""
         messages = m1_m2(psk, self.ssid, self.bssid, client, self.rng)
         aa, spa = mac_bytes(self.bssid), mac_bytes(client)
+        ssid = self.ssid.encode()
+        beacon = (mac_header(b"\x80\x00", BROADCAST_MAC, aa, aa) + bytes(8) + bytes.fromhex("64001104")
+                  + bytes([0, len(ssid)]) + ssid + b"\x01\x01\x82" + RSN_IE)
         write_pcap(self.captures_dir / f"{self._stem()}_{epoch}_handshake.pcap",
-                   [(data_frame(aa, spa, messages.m1), epoch), (data_frame(aa, spa, messages.m2), epoch + 0.01)])
+                   [(beacon, epoch), (data_frame(aa, spa, messages.m1), epoch),
+                    (data_frame(aa, spa, messages.m2), epoch + 0.01)])
         self._add_line(f"WPA*02*{messages.mic.hex()}*{aa.hex()}*{spa.hex()}*{self.ssid.encode().hex()}"
                        f"*{messages.anonce.hex()}*{messages.m2_unsigned.hex()}*{_M2_M3_NONCE_CORRECTED}", epoch)
 

@@ -27,7 +27,7 @@ sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
 from wifit3.chips.rtl8188ftv_dkms import rx
-from wifit3.dot11.packet import BeaconPacket
+from wifit3.dot11.packet import BeaconPacket, ProbeResponsePacket
 from wifit3.dot11.parser import WlanFrameParser
 
 LINKTYPE_IEEE802_11 = 105
@@ -76,18 +76,16 @@ def _mismatches(packet, row: list[str]) -> list[str]:
                                ("da", packet.dest, da)):
         if theirs and ours != theirs:
             found.append(f"{name} {ours} vs tshark {theirs}")
-    if isinstance(packet, BeaconPacket) and packet.ssid != _tshark_ssid(ssid):
+    if isinstance(packet, (BeaconPacket, ProbeResponsePacket)) and packet.ssid != _tshark_ssid(ssid):
         found.append(f"ssid {packet.ssid!r} vs tshark {ssid!r}")
     return found
 
 
 def _tshark_ssid(field: str) -> str | None:
     """tshark's SSID field (hex bytes; ``<MISSING>`` for a zero-length IE) in the parser's
-    text form: ``<hidden>`` when empty, UTF-8 with undecodable bytes dropped."""
-    if not field:
+    text form: None when empty, UTF-8 with undecodable bytes dropped."""
+    if not field or field == "<MISSING>":
         return None
-    if field == "<MISSING>":
-        return "<hidden>"
     return bytes.fromhex(field.replace(":", "")).decode("utf-8", errors="ignore")
 
 

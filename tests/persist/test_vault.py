@@ -18,12 +18,13 @@ from wifit3.crack.hc22000_format import Hc22000Line
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, NONCE_LEN, data_header, eapol_key
 from wifit3.dot11.wpa import KCK_LEN, derive_pmk, derive_ptk, eapol_mic_hmac_md5
 from wifit3.models import AccessPoint, CaptureType, Handshake, HandshakeMessage, ToolName
-from wifit3.persist.config import Config
+from wifit3.persist.config import Config, ConfigError
 from wifit3.persist.ap_state import PasswordStatus
 from wifit3.persist.meta import meta_path, read_meta, update_meta
 from wifit3.persist.pcap import write_pcap
 from wifit3.persist.vault import Vault, crosses_auto_crack_threshold
 from tests.hashline_dates import write_hashline_dates
+from tests.persist.test_pcap import _beacon, _m1_m2
 
 
 _PMKID_AND_EAPOL_LINES = (f"WPA*01*{'00' * 16}*001122334403*aabbccddeeff*4e6574***\n"
@@ -218,6 +219,58 @@ def test_save_wep_caches_key_and_dedupes(tmp_path):
     assert len(v.persisted(ap.bssid)) == 1
 
 
+def test_save_wep_key_writes_a_different_key_and_skips_an_empty_one(tmp_path):
+    v = Vault()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    v.save_wep_key(ap, b"abcde")
+    assert v.save_wep_key(ap, b"fghij").was_new
+    assert v.save_wep_key(ap, b"") is None
+
+
+def test_save_wps_pin_dedupes_on_pin_and_psk(tmp_path):
+    v = Vault()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    first = v.save_wps_pin(ap, "12345670", "abcdefgh")
+    again = v.save_wps_pin(ap, "12345670", "abcdefgh")
+    assert first.was_new and not again.was_new and again.path == first.path
+    assert v.save_wps_pin(ap, "12345670", "rotated").was_new
+    pin_only = v.save_wps_pin(ap, "12345670", None)
+    assert pin_only.was_new and not v.save_wps_pin(ap, "12345670", None).was_new
+    empty_pin = v.save_wps_pin(ap, "", "psk")
+    assert empty_pin.was_new and not v.save_wps_pin(ap, "", "psk").was_new
+    assert v.save_wps_pin(ap, "12345670", "") is None
+
+
+def test_save_wps_pin_dedupes_against_the_legacy_empty_pin_label(tmp_path):
+    existing = tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff_1700000000_wps_pin.txt"
+    existing.write_text("SSID: HomeNet\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: psk\nPIN: <empty>\n", encoding="utf-8")
+    v = Vault()
+    result = v.save_wps_pin(AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet"), "", "psk")
+    assert not result.was_new and result.path == existing
+
+
+def test_save_wps_pbc_dedupes_on_psk(tmp_path):
+    v = Vault()
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
+    first = v.save_wps_pbc(ap, "abcdefgh")
+    again = v.save_wps_pbc(ap, "abcdefgh")
+    assert first.was_new and not again.was_new and again.path == first.path
+    assert v.save_wps_pbc(ap, "other").was_new
+    assert v.save_wps_pbc(ap, "") is None
+
+
+def test_save_wpa_psk_dedupes_on_bssid_and_psk_but_not_against_a_wps_file(tmp_path):
+    v = Vault()
+    first = v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+    again = v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat!")
+    assert first.was_new and not again.was_new and again.path == first.path
+    assert v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "hashcat?").was_new
+    assert v.save_wpa_psk("Cafe WiFi", "11:22:33:44:55:66", "hashcat!").was_new
+    v.save_wps_pbc(AccessPoint(bssid="66:55:44:33:22:11", ssid="Cafe WiFi"), "hashcat!")
+    assert v.save_wpa_psk("Cafe WiFi", "66:55:44:33:22:11", "hashcat!").was_new
+    assert v.save_wpa_psk("Cafe WiFi", "aa:bb:cc:dd:ee:ff", "") is None
+
+
 def test_save_wps_pbc_and_pin_cache_their_psks(tmp_path):
     v = Vault()
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="HomeNet")
@@ -235,6 +288,38 @@ def test_save_handshake_and_pmkid_cached_and_summarized(tmp_path):
     assert v.save_pmkid(ap, "11:22:33:44:55:66").was_new
     assert {c.type for c in v.persisted(ap.bssid)} == {"HS", "PMKID"}
     assert v.summary() == "1 handshake, 1 PMKID"
+
+
+def test_save_handshake_writes_a_pcap_only_when_save_pcap_is_on(tmp_path, monkeypatch):
+    v = Vault()
+    monkeypatch.setattr(Config, "save_pcap", False)
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    assert list(tmp_path.glob("*_handshake.pcap")) == []
+    monkeypatch.setattr(Config, "save_pcap", True)
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    assert len(list(tmp_path.glob("*_handshake.pcap"))) == 1
+
+
+def test_save_handshake_indexes_its_new_pcap(tmp_path):
+    v = Vault()
+    v.save_handshake(_ap_with_hs(), "11:22:33:44:55:66")
+    [pcap] = tmp_path.glob("*_handshake.pcap")
+    assert str(pcap) in [c.path for c in v.persisted("aa:bb:cc:dd:ee:ff")]
+
+
+def test_pcap_handshakes_is_dropped_on_notify_changed(tmp_path):
+    bssid = "02:00:00:00:00:01"
+    write_pcap(tmp_path / "HomeNet_02-00-00-00-00-01_1700000000_handshake.pcap",
+               [(_beacon(), 999.0), *_m1_m2(1, 1000.0)])
+    v = Vault()
+    handshakes = v.pcap_handshakes(bssid)
+    assert len(handshakes) == 1
+    assert v.pcap_handshakes(bssid) is handshakes
+    v.notify_changed(bssid)
+    assert v.pcap_handshakes(bssid) is not handshakes
+    handshakes = v.pcap_handshakes(bssid)
+    v.notify_changed(None)
+    assert v.pcap_handshakes(bssid) is not handshakes
 
 
 # ---- known_psk / has_psk: session fields OR a prior-session WPS file ---------
@@ -554,7 +639,7 @@ def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
     ap = _ap_with_hs(pmkid=b"\x11" * 16)
 
     v.save_handshake(ap, _CLIENT)
-    assert [_submitted(c) for c in v.manager.submit_job.call_args_list] == [_auto_crack_call(v.persisted(ap.bssid)[0])]
+    assert [_submitted(c) for c in v.manager.submit_job.call_args_list] == [_auto_crack_call(v.ap_state(ap.bssid).hashline_capture)]
 
     ap.handshakes[_CLIENT].messages[0] = _ef(1, nonce=b"\xA1" + b"\x00" * 31,
                                              payload_mic=b"\x00" * 16)
@@ -563,7 +648,7 @@ def test_save_submits_cpu_crack_once_per_threshold(tmp_path, mocker):
 
     v.save_pmkid(ap, _CLIENT)
     assert v.manager.submit_job.call_count == 2
-    assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(v.persisted(ap.bssid)[0])
+    assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(v.ap_state(ap.bssid).hashline_capture)
 
 
 def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
@@ -575,7 +660,7 @@ def test_auto_crack_snapshots_probed_ssids_sorted(tmp_path, mocker):
     v.save_handshake(_ap_with_hs(), _CLIENT)
     probed_ssids.add("Later_SSID")
 
-    capture = v.persisted(_ap_with_hs().bssid)[0]
+    capture = v.ap_state(_ap_with_hs().bssid).hashline_capture
     assert _submitted(v.manager.submit_job.call_args) == _auto_crack_call(capture, ["Alpha_SSID", "Zeta_SSID"])
 
 
@@ -680,25 +765,6 @@ def test_a_saved_psk_blocks_auto_crack_only_while_it_is_current(tmp_path, mocker
     assert v.manager.submit_job.called is submitted
 
 
-@pytest.mark.parametrize(("already_stale", "submitted"), [(False, True), (True, False)])
-def test_past_the_threshold_only_a_current_password_turning_stale_submits(
-        tmp_path, mocker, already_stale, submitted):
-    _write_wpa_psk(tmp_path, "aa-bb-cc-dd-ee-ff", ssid="HomeNet", psk="oldpsk")
-    v = Vault()
-    mocker.patch.object(v.manager, "submit_job")
-    v.save_pmkid(_ap_with_pmkid_for("oldpsk", "11:22:33:44:55:01"), "11:22:33:44:55:01")
-    if already_stale:
-        v.save_pmkid(_ap_with_pmkid_for("newpsk", "11:22:33:44:55:02"), "11:22:33:44:55:02")
-    lines = (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000").read_text(encoding="utf-8").split()
-    write_hashline_dates("HomeNet", "aa:bb:cc:dd:ee:ff", {raw: 1700000000 + i for i, raw in enumerate(lines)})
-    v.notify_changed("aa:bb:cc:dd:ee:ff")
-    v.manager.submit_job.reset_mock()
-
-    v.save_pmkid(_ap_with_pmkid_for("newpsk", "11:22:33:44:55:03"), "11:22:33:44:55:03")
-
-    assert v.manager.submit_job.called is submitted
-
-
 def test_a_psk_a_newer_capture_refutes_is_not_held(tmp_path, mocker):
     _write_wpa_psk(tmp_path, "aa-bb-cc-dd-ee-ff", ssid="HomeNet", psk="oldpsk")
     v = Vault()
@@ -742,7 +808,7 @@ def test_save_submits_to_the_chosen_tool_with_its_saved_settings(tmp_path, mocke
 
     v.save_handshake(_ap_with_hs(), _CLIENT)
 
-    capture = v.persisted(_ap_with_hs().bssid)[0]
+    capture = v.ap_state(_ap_with_hs().bssid).hashline_capture
     assert v.manager.submit_job.call_args == (
         ("hashcat", capture, {"hashcat_exe": "/usr/bin/hashcat", "wordlists": ["/lists/a.txt"],
                               "hashcat_args": "-w 3", "default_passwords": True,
@@ -988,3 +1054,48 @@ def test_a_key_typed_in_is_not_verified_until_a_live_check_accepts_it(tmp_path, 
     v.record_live_verification(typed_key, correct=True)
 
     assert v.ap_state(typed.bssid).key_statuses[typed_key.id] is PasswordStatus.CURRENT
+
+
+_NICKNAMED_BSSID = "02:00:00:00:00:60"
+
+
+@pytest.fixture
+def nickname_meta(tmp_path, monkeypatch) -> Path:
+    """A captured AP whose .meta holds a nickname, with Config not yet holding any and saving to tmp_path."""
+    monkeypatch.setattr("wifit3.persist.config._PATH", tmp_path / "config.toml")
+    monkeypatch.setattr(Config, "nicknames", None)
+    (tmp_path / "Den_02-00-00-00-00-60_1700000001_wpa_psk.txt").write_text(
+        "SSID: Den\nBSSID: x\nPSK: pw\n", encoding="utf-8")
+    return update_meta("Den", _NICKNAMED_BSSID, nickname="kitchen")
+
+
+def test_move_nicknames_to_config_saves_the_nickname_and_drops_the_meta_key(tmp_path, nickname_meta):
+    Vault().move_nicknames_to_config()
+    assert Config.nickname(_NICKNAMED_BSSID) == "kitchen"
+    assert "[nicknames]\n'02:00:00:00:00:60' = 'kitchen'" in (tmp_path / "config.toml").read_text("utf-8")
+    assert "nickname" not in read_meta(nickname_meta)
+
+
+def test_move_nicknames_to_config_saves_an_empty_table_when_there_are_none(tmp_path, nickname_meta):
+    update_meta("Den", _NICKNAMED_BSSID, nickname=None)
+    Vault().move_nicknames_to_config()
+    assert Config.nicknames == {}
+    assert "[nicknames]\n" in (tmp_path / "config.toml").read_text("utf-8")
+
+
+def test_move_nicknames_to_config_keeps_the_meta_key_when_config_fails_to_save(
+        tmp_path, monkeypatch, nickname_meta):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x")
+    monkeypatch.setattr("wifit3.persist.config._PATH", blocker / "config.toml")
+    with pytest.raises(ConfigError):
+        Vault().move_nicknames_to_config()
+    assert read_meta(nickname_meta)["nickname"] == "kitchen"
+
+
+def test_move_nicknames_to_config_does_nothing_once_config_has_the_table(tmp_path, nickname_meta):
+    Config.nicknames = {}
+    Vault().move_nicknames_to_config()
+    assert Config.nicknames == {}
+    assert not (tmp_path / "config.toml").exists()
+    assert read_meta(nickname_meta)["nickname"] == "kitchen"

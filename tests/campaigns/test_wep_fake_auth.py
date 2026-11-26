@@ -40,7 +40,7 @@ def test_auth_req_is_open_system_seq1(mocker):
 
 
 def test_assoc_req_sets_privacy_and_omits_rsn(mocker):
-    f = assoc_req(BSSID_BYTES, SELF_MAC, "WepNet")
+    f = assoc_req(BSSID_BYTES, SELF_MAC, b"WepNet")
     assert f[0:2] == b"\x00\x00"            # mgmt / Assoc Req subtype
     cap = struct.unpack("<H", f[24:26])[0]
     assert cap & 0x0010                     # Privacy bit (mandatory for WEP)
@@ -52,7 +52,7 @@ def test_assoc_req_sets_privacy_and_omits_rsn(mocker):
 
 
 def test_assoc_req_carries_ssid(mocker):
-    f = assoc_req(BSSID_BYTES, SELF_MAC, "WepNet")
+    f = assoc_req(BSSID_BYTES, SELF_MAC, b"WepNet")
     assert b"WepNet" in f
 
 

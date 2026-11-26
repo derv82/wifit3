@@ -97,7 +97,7 @@ class WpsM1Probe(BaseApProbe):
         our_mac = str_to_mac(our_mac_str) if our_mac_str else random_client_mac()
 
         assoc = Association(
-            iface, ap.bssid.lower(), ap.ssid or "", ap.channel, our_mac=our_mac,
+            iface, ap.bssid.lower(), ap.ssid_bytes or b"", ap.channel, our_mac=our_mac,
             assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, ap.wps_version == "2.0"),
             auth_timeout=0.6,
             assoc_timeout=0.8,

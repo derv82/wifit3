@@ -1,4 +1,5 @@
 import errno
+import itertools
 import logging
 from unittest.mock import MagicMock
 
@@ -9,6 +10,13 @@ import wifit3.chips.rt3070.transport as transport_module
 from wifit3.chips.rt3070 import constants as C
 from wifit3.chips.rt3070.transport import RT3070Transport
 from wifit3.errors import is_device_gone
+
+
+@pytest.fixture(autouse=True)
+def _fake_monotonic_clock(monkeypatch):
+    """Each clock read moves it 10 ms, so the 100 ms retry window runs out without a real wait."""
+    clock = itertools.count(step=0.01)
+    monkeypatch.setattr(transport_module.time, "monotonic", lambda: next(clock))
 
 
 def test_vendor_request_retries_a_failed_transfer():

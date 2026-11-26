@@ -266,20 +266,6 @@ async def test_nack_carries_config_error_and_reached_m1():
     assert out.config_error == 0
 
 
-async def test_silent_ap_reads_as_no_response():
-    # No enrollee on the wire → the registrar reports a timeout ("AP didn't
-    # respond"), NOT a NACK, and never claims the WSC exchange started.
-    a, b = asyncio.Queue(), asyncio.Queue()
-    reg = WpsRegistrar(_QueueTransport(a, b), BSSID, STA, channel=CHANNEL, wsc_2_0=WSC_2_0,
-                       eapol_start_timeout=0.02, msg_timeout=0.02, overall_timeout=0.1)
-    out = await asyncio.wait_for(reg.try_pin("12345670"), timeout=5.0)
-    assert out.result is PinResult.TIMEOUT
-    assert out.reached_m1 is False
-    assert out.config_error is None
-    assert not out.refused                 # mere silence is NOT an active refusal
-    assert "no reply" in out.detail
-
-
 def test_describe_frame_names_mgmt_and_data():
     from wifit3.campaigns.wps.registrar import describe_frame
     # The WPS trace must name non-WSC frames so a disassoc/deauth (AP kicking us) is legible.

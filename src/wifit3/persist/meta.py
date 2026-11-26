@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
 from wifit3.persist.common import bssid_to_colon, bssid_to_dashed, safe_ssid
 from wifit3.persist.config import Config
+
+_meta_lock = threading.RLock()      # Windows can't replace a .meta another thread has open
 
 
 def meta_path(ssid: Optional[str], bssid: str) -> Path:
@@ -76,27 +79,32 @@ def read_bssid_metas(bssid: str) -> list[dict[str, Any]]:
 
 def read_meta(path: Path) -> dict[str, Any]:
     """The file's JSON object, or an empty dict when missing or invalid."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return {}
+    with _meta_lock:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
     return data if isinstance(data, dict) else {}
 
 
-def update_meta(ssid: Optional[str], bssid: str, **fields: Any) -> Path:
+def update_meta(ssid: Optional[str], bssid: str, ssid_bytes: Optional[bytes] = None, **fields: Any) -> Path:
     """Merge ``fields`` into the AP's .meta (a None value removes that key)."""
     path = meta_path(ssid, bssid)
-    data = read_meta(path)
-    data["bssid"] = bssid_to_colon(bssid)
-    if ssid and ssid != "<hidden>":
-        data["ssid"] = ssid
-    _write_meta(path, data, fields)
+    with _meta_lock:
+        data = read_meta(path)
+        data["bssid"] = bssid_to_colon(bssid)
+        if ssid:
+            data["ssid"] = ssid
+        if ssid_bytes:
+            data["ssid_hex"] = ssid_bytes.hex()
+        _write_meta(path, data, fields)
     return path
 
 
 def update_meta_file(path: Path, **fields: Any) -> None:
     """Merge ``fields`` into the .meta at ``path`` (a None value removes that key)."""
-    _write_meta(path, read_meta(path), fields)
+    with _meta_lock:
+        _write_meta(path, read_meta(path), fields)
 
 
 def _write_meta(path: Path, data: dict[str, Any], fields: dict[str, Any]) -> None:

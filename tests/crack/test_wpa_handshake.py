@@ -155,6 +155,43 @@ def test_rehandshake_is_two_instances():
     assert len(wpa.crackable_pairs(hs)) == 2
 
 
+def test_handshake_messages_full_4way_with_m1_retry():
+    m1 = _frame(1, 1, nonce=ANONCE, mic=False, ts=100.000)
+    m1_retry = _frame(1, 1, nonce=ANONCE, mic=False, ts=100.004)
+    m2 = _frame(2, 1, nonce=SNONCE, ts=100.008)
+    m3 = _frame(3, 2, nonce=ANONCE, ts=100.020)
+    m4 = _frame(4, 2, nonce=b"\x00" * 32, ts=100.024)
+    hs = _hs(m1, m1_retry, m2, m3, m4)
+    [pair] = wpa.crackable_pairs(hs)
+    assert wpa.handshake_messages(hs, pair) == [m1, m1_retry, m2, m3, m4]
+
+
+def test_handshake_messages_snonce_answering_several_anonces():
+    # The AP sends a fresh ANonce with each M1 retry; the client keeps one SNonce.
+    anonces = [b"\x31" * 32, b"\x32" * 32, b"\x33" * 32]
+    m1s = [_frame(1, rc, nonce=anonces[rc - 1], mic=False, ts=100.0 + rc) for rc in (1, 2, 3)]
+    m2s = [_frame(2, rc, nonce=SNONCE, ts=100.005 + rc) for rc in (1, 2, 3)]
+    hs = _hs(m1s[0], m2s[0], m1s[1], m2s[1], m1s[2], m2s[2])
+    by_anonce = {p.anonce_frame.nonce: p for p in wpa.crackable_pairs(hs)}
+    assert len(by_anonce) == 3
+    for rc in (1, 2, 3):
+        assert wpa.handshake_messages(hs, by_anonce[anonces[rc - 1]]) == [m1s[rc - 1], m2s[rc - 1]]
+
+
+def test_handshake_messages_excludes_next_association_m4():
+    a_m1 = _frame(1, 1, nonce=ANONCE, mic=False, ts=100.0)
+    a_m2 = _frame(2, 1, nonce=SNONCE, ts=100.01)
+    a_m3 = _frame(3, 2, nonce=ANONCE, ts=100.02)
+    b_m1 = _frame(1, 1, nonce=b"\x55" * 32, mic=False, ts=120.0)
+    b_m2 = _frame(2, 1, nonce=b"\x07" * 32, ts=120.01)
+    b_m3 = _frame(3, 2, nonce=b"\x55" * 32, ts=120.02)
+    b_m4 = _frame(4, 2, nonce=b"\x00" * 32, ts=120.03)
+    hs = _hs(a_m1, a_m2, a_m3, b_m1, b_m2, b_m3, b_m4)
+    by_anonce = {p.anonce_frame.nonce: p for p in wpa.crackable_pairs(hs)}
+    assert wpa.handshake_messages(hs, by_anonce[ANONCE]) == [a_m1, a_m2, a_m3]
+    assert wpa.handshake_messages(hs, by_anonce[b"\x55" * 32]) == [b_m1, b_m2, b_m3, b_m4]
+
+
 def test_describe_flags():
     good = wpa.describe(_frame(2, 5, nonce=SNONCE))
     assert good.has_nonce and good.has_mic and good.eapol_complete and good.useful
@@ -266,7 +303,7 @@ def test_ft_psk_handshake_emits_wpa04_with_ft_identifiers():
     pairs = wpa.crackable_pairs(hs)
     assert len(pairs) == 1
     assert wpa.withheld_capture_label(hs) is None
-    fields = wpa.hc22000_line("FTNet", hs, pairs[0]).split("*")
+    fields = wpa.hc22000_line(b"FTNet", hs, pairs[0]).split("*")
     assert fields[1] == "04" and fields[8] == "80"
     assert fields[9:] == ["1234", b"r0kh.example.test".hex(), "020000000001"]
 
@@ -497,7 +534,7 @@ def test_akm6_eapol_and_pmkid_both_crackable():
 
 def test_hc22000_line_shape():
     hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False), _frame(2, 5, nonce=SNONCE))
-    line = wpa.hc22000_line("TestNet", hs, wpa.crackable_pairs(hs)[0])
+    line = wpa.hc22000_line(b"TestNet", hs, wpa.crackable_pairs(hs)[0])
     parts = line.split("*")
     assert parts[0] == "WPA" and parts[1] == "02"
     assert parts[2] == "11" * 16                 # MIC (from M2)
@@ -511,7 +548,7 @@ def test_reserved_akm_is_not_crackable_and_never_misnamed_sae():
     assert _verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
     assert not hs.is_complete
-    assert hc.eapol_hashlines("Net", hs) == []
+    assert hc.eapol_hashlines(b"Net", hs) == []
     assert _label(hs) == "Unsupported AKM"
     assert wpa.withheld_capture_label(hs) == "Unsupported AKM"
 
@@ -521,7 +558,7 @@ def test_reserved_akm_unknown_selection_offer_is_withheld():
     assert wpa.crackable_pairs(_m1m2(offered=[42])) == []
     assert _verdict(_m1m2(offered=[2, 42])) == "unknown"
     assert wpa.crackable_pairs(_m1m2(offered=[2, 42])) == []
-    assert hc.eapol_hashlines("Net", _m1m2(offered=[2, 42])) == []
+    assert hc.eapol_hashlines(b"Net", _m1m2(offered=[2, 42])) == []
 
 
 def test_vendor_akm_only_is_not_legacy_psk_fallback():
@@ -541,7 +578,7 @@ def test_vendor_akm_pmkid_fallback_is_withheld():
     for offered in ([], [2]):
         hs = _hs_pmkid(offered=offered, vendor=True, m1_key_descriptor_version=2)
         assert wpa.crackable_pmkid_akm(hs) is None
-        assert hc.pmkid_hashline("Net", hs) is None
+        assert hc.pmkid_hashline(b"Net", hs) is None
 
 
 def test_mixed_eap_psk_crackable_only_with_a_proven_psk_selection():
@@ -553,7 +590,7 @@ def test_pmkid_mixed_enterprise_psk_offer_withheld_without_selection():
     hs = _hs_pmkid(offered=[1, 2], m1_key_descriptor_version=2)
     assert wpa.crackable_pmkid_akm(hs) is None
     assert wpa.pmkid_crackable(hs) is False
-    assert hc.pmkid_hashline("Net", hs) is None
+    assert hc.pmkid_hashline(b"Net", hs) is None
     for off in ([2, 42], [42], [2, 8], [2, 4]):
         assert wpa.crackable_pmkid_akm(_hs_pmkid(offered=off, m1_key_descriptor_version=2)) is None, off
 

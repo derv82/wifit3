@@ -61,6 +61,7 @@ class Config:
     scanner_sort_delay: float = 2.0
     silenced_bssids: list[str] = []
     decloaked_ssids: dict[str, str] = {}
+    nicknames: dict[str, str] | None = None     # None: no [nicknames] table yet, .meta nicknames not moved
     hide_silenced: bool = False
     wps_auto_pbc: bool = True
     enable_dfs_channels: bool = False
@@ -90,6 +91,22 @@ class Config:
         return True
 
     @classmethod
+    def nickname(cls, bssid: str) -> str | None:
+        if cls.nicknames is None:
+            return None
+        return cls.nicknames.get(bssid.lower())
+
+    @classmethod
+    def set_nickname(cls, bssid: str, nickname: str) -> None:
+        """Store the AP's nickname; "" clears it."""
+        if cls.nicknames is None:
+            cls.nicknames = {}
+        if nickname:
+            cls.nicknames[bssid.lower()] = nickname
+        else:
+            cls.nicknames.pop(bssid.lower(), None)
+
+    @classmethod
     def load(cls) -> None:
         try:
             data = tomllib.loads(_PATH.read_text("utf-8"))
@@ -116,6 +133,10 @@ class Config:
             cls.decloaked_ssids = {str(bssid).lower(): ssid for bssid, ssid in stored.items()
                                    if isinstance(ssid, str) and ssid
                                    and len(ssid.encode("utf-8")) <= SSID_MAX_OCTETS}
+        stored_nicknames = data.get("nicknames")
+        if isinstance(stored_nicknames, dict):
+            cls.nicknames = {str(bssid).lower(): nickname for bssid, nickname in stored_nicknames.items()
+                             if isinstance(nickname, str) and nickname}
         cls.hide_silenced = bool(data.get("hide_silenced", cls.hide_silenced))
         cls.wps_auto_pbc = bool(data.get("wps_auto_pbc", cls.wps_auto_pbc))
         cls.enable_dfs_channels = bool(data.get("enable_dfs_channels", cls.enable_dfs_channels))
@@ -154,6 +175,10 @@ class Config:
             text += "\n[decloak]\n"
             for bssid, ssid in sorted(cls.decloaked_ssids.items()):
                 text += f"{_fmt(bssid)} = {_fmt(ssid)}\n"
+        if cls.nicknames is not None:
+            text += "\n[nicknames]\n"
+            for bssid, nickname in sorted(cls.nicknames.items()):
+                text += f"{_fmt(bssid)} = {_fmt(nickname)}\n"
         try:
             _PATH.parent.mkdir(parents=True, exist_ok=True)
             _PATH.write_text(text, encoding="utf-8")

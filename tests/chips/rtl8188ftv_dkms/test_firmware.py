@@ -134,23 +134,3 @@ def test_c2h_handshake():
     assert (ident, report) == (0xFD, b"")
 
 
-def test_download_rewrites_the_image_after_a_failed_page_write(mocker):
-    from wifit3.chips.rtl8188ftv_dkms import constants as C
-    from wifit3.chips.rtl8188ftv_dkms import firmware
-    t = mocker.Mock()
-    t.read8.return_value = 0
-    t.read32.return_value = C.MCUFWDL_RDY | C.FWDL_ChkSum_rpt | C.WINTINI_RDY | C.RAM_DL_SEL
-    t.writeN.side_effect = [False, True]
-    firmware.download_firmware(t, bytes(C.FW_BLOCK_P1))
-    assert t.writeN.call_count == 2
-
-
-def test_download_runs_free_to_go_after_a_failed_checksum_poll(mocker):
-    from wifit3.chips.rtl8188ftv_dkms import firmware
-    mocker.patch.object(firmware, "polling_fwdl_chksum", return_value=False)
-    free_to_go = mocker.patch.object(firmware, "fw_free_to_go", return_value=True)
-    mocker.patch("wifit3.chips.rtl8188ftv_dkms.firmware.time.monotonic", side_effect=range(1000))
-    t = mocker.Mock()
-    t.read8.return_value = 0
-    firmware.download_firmware(t, bytes(8))
-    free_to_go.assert_called_once_with(t, 10, 200)

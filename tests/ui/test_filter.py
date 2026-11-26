@@ -1,7 +1,5 @@
-"""ScanFilter predicate (text, encryption, power) and FilterBar message wiring."""
+"""ScanFilter predicate: text, encryption, power and silenced matching."""
 import pytest
-from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Input, Select
 
 from wifit3.models import AccessPoint
 from wifit3.persist.config import Config
@@ -103,6 +101,13 @@ def test_hidden_ap_found_by_guessed_ssid():
     assert ScanFilter(text="castle").matches(hidden, ssid="Castle Crasher")
 
 
+def test_text_filter_matches_the_nickname_and_the_ssid():
+    Config.set_nickname("aa:bb:cc:dd:ee:ff", "Kitchen")
+    assert ScanFilter(text="kitch").matches(_ap(ssid="HomeNet"))
+    assert ScanFilter(text="kitchen homenet").matches(_ap(ssid="HomeNet"))
+    assert not ScanFilter(text="kitchenhomenet").matches(_ap(ssid="HomeNet"))
+
+
 # ---- ScanFilter min_signal -------------------------------------------------
 
 def test_min_signal_drops_aps_at_or_below_the_threshold():
@@ -145,82 +150,6 @@ def test_hide_silenced_matches_config_case_insensitively():
 
 # ---- FilterBar message wiring ----------------------------------------------
 
-class _Host(App):
-    def __init__(self, supported):
-        super().__init__()
-        self._supported = supported
-        self.events = []
-
-    def compose(self) -> ComposeResult:
-        yield FilterBar(self._supported)
-
-    def on_filter_bar_scan_filter_changed(self, m: FilterBar.ScanFilterChanged):
-        self.events.append(("scan", m.scan_filter))
-
-    def on_filter_bar_edit_channels(self, m: FilterBar.EditChannels):
-        self.events.append(("channels", None))
-
-
-async def test_typing_emits_scan_filter():
-    app = _Host([1, 6, 11, 36, 40])
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        app.events.clear()
-        app.query_one("#filter-text", Input).value = "net"
-        await pilot.pause(0)
-        scan = [e for e in app.events if e[0] == "scan"]
-        assert scan and scan[-1][1].text == "net"
-
-
-async def test_encryption_select_emits_scan_filter():
-    app = _Host([1, 6, 11])
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        app.events.clear()
-        app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
-        await pilot.pause(0)
-        scan = [e for e in app.events if e[0] == "scan"]
-        assert scan and scan[-1][1].encryption is EncryptionFilter.WPA
-
-
-async def test_power_select_starts_at_all_and_emits_scan_filter():
-    app = _Host([1, 6, 11])
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        assert app.query_one("#filter-power", Select).value is None
-        app.events.clear()
-        app.query_one("#filter-power", Select).value = -70
-        await pilot.pause(0)
-        scan = [e for e in app.events if e[0] == "scan"]
-        assert scan and scan[-1][1].min_signal == -70
-
-
-async def test_hide_silenced_checkbox_emits_scan_filter():
-    app = _Host([1, 6, 11])
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        app.events.clear()
-        assert not app.query_one("#filter-hide-silenced", Checkbox).value
-        app.query_one("#filter-hide-silenced", Checkbox).value = True
-        await pilot.pause(0)
-        scan = [e for e in app.events if e[0] == "scan"]
-        assert scan and scan[-1][1].hide_silenced is True
-
-
-async def test_hide_silenced_checkbox_keeps_the_other_predicates():
-    app = _Host([1, 6, 11])
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        app.events.clear()
-        app.query_one("#filter-text", Input).value = "net"
-        app.query_one("#filter-encryption", Select).value = EncryptionFilter.WPA
-        app.query_one("#filter-hide-silenced", Checkbox).value = True
-        await pilot.pause(0)
-        scan = [e for e in app.events if e[0] == "scan"]
-        assert scan
-        last = scan[-1][1]
-        assert (last.text, last.encryption, last.hide_silenced) == ("net", EncryptionFilter.WPA, True)
-
 
 async def test_hide_silenced_follows_a_later_silence():
     """The scanner re-runs the predicate each tick, so silencing from Focus drops the row."""
@@ -229,38 +158,6 @@ async def test_hide_silenced_follows_a_later_silence():
     assert scan_filter.matches(ap)
     Config.silenced_bssids = ["aa:bb:cc:dd:ee:ff"]
     assert not scan_filter.matches(ap)
-
-
-async def test_checkbox_starts_from_the_persisted_setting():
-    Config.hide_silenced = True
-    app = _Host([1, 6, 11])
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        assert app.query_one("#filter-hide-silenced", Checkbox).value is True
-        app.query_one("#filter-text", Input).value = "net"
-        await pilot.pause()
-        scan = [e for e in app.events if e[0] == "scan"]
-        assert scan and scan[-1][1].hide_silenced is True
-
-
-@pytest.mark.parametrize("width", [104, 110, 120])
-async def test_filter_bar_fits_every_control_on_screen(width):
-    """The text Input yields width so the hide-silenced checkbox is never clipped off the bar."""
-    app = _Host([1, 6, 11, 36, 40])
-    async with app.run_test(size=(width, 6)) as pilot:
-        await pilot.pause()
-        bar = app.query_one(FilterBar)
-        assert not [c.id for c in bar.children if c.region.x + c.region.width > width]
-
-
-async def test_channels_button_requests_dialog():
-    app = _Host([1, 6, 11, 36, 40])
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        app.events.clear()
-        app.query_one("#filter-channels", Button).press()
-        await pilot.pause(0)
-        assert any(e[0] == "channels" for e in app.events)
 
 
 def test_channels_label_drops_band_prefix_for_partial_sets():

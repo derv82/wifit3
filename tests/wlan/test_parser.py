@@ -3,9 +3,10 @@ import struct
 import pytest
 
 from wifit3.dot11.parser import WlanFrameParser
+from wifit3.dot11.rsn import parse_rsn_element
 from wifit3.dot11.eapol import LLC_SNAP_EAPOL, data_header, eapol_key
 from wifit3.dot11.packet import (
-    WepDataPacket, BeaconPacket, AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
+    WepDataPacket, BeaconPacket, ProbeResponsePacket, AuthPacket, AssocRespPacket, DeauthPacket, ProbeReqPacket,
     EapolPacket,
 )
 
@@ -100,7 +101,7 @@ def _rsn_ie(
 def test_rsn_optional_fields_must_end_on_field_boundaries(length):
     body = bytes.fromhex("0100000fac040100000fac040100000fac05c0000100")
     body += bytes(range(16)) + bytes.fromhex("000fac06")
-    rsn = WlanFrameParser._parse_rsn_ie(body[:length])
+    rsn = parse_rsn_element(body[:length])
     assert (rsn is not None) is (length in {18, 20, 38, 42})
     if rsn is not None:
         assert rsn.pmf_required is (length >= 20)
@@ -114,7 +115,7 @@ def test_truncated_rsn_tail_is_not_valid(tail):
     body = prefix + tail
     invalid = bytes([48, len(body)]) + body
     truncated = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=invalid), -40)
-    assert not truncated.rsn_valid
+    assert truncated.elements.rsn is None
 
 
 def _wps_ie(*, locked: bool = False, version2: bool = False,
@@ -149,23 +150,23 @@ def _wps_ie(*, locked: bool = False, version2: bool = False,
 def test_wps_open_beacon():
     r = WlanFrameParser.parse_80211_frame(
         _build_beacon(wpa_vendor_ie=_wps_ie(locked=False)), -50)
-    assert r.wps is True
-    assert r.wps_locked is False
-    assert r.wps_version == "1.0"
+    assert r.elements.wps is not None
+    assert r.elements.wps.locked is False
+    assert r.elements.wps.version == "1.0"
 
 
 def test_wps_locked_beacon():
     r = WlanFrameParser.parse_80211_frame(
         _build_beacon(wpa_vendor_ie=_wps_ie(locked=True)), -50)
-    assert r.wps is True
-    assert r.wps_locked is True
+    assert r.elements.wps is not None
+    assert r.elements.wps.locked is True
 
 
 def test_wps_version2_beacon():
     r = WlanFrameParser.parse_80211_frame(
         _build_beacon(wpa_vendor_ie=_wps_ie(version2=True)), -50)
-    assert r.wps is True
-    assert r.wps_version == "2.0"
+    assert r.elements.wps is not None
+    assert r.elements.wps.version == "2.0"
 
 
 def test_wps_identity_fields_beacon():
@@ -173,28 +174,28 @@ def test_wps_identity_fields_beacon():
         manufacturer=b"MikroTik", model_name=b"RouterBOARD", model_number=b"RB951",
         device_name=b"Office AP\x00",
     )), -50)
-    assert r.wsc_manufacturer == "MikroTik"
-    assert r.wsc_model_name == "RouterBOARD"
-    assert r.wsc_model_number == "RB951"
-    assert r.wsc_device_name == "Office AP"
+    assert r.elements.wps.manufacturer == "MikroTik"
+    assert r.elements.wps.model_name == "RouterBOARD"
+    assert r.elements.wps.model_number == "RB951"
+    assert r.elements.wps.device_name == "Office AP"
 
 
 def test_no_wps_ie_absent():
     r = WlanFrameParser.parse_80211_frame(
         _build_beacon(rsn_ie=_rsn_ie()), -50)
-    assert not r.wps
+    assert r.elements.wps is None
 
 
 def test_broadcom_vendor_ie_sets_chipset():
     broadcom_ie = bytes([221, 9]) + bytes.fromhex("001018020200000000")
     r = WlanFrameParser.parse_80211_frame(_build_beacon(wpa_vendor_ie=broadcom_ie), -50)
-    assert r.chipset == "Broadcom"
+    assert r.elements.chipset == "Broadcom"
 
 
 def test_epigram_vendor_ie_alone_sets_no_chipset():
     epigram_ie = bytes([221, 5]) + bytes.fromhex("00904c0408")
     r = WlanFrameParser.parse_80211_frame(_build_beacon(wpa_vendor_ie=epigram_ie), -50)
-    assert r.chipset is None
+    assert r.elements.chipset is None
 
 def test_wlan_frame_parser_validates():
     # A random bunch of bytes too small to be a frame
@@ -225,8 +226,9 @@ def test_wlan_frame_parser_ignores_second_ssid_ie():
 
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed is not None
-    # Stays "<hidden>". The late tag-0 must be ignored.
-    assert parsed.ssid == "<hidden>"
+    # Stays hidden. The late tag-0 must be ignored.
+    assert parsed.ssid is None
+    assert parsed.ssid_bytes == b""
 
 
 @pytest.mark.parametrize("length", [1, 8, 32])
@@ -243,17 +245,19 @@ def test_wlan_frame_parser_reads_a_zero_filled_ssid_as_hidden(length):
     parsed = WlanFrameParser.parse_80211_frame(mac_hdr + fixed + zero_filled_ssid + rates, -50)
 
     assert isinstance(parsed, BeaconPacket)
-    assert parsed.ssid == "<hidden>"
+    assert parsed.ssid is None
+    assert parsed.ssid_bytes == bytes(length)
 
 
-def test_wlan_frame_parser_still_rejects_an_ssid_with_some_nul_bytes():
+def test_wlan_frame_parser_escapes_nul_bytes_inside_an_ssid():
     fc = b"\x80\x00"
     addr2 = b"\x11\x22\x33\x44\x55\x66"
     mac_hdr = fc + b"\x00\x00" + b"\xff" * 6 + addr2 + addr2 + b"\x00\x00"
     ssid = b"Net\x00\x00"
     frame = mac_hdr + b"\x00" * 12 + bytes([0x00, len(ssid)]) + ssid + b"\x01\x04\x82\x84\x8b\x96"
 
-    assert WlanFrameParser.parse_80211_frame(frame, -50) is None
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert (parsed.ssid, parsed.ssid_bytes) == ("Net\\x00\\x00", ssid)
 
 
 def test_wlan_frame_parser_extracts_ssid():
@@ -288,11 +292,11 @@ def test_wpa2_psk_ccmp_label():
     """Standard WPA2-PSK-CCMP: by far the most common consumer config."""
     frame = _build_beacon(rsn_ie=_rsn_ie(pairwise_ciphers=(0x04,), akms=(0x02,)))
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "WPA2-PSK-CCMP"
-    assert parsed.wpa3 is False
-    assert parsed.transition_mode is False
-    assert parsed.pairwise_cipher == "CCMP"
-    assert parsed.akms == ["PSK"]
+    assert parsed.elements.encryption == "WPA2-PSK-CCMP"
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.transition_mode is False
+    assert parsed.elements.pairwise_cipher == "CCMP"
+    assert parsed.elements.akms == ["PSK"]
 
 
 def test_wpa3_sae_label_and_flags():
@@ -304,12 +308,12 @@ def test_wpa3_sae_label_and_flags():
     )
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "WPA3-SAE-CCMP"
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is False
-    assert parsed.pmf_capable is True
-    assert parsed.pmf_required is True
-    assert parsed.akms == ["SAE"]
+    assert parsed.elements.encryption == "WPA3-SAE-CCMP"
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is False
+    assert parsed.elements.pmf_capable is True
+    assert parsed.elements.pmf_required is True
+    assert parsed.elements.akms == ["SAE"]
 
 
 def test_wpa2_wpa3_transition_mode():
@@ -322,11 +326,11 @@ def test_wpa2_wpa3_transition_mode():
     )
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "WPA2/WPA3-PSK+SAE-CCMP"
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is True
-    assert parsed.pmf_capable is True
-    assert parsed.pmf_required is False
+    assert parsed.elements.encryption == "WPA2/WPA3-PSK+SAE-CCMP"
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is True
+    assert parsed.elements.pmf_capable is True
+    assert parsed.elements.pmf_required is False
 
 
 def _extcap_ie(*, beacon_protection: bool) -> bytes:
@@ -340,14 +344,14 @@ def _extcap_ie(*, beacon_protection: bool) -> bytes:
 def test_beacon_protection_detected_from_ext_capabilities():
     frame = _build_beacon(rsn_ie=_rsn_ie(akms=(0x08,), rsn_caps=0x00c0),
                           wpa_vendor_ie=_extcap_ie(beacon_protection=True))
-    assert WlanFrameParser.parse_80211_frame(frame, -50).beacon_protection is True
+    assert WlanFrameParser.parse_80211_frame(frame, -50).elements.beacon_protection is True
 
 
 def test_beacon_protection_absent_when_bit_clear_or_ie_missing():
     with_ie = _build_beacon(wpa_vendor_ie=_extcap_ie(beacon_protection=False))
     without = _build_beacon()
-    assert WlanFrameParser.parse_80211_frame(with_ie, -50).beacon_protection is False
-    assert WlanFrameParser.parse_80211_frame(without, -50).beacon_protection is False
+    assert WlanFrameParser.parse_80211_frame(with_ie, -50).elements.beacon_protection is False
+    assert WlanFrameParser.parse_80211_frame(without, -50).elements.beacon_protection is False
 
 
 def test_wpa2_enterprise_eap():
@@ -355,37 +359,37 @@ def test_wpa2_enterprise_eap():
     rsn = _rsn_ie(pairwise_ciphers=(0x04,), akms=(0x01,), rsn_caps=0x00C0)
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "WPA2-EAP-CCMP"
-    assert parsed.akms == ["EAP"]
-    assert parsed.pmf_required is True
-    assert parsed.wpa3 is False
+    assert parsed.elements.encryption == "WPA2-EAP-CCMP"
+    assert parsed.elements.akms == ["EAP"]
+    assert parsed.elements.pmf_required is True
+    assert parsed.elements.wpa3 is False
 
 
 def test_wpa3_enterprise_eap_sha256_requires_pmf():
     rsn = _rsn_ie(akms=(0x05,), rsn_caps=0x00C0)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA3-EAP-SHA256-CCMP"
-    assert parsed.akm_suites == [0x05]
-    assert parsed.akms == ["EAP-SHA256"]
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is False
+    assert parsed.elements.encryption == "WPA3-EAP-SHA256-CCMP"
+    assert parsed.elements.akm_suites == [0x05]
+    assert parsed.elements.akms == ["EAP-SHA256"]
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is False
 
     without_required_pmf = _rsn_ie(akms=(0x05,), rsn_caps=0x0080)
     parsed = WlanFrameParser.parse_80211_frame(
         _build_beacon(rsn_ie=without_required_pmf), -50
     )
-    assert parsed.encryption == "WPA2-EAP-SHA256-CCMP"
-    assert parsed.wpa3 is False
+    assert parsed.elements.encryption == "WPA2-EAP-SHA256-CCMP"
+    assert parsed.elements.wpa3 is False
 
 
 def test_wpa3_enterprise_transition_requires_both_eap_akms():
     rsn = _rsn_ie(akms=(0x01, 0x05), rsn_caps=0x0080)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA2/WPA3-EAP+EAP-SHA256-CCMP"
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is True
-    assert parsed.pmf_capable is True
-    assert parsed.pmf_required is False
+    assert parsed.elements.encryption == "WPA2/WPA3-EAP+EAP-SHA256-CCMP"
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is True
+    assert parsed.elements.pmf_capable is True
+    assert parsed.elements.pmf_required is False
 
 
 def test_enterprise_suite_b_preserves_observed_akm():
@@ -396,51 +400,51 @@ def test_enterprise_suite_b_preserves_observed_akm():
         rsn_caps=0x00C0,
     )
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA2-EAP-SUITE-B-GCMP-128"
-    assert parsed.akm_suites == [0x0B]
-    assert parsed.akms == ["EAP-SUITE-B"]
-    assert parsed.wpa3 is False
+    assert parsed.elements.encryption == "WPA2-EAP-SUITE-B-GCMP-128"
+    assert parsed.elements.akm_suites == [0x0B]
+    assert parsed.elements.akms == ["EAP-SUITE-B"]
+    assert parsed.elements.wpa3 is False
 
 
 def test_wpa3_enterprise_transition_allows_ft_eap():
     rsn = _rsn_ie(akms=(0x01, 0x03, 0x05), rsn_caps=0x0080)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA2/WPA3-EAP+FT-EAP+EAP-SHA256-CCMP"
-    assert parsed.akm_suites == [0x01, 0x03, 0x05]
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is True
+    assert parsed.elements.encryption == "WPA2/WPA3-EAP+FT-EAP+EAP-SHA256-CCMP"
+    assert parsed.elements.akm_suites == [0x01, 0x03, 0x05]
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is True
 
 
 def test_wpa3_enterprise_only_allows_ft_eap_when_pmf_required():
     rsn = _rsn_ie(akms=(0x05, 0x03), rsn_caps=0x00C0)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA3-EAP-SHA256+FT-EAP-CCMP"
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is False
+    assert parsed.elements.encryption == "WPA3-EAP-SHA256+FT-EAP-CCMP"
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is False
 
 
 def test_ft_eap_only_is_not_wpa3_enterprise():
     rsn = _rsn_ie(akms=(0x03,), rsn_caps=0x00C0)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA2-FT-EAP-CCMP"
-    assert parsed.akm_suites == [0x03]
-    assert parsed.wpa3 is False
-    assert parsed.transition_mode is False
+    assert parsed.elements.encryption == "WPA2-FT-EAP-CCMP"
+    assert parsed.elements.akm_suites == [0x03]
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.transition_mode is False
 
     optional_pmf = _rsn_ie(akms=(0x03,), rsn_caps=0x0080)
     parsed = WlanFrameParser.parse_80211_frame(
         _build_beacon(rsn_ie=optional_pmf), -50
     )
-    assert parsed.encryption == "WPA2-FT-EAP-CCMP"
-    assert parsed.wpa3 is False
+    assert parsed.elements.encryption == "WPA2-FT-EAP-CCMP"
+    assert parsed.elements.wpa3 is False
 
 
 def test_eap_and_ft_eap_are_not_wpa3_enterprise_transition():
     rsn = _rsn_ie(akms=(0x01, 0x03), rsn_caps=0x0080)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA2-EAP+FT-EAP-CCMP"
-    assert parsed.wpa3 is False
-    assert parsed.transition_mode is False
+    assert parsed.elements.encryption == "WPA2-EAP+FT-EAP-CCMP"
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.transition_mode is False
 
 
 def test_wpa3_enterprise_192_accepts_ft_akm():
@@ -453,22 +457,22 @@ def test_wpa3_enterprise_192_accepts_ft_akm():
             group_mgmt_cipher=0x0C,
         )
         parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-        assert parsed.wpa3 is True
-        assert parsed.transition_mode is False
-        assert set(parsed.akm_suites) == set(akms)
+        assert parsed.elements.wpa3 is True
+        assert parsed.elements.transition_mode is False
+        assert set(parsed.elements.akm_suites) == set(akms)
 
 
 def test_wpa3_enterprise_192_ft_without_gcmp_256_is_not_wpa3():
     rsn = _rsn_ie(akms=(0x0D,), rsn_caps=0x00C0, group_mgmt_cipher=0x0C)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.wpa3 is False
-    assert parsed.encryption == "WPA2-FT-EAP-SUITE-B-192-CCMP"
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.encryption == "WPA2-FT-EAP-SUITE-B-192-CCMP"
 
 
 def test_sha384_enterprise_akm_names_follow_hostapd():
     rsn = _rsn_ie(akms=(0x0D, 0x16, 0x17))
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.akms == ["FT-EAP-SUITE-B-192", "FT-EAP-SHA384", "EAP-SHA384"]
+    assert parsed.elements.akms == ["FT-EAP-SUITE-B-192", "FT-EAP-SHA384", "EAP-SHA384"]
 
 
 def test_wpa3_enterprise_192_requires_suite_b_192_gcmp_256_and_pmf():
@@ -480,11 +484,11 @@ def test_wpa3_enterprise_192_requires_suite_b_192_gcmp_256_and_pmf():
         group_mgmt_cipher=0x0C,  # BIP-GMAC-256, mandatory for WPA3-Ent-192
     )
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.encryption == "WPA3-EAP-SUITE-B-192-GCMP-256"
-    assert parsed.akm_suites == [0x0C]
-    assert parsed.akms == ["EAP-SUITE-B-192"]
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is False
+    assert parsed.elements.encryption == "WPA3-EAP-SUITE-B-192-GCMP-256"
+    assert parsed.elements.akm_suites == [0x0C]
+    assert parsed.elements.akms == ["EAP-SUITE-B-192"]
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is False
 
 
 def test_suite_b_192_missing_gmcs_is_not_wpa3():
@@ -496,8 +500,8 @@ def test_suite_b_192_missing_gmcs_is_not_wpa3():
         rsn_caps=0x00C0,
     )
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.wpa3 is False
-    assert parsed.encryption == "WPA2-EAP-SUITE-B-192-GCMP-256"
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.encryption == "WPA2-EAP-SUITE-B-192-GCMP-256"
 
 
 def test_suite_b_192_wrong_group_cipher_is_not_wpa3():
@@ -510,8 +514,8 @@ def test_suite_b_192_wrong_group_cipher_is_not_wpa3():
         group_mgmt_cipher=0x0C,
     )
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.wpa3 is False
-    assert parsed.encryption == "WPA2-EAP-SUITE-B-192-GCMP-256"
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.encryption == "WPA2-EAP-SUITE-B-192-GCMP-256"
 
 
 @pytest.mark.parametrize(
@@ -533,51 +537,51 @@ def test_suite_b_192_partial_evidence_is_not_declared_wpa3(
         rsn_caps=rsn_caps,
     )
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.wpa3 is False
-    assert parsed.encryption.startswith("WPA2-")
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.encryption.startswith("WPA2-")
 
 
 def test_akm_suites_propagate_as_numbers():
     """The numeric AKM suites drive crackability gating, parallel to the names."""
     rsn = _rsn_ie(akms=(0x02, 0x08))
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.akm_suites == [0x02, 0x08]
-    assert parsed.akms == ["PSK", "SAE"]
-    assert parsed.rsn_valid is True
+    assert parsed.elements.akm_suites == [0x02, 0x08]
+    assert parsed.elements.akms == ["PSK", "SAE"]
+    assert parsed.elements.rsn is not None
 
 
 def test_vendor_akm_is_preserved_and_blocks_wpa3_enterprise_classification():
     rsn = _rsn_ie(akms=(0x05, bytes.fromhex("00112299")), rsn_caps=0x00C0)
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.akm_suites == [0x05]
-    assert parsed.akms == ["EAP-SHA256", "Vendor"]
-    assert parsed.wpa3 is False
-    assert parsed.vendor_akm_offered is True
+    assert parsed.elements.akm_suites == [0x05]
+    assert parsed.elements.akms == ["EAP-SHA256", "Vendor"]
+    assert parsed.elements.wpa3 is False
+    assert parsed.elements.vendor_akm_offered is True
 
 
 def test_wfa_vendor_akms_are_named():
     rsn = _rsn_ie(akms=(0x02, bytes.fromhex("506f9a01"), bytes.fromhex("506f9a02")))
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.akms == ["PSK", "OSEN", "DPP"]
+    assert parsed.elements.akms == ["PSK", "OSEN", "DPP"]
 
 
 def test_rsn_version_other_than_one_is_rejected():
     rsn = _rsn_ie(akms=(0x05,), rsn_caps=0x00C0)
     invalid = rsn[:2] + b"\x02\x00" + rsn[4:]
-    assert WlanFrameParser._parse_rsn_ie(invalid[2:]) is None
+    assert parse_rsn_element(invalid[2:]) is None
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=invalid), -50)
-    assert parsed.akm_suites == []
-    assert parsed.rsn_valid is False
+    assert parsed.elements.akm_suites == []
+    assert parsed.elements.rsn is None
 
 
 def test_truncated_rsn_pmkid_list_is_rejected():
     rsn = _rsn_ie(akms=(0x05,), rsn_caps=0x00C0)
     body = rsn[2:] + b"\x01\x00"
     invalid = bytes((48, len(body))) + body
-    assert WlanFrameParser._parse_rsn_ie(body) is None
+    assert parse_rsn_element(body) is None
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=invalid), -50)
-    assert parsed.akm_suites == []
-    assert parsed.rsn_valid is False
+    assert parsed.elements.akm_suites == []
+    assert parsed.elements.rsn is None
 
 
 def test_wpa3_sae_ext_key_h2e_flags_as_wpa3():
@@ -585,11 +589,11 @@ def test_wpa3_sae_ext_key_h2e_flags_as_wpa3():
     must still trip: it's keyed on the SAE *family*, not just suite 8."""
     rsn = _rsn_ie(akms=(0x18,), rsn_caps=0x00C0)   # SAE-EXT-KEY, MFPC+MFPR
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
-    assert parsed.akm_suites == [0x18]
-    assert parsed.akms == ["SAE-EXT-KEY"]
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is False
-    assert parsed.encryption == "WPA3-SAE-CCMP"   # label agrees with the flag
+    assert parsed.elements.akm_suites == [0x18]
+    assert parsed.elements.akms == ["SAE-EXT-KEY"]
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is False
+    assert parsed.elements.encryption == "WPA3-SAE-CCMP"   # label agrees with the flag
 
 
 # ---- (Re)Assoc Request client-AKM extraction (Phase 2) ----------------------
@@ -668,8 +672,8 @@ def test_wpa2_psk_tkip_legacy_cipher():
     rsn = _rsn_ie(pairwise_ciphers=(0x02,), akms=(0x02,))
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "WPA2-PSK-TKIP"
-    assert parsed.pairwise_cipher == "TKIP"
+    assert parsed.elements.encryption == "WPA2-PSK-TKIP"
+    assert parsed.elements.pairwise_cipher == "TKIP"
 
 
 def _wpa_ie(*, version: int = 1, pairwise_ciphers=(0x02,), akms=(0x02,)) -> bytes:
@@ -692,11 +696,11 @@ def _wpa_ie(*, version: int = 1, pairwise_ciphers=(0x02,), akms=(0x02,)) -> byte
 def test_wpa1_vendor_ie_akm_and_cipher(pairwise, akm, label, akm_name, cipher):
     wpa = _wpa_ie(pairwise_ciphers=(pairwise,), akms=(akm,))
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(wpa_vendor_ie=wpa), -50)
-    assert parsed.encryption == label
-    assert parsed.akms == [akm_name]
-    assert parsed.akm_suites == [akm]
-    assert parsed.pairwise_cipher == cipher
-    assert parsed.rsn_valid is False
+    assert parsed.elements.encryption == label
+    assert parsed.elements.akms == [akm_name]
+    assert parsed.elements.akm_suites == [akm]
+    assert parsed.elements.pairwise_cipher == cipher
+    assert parsed.elements.rsn is None
 
 
 @pytest.mark.parametrize("cut, version", [
@@ -709,31 +713,31 @@ def test_malformed_wpa1_vendor_ie_keeps_the_psk_tkip_default(cut, version):
     body = body[:len(body) - cut]
     wpa = bytes([221, len(body)]) + body
     parsed = WlanFrameParser.parse_80211_frame(_build_beacon(wpa_vendor_ie=wpa), -50)
-    assert parsed.encryption == "WPA-PSK-TKIP"
-    assert parsed.akms == [] and parsed.akm_suites == []
-    assert parsed.pairwise_cipher is None
+    assert parsed.elements.encryption == "WPA-PSK-TKIP"
+    assert parsed.elements.akms == [] and parsed.elements.akm_suites == []
+    assert parsed.elements.pairwise_cipher is None
 
 
 def test_mixed_wpa1_and_rsn_takes_the_rsn_element():
     frame = _build_beacon(rsn_ie=_rsn_ie(akms=(0x02,)), wpa_vendor_ie=_wpa_ie(akms=(0x01,)))
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "WPA2-PSK-CCMP"
-    assert parsed.akms == ["PSK"] and parsed.akm_suites == [2]
-    assert parsed.pairwise_cipher == "CCMP"
-    assert parsed.rsn_valid is True
+    assert parsed.elements.encryption == "WPA2-PSK-CCMP"
+    assert parsed.elements.akms == ["PSK"] and parsed.elements.akm_suites == [2]
+    assert parsed.elements.pairwise_cipher == "CCMP"
+    assert parsed.elements.rsn is not None
 
 
 def test_open_network():
     frame = _build_beacon(rsn_ie=b"")
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "OPEN"
-    assert parsed.wpa3 is False
+    assert parsed.elements.encryption == "OPEN"
+    assert parsed.elements.wpa3 is False
 
 
 def test_wep_via_privacy_bit():
     frame = _build_beacon(rsn_ie=b"", privacy_bit=True)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.encryption == "WEP"
+    assert parsed.elements.encryption == "WEP"
 
 
 # ---- WEP Data-frame IV extraction ------------------------------------------
@@ -827,13 +831,13 @@ def test_wpa3_keys_propagate_through_parse_80211_frame():
 
     # Each must carry its PARSED value, not the BeaconPacket field default: a key
     # dropped on the tags->result copy would silently fall back to that default.
-    assert parsed.wpa3 is True
-    assert parsed.transition_mode is False
-    assert parsed.pmf_capable is True
-    assert parsed.pmf_required is True
-    assert parsed.akms == ["SAE"]
-    assert parsed.pairwise_cipher is not None
-    assert parsed.rsn_ie_raw is not None
+    assert parsed.elements.wpa3 is True
+    assert parsed.elements.transition_mode is False
+    assert parsed.elements.pmf_capable is True
+    assert parsed.elements.pmf_required is True
+    assert parsed.elements.akms == ["SAE"]
+    assert parsed.elements.pairwise_cipher is not None
+    assert parsed.elements.rsn_element_raw is not None
 
 
 def test_rsn_ie_raw_round_trip():
@@ -842,7 +846,7 @@ def test_rsn_ie_raw_round_trip():
     rsn = _rsn_ie(akms=(0x02,))
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.rsn_ie_raw == rsn
+    assert parsed.elements.rsn_element_raw == rsn
 
 
 # ---- Channel parsing (2.4 GHz DS Param + 5 GHz HT Op + VHT Op) -------------
@@ -871,14 +875,14 @@ def test_channel_from_ds_param_ie_2ghz():
     """2.4 GHz beacon → DS Param IE present, sets channel."""
     frame = _build_beacon() + _ds_param_ie(6)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.channel == 6
+    assert parsed.elements.channel == 6
 
 
 def test_channel_from_ht_op_ie_when_ds_param_missing():
     """5 GHz beacon with HT Op IE but no DS Param IE → channel from HT Op."""
     frame = _build_beacon() + _ht_op_ie(153)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.channel == 153
+    assert parsed.elements.channel == 153
 
 
 def test_channel_ds_param_wins_over_ht_op():
@@ -887,18 +891,18 @@ def test_channel_ds_param_wins_over_ht_op():
     # HT Op IE before DS Param IE in tag order.
     frame = _build_beacon() + _ht_op_ie(36) + _ds_param_ie(40)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.channel == 40
+    assert parsed.elements.channel == 40
     # And the other way round: DS Param IE first.
     frame2 = _build_beacon() + _ds_param_ie(40) + _ht_op_ie(36)
     parsed2 = WlanFrameParser.parse_80211_frame(frame2, -50)
-    assert parsed2.channel == 40
+    assert parsed2.elements.channel == 40
 
 
 def test_channel_vht_op_used_as_last_resort():
     """When neither DS Param nor HT Op is present, VHT Op IE fills in."""
     frame = _build_beacon() + _vht_op_ie(149)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.channel == 149
+    assert parsed.elements.channel == 149
 
 
 def test_channel_absent_when_no_ie_provides_it():
@@ -907,7 +911,7 @@ def test_channel_absent_when_no_ie_provides_it():
     IE as channel 1). Caller falls back to chip's current_channel."""
     frame = _build_beacon()
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
-    assert parsed.channel is None
+    assert parsed.elements.channel is None
 
 
 # ---- Frame-type dispatch edge cases ----------------------------------------
@@ -929,16 +933,16 @@ def test_wds_frame_is_ignored():
 
 
 def test_probe_response_parsed_like_beacon():
-    """A probe response (subtype 5) carries the same IE layout as a beacon and
-    must parse identically: same BeaconPacket type, SSID, and encryption."""
+    """A probe response (subtype 5) carries the same IE layout as a beacon: its own packet
+    class, with the SSID and encryption decoded the same way."""
     frame = bytearray(_build_beacon(ssid="ProbeNet", rsn_ie=_rsn_ie(akms=(0x02,))))
     frame[0] = 0x50                  # mgmt subtype 5 = probe response (was 0x80 beacon)
     parsed = WlanFrameParser.parse_80211_frame(bytes(frame), -50)
     assert parsed is not None
     assert parsed.type == "probe_resp"
-    assert isinstance(parsed, BeaconPacket)
+    assert isinstance(parsed, ProbeResponsePacket)
     assert parsed.ssid == "ProbeNet"
-    assert parsed.encryption == "WPA2-PSK-CCMP"
+    assert parsed.elements.encryption == "WPA2-PSK-CCMP"
 
 
 def _minimal_mgmt(fc0: int) -> bytes:
@@ -962,25 +966,24 @@ def test_unknown_mgmt_subtype_labeled_generic():
     assert parsed.type == "mgmt_13"
 
 
-def test_beacon_with_control_char_ssid_returns_none():
-    """Passes the structural _is_valid_frame check (tag0=SSID, tag1=rates) but the
-    SSID holds control bytes → _parse_tags rejects it as corrupt → parse None."""
-    frame = _build_beacon(ssid="\x01\x02\x03")
-    assert WlanFrameParser.parse_80211_frame(frame, -50) is None
+def test_beacon_with_control_char_ssid_escapes_them():
+    parsed = WlanFrameParser.parse_80211_frame(_build_beacon(ssid="\x01\x02\x03"), -50)
+    assert (parsed.ssid, parsed.ssid_bytes) == ("\\x01\\x02\\x03", b"\x01\x02\x03")
 
 
-@pytest.mark.parametrize("bad", [
-    "\x7f",              # DEL, one byte >= 0x20
-    "\u009b",            # C1 CSI, UTF-8 C2 9B: every byte >= 0x20
-    "\u0085",            # C1 NEL, UTF-8 C2 85
-    "\u202e",            # RLO, UTF-8 E2 80 AE: reverses the rest of the row
-    "\t",                # TAB was whitelisted by the old byte guard
-    "\n",                # LF likewise
+@pytest.mark.parametrize(("unprintable", "escaped"), [
+    ("\x7f", "\\x7f"),                  # DEL
+    ("\u009b", "\\xc2\\x9b"),           # C1 CSI
+    ("\u0085", "\\xc2\\x85"),           # C1 NEL
+    ("\u202e", "\\xe2\\x80\\xae"),      # RLO: would reverse the rest of the row
+    ("\t", "\\x09"),
+    ("\n", "\\x0a"),
 ])
-def test_ssid_rejected_when_any_codepoint_is_unprintable(bad):
-    """The guard checks DECODED codepoints. A byte test cannot see a C1 control, DEL
-    or a bidi override, because each byte of their UTF-8 encoding is >= 0x20."""
-    assert WlanFrameParser.parse_80211_frame(_build_beacon(ssid="Net" + bad), -50) is None
+def test_ssid_escapes_each_unprintable_codepoint(unprintable, escaped):
+    """Escaped as the codepoint's UTF-8 bytes; ssid_bytes keeps the SSID element as sent."""
+    parsed = WlanFrameParser.parse_80211_frame(_build_beacon(ssid="Net" + unprintable), -50)
+    assert parsed.ssid == "Net" + escaped
+    assert parsed.ssid_bytes == ("Net" + unprintable).encode("utf-8")
 
 
 @pytest.mark.parametrize("good", ["Ooredoo-322961", "Café", "\u0639\u0631\u0628\u064a", "WiFi\U0001f4f6"])

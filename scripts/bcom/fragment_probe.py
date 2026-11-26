@@ -155,7 +155,7 @@ async def run(args) -> int:
             sends += 1
             await transport.send_no_wait(M.build_data_frame(bssid_b, our_mac, bssid_b, payload_1x))
 
-        assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
+        assoc = Association(iface, bssid, ssid.encode("utf-8"), channel, our_mac=our_mac,
                             assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE, False))
         assoc.start()
         transport.start()

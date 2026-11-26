@@ -19,15 +19,15 @@ def test_ecsa_ie_shape():
 
 
 def test_same_band_switch_carries_csa_and_ecsa():
-    beacon = _BODY + ssid_ie("Net") + rates_ie() + ds_param_ie(6)
+    beacon = _BODY + ssid_ie(b"Net") + rates_ie() + ds_param_ie(6)
     out = build_csa_beacon(beacon, 11, from_channel=6)         # 2.4 -> 2.4
     assert out[:22] == _BODY[:22] and out[24:36] == _BODY[24:36]
     assert out.endswith(csa_ie(11) + ecsa_ie(11, operating_class=81) + _SCO)
-    assert ssid_ie("Net") in out and ds_param_ie(6) in out
+    assert ssid_ie(b"Net") in out and ds_param_ie(6) in out
 
 
 def test_band_switch_is_ecsa_only():
-    beacon = _BODY + ssid_ie("Net")
+    beacon = _BODY + ssid_ie(b"Net")
     out = build_csa_beacon(beacon, 36, from_channel=6)         # 2.4 -> 5 GHz
     assert out.endswith(ecsa_ie(36, operating_class=115) + _SCO)
     assert csa_ie(36) not in out                               # a bare CSA channel is ambiguous across bands
@@ -35,12 +35,12 @@ def test_band_switch_is_ecsa_only():
 
 
 def test_sequence_control_is_zeroed_for_hw_restamp():
-    out = build_csa_beacon(_BODY + ssid_ie("Net"), 11, from_channel=6)
+    out = build_csa_beacon(_BODY + ssid_ie(b"Net"), 11, from_channel=6)
     assert out[22:24] == b"\x00\x00"
 
 
 def test_replaces_stale_csa_and_ecsa_elements():
-    beacon = _BODY + ssid_ie("Net") + csa_ie(6) + ecsa_ie(6, operating_class=81) + ds_param_ie(6)
+    beacon = _BODY + ssid_ie(b"Net") + csa_ie(6) + ecsa_ie(6, operating_class=81) + ds_param_ie(6)
     out = build_csa_beacon(beacon, 11, from_channel=6)
     assert out.count(bytes([0x25])) == 1                       # one CSA element id survives
     assert out.count(bytes([0x3C])) == 1                       # one ECSA element id survives
@@ -53,5 +53,5 @@ def test_rejects_a_beacon_too_short_for_the_fixed_body():
 
 
 def test_switch_count_is_carried_into_both_elements():
-    out = build_csa_beacon(_BODY + ssid_ie("Net"), 6, from_channel=11, count=3)
+    out = build_csa_beacon(_BODY + ssid_ie(b"Net"), 6, from_channel=11, count=3)
     assert out.endswith(csa_ie(6, count=3) + ecsa_ie(6, operating_class=81, count=3) + _SCO)

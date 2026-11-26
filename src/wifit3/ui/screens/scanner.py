@@ -37,6 +37,7 @@ from wifit3.wlan.channels import band_ranges
 
 from .channel_filter import ChannelFilterDialog
 from .filter import FilterBar, ScanFilter
+from ..modals.nickname import NicknameModal
 
 if TYPE_CHECKING:
     from wifit3.ui.app import WifiteApp
@@ -159,16 +160,17 @@ class ScannerView(Screen):
 
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
-        Binding("c", "change_channel", "Channel Filter", show=True),
+        Binding("v", "open_vault", "Vault", show=True),
+        Binding("n", "set_nickname", "Nickname", show=True),
         Binding("e", "focus_encryption", "Encryption", show=True),
+        Binding("c", "change_channel", "Channels", show=True),
         Binding("p", "focus_power", "Power", show=True),
-        Binding("s", "cycle_sort", "Sort Col", show=True),
-        Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
         Binding("f", "focus_filter", "Filter", show=True),
         Binding("/", "focus_filter", "Filter", show=False),
-        Binding("l", "toggle_log", "Toggle Log", show=True),
-        Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
-        Binding("v", "open_vault", "Vault", show=True),
+        Binding("s", "cycle_sort", "Sort Col", show=True),
+        Binding("o", "toggle_sort_dir", "Sort Order", show=True),
+        Binding("l", "toggle_log", "Toggle Log", show=False),
+        Binding("w", "wps_pbc_mode", "WPS PBC", show=False),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
         Binding("g", "scroll_home", "Top", show=False, priority=True),
@@ -323,7 +325,8 @@ class ScannerView(Screen):
 
         row = APRow(
             bssid=ap.bssid,
-            ssid=ap.ssid,
+            ssid=ap.ssid_displayable,
+            nickname=Config.nickname(ap.bssid),
             guessid=guessid,
             channel=ap.channel,
             signal=ap.signal,
@@ -331,6 +334,7 @@ class ScannerView(Screen):
             clients=clients,
             encryption=EncryptionSummary.from_ap(ap),
             wps=ap.wps,
+            wps_version=ap.wps_version,
             wps_locked=ap.wps_locked,
             chipset=ap.chipset or "",
             identity=ap.identity.summary,
@@ -363,11 +367,11 @@ class ScannerView(Screen):
         """
         wep = ap.wep
         return (
-            ap.last_seen, ap.beacons, ap.signal, ap.channel, ap.ssid,
+            ap.last_seen, ap.beacons, ap.signal, ap.channel, ap.ssid_displayable,
             ap.wps, ap.wps_locked, ap.identity.summary,
             wep.unique_ivs if wep else 0, ap.wep_key, ap.wps_pbc_psk,
             clients, is_stale, beacon_flash, guessid,
-            vault.revision(ap.bssid), Config.is_silenced(ap.bssid),
+            vault.revision(ap.bssid), Config.is_silenced(ap.bssid), Config.nickname(ap.bssid),
         )
 
     def _evict_expired_aps(self) -> None:
@@ -400,10 +404,14 @@ class ScannerView(Screen):
 
     def on_wifite_app_ap_event_detected(self, message: "WifiteApp.ApEventDetected") -> None:
         ev = message.event
-        ap_label = escape(ev.ssid or ev.bssid)
+        ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
+        ssid = ev.ssid
+        if ap is not None:
+            ssid = ap.ssid_displayable
+        ap_label = escape(ssid or ev.bssid)
         if isinstance(ev, HandshakeCaptured):
             msg = (
-                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.pair_label}) on "
+                f"[bold green]✓ HANDSHAKE[/bold green] ({ev.messages_label}) on "
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, UncrackableHandshakeSeen):
@@ -417,7 +425,6 @@ class ScannerView(Screen):
                 f"[bold cyan]{ap_label}[/bold cyan] from [bold]{escape(ev.client_mac)}[/bold]"
             )
         elif isinstance(ev, PbcWindowOpened):
-            ap = self.app.array.access_points.get(ev.bssid) if self.app.array else None
             if ap is not None:
                 self._on_pbc_window(ap)
             return
@@ -426,7 +433,7 @@ class ScannerView(Screen):
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._write_log(Text.from_markup(treelog.header(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
-                f"[green]{escape(ev.ssid or '')}[/green] "
+                f"[green]{escape(ssid or '')}[/green] "
                 f"[dim]via {method_label}[/dim]"), emoji=False))
             return
         elif isinstance(ev, WepKeyRecovered):
@@ -551,7 +558,7 @@ class ScannerView(Screen):
             if all(isinstance(s, ModalScreen) for s in stack[stack.index(self) + 1:]):
                 self._pbc_bssids_under_modal.add(ap.bssid)
             return
-        label = escape(ap.ssid or ap.bssid)
+        label = escape(ap.ssid_displayable or ap.bssid)
         self._write_log(treelog.header(
             f"[bold cyan]WPS PBC[/bold cyan] [bold green]Window Open[/bold green] on "
             f"[bold]{label}[/bold] [dim]CH{ap.channel}[/dim]"))
@@ -561,6 +568,12 @@ class ScannerView(Screen):
             return
         self.app.target_ap = ap
         self.app.push_screen(self.app.focus_view)
+
+    def action_set_nickname(self) -> None:
+        ap = self.selected_ap()
+        if ap is None:
+            return
+        self.app.push_screen(NicknameModal(ap.ssid, ap.bssid))
 
     def action_open_vault(self) -> None:
         self.app.action_toggle_vault()

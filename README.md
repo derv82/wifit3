@@ -39,7 +39,7 @@
 - **WEP Suite:** Pure Python ARP replay, ChopChop, Fake Authentication, and PTW key recovery.
 
 ### Vault & Cracking
-- **Vault:** Shows every capture per AP, its PSK status (current, stale or uncracked); search, nicknames, add credentials by hand; `Show AP` and `Verify` against the live AP.
+- **Vault:** Shows every capture per AP, its PSK status (current, stale or uncracked); search, add credentials by hand; `Show AP` and `Verify` against the live AP.
 - **Cracking:** Built-in CPU Crack, Hashcat (multiple wordlists; pause, resume, skip) and Hashtopolis; auto-crack after each capture; remembers which wordlists were tried.
 - **Wordlists:** Built-in default passwords, SSID variants, BSSID-based PSKs and probed SSIDs (also saved to a wordlist file).
 
@@ -76,6 +76,7 @@
 | Realtek RTL8188EUS | 2.4 GHz | TP-Link TL-WN722N v2/v3, Mercusys MW150US |
 | Realtek RTL8188FTV | 2.4 GHz | Generic unbranded dongles |
 | Realtek RTL8192CU | 2.4 GHz | TP-Link TL-WN823N v1 |
+| Realtek RTL8192EU | 2.4 GHz | TP-Link TL-WN821N v5/v6, TL-WN823N v2/v3 |
 | Realtek RTL8192FU | 2.4 GHz | D-Link AN3U rev. A1 |
 | Ralink RT2570 | 2.4 GHz | Buffalo Nintendo Wi-Fi USB Controller |
 | Ralink RT3070 | 2.4 GHz | ALFA AWUS036**NH**, TP-Link TL-WN7200ND |

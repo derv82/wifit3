@@ -32,7 +32,8 @@ from typing import List, Optional
 
 from wifit3.models import Handshake
 from wifit3.crack import handshake as wpa
-from wifit3.crack.handshake import mac_compact, ssid_hex
+from wifit3.crack.handshake import mac_compact
+from wifit3.dot11.ie import ssid_text
 from wifit3.dot11.rsn import AKM_FT_PSK, AKM_PSK_SHA256
 
 PMKID_SHA256_MESSAGE_PAIR_BIT = 0x02
@@ -40,10 +41,10 @@ _PMKID_SHA256_MESSAGE_PAIR = "03"
 _EAPOL_PAIR_LABELS = {0: "M1+M2", 1: "M1+M4", 2: "M2+M3", 3: "M2+M3", 4: "M3+M4", 5: "M3+M4"}
 
 
-def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
+def pmkid_hashline(ssid_bytes: bytes, hs: Handshake) -> Optional[str]:
     """Return a ``WPA*01*…`` (or FT-PSK ``WPA*03*…``) line for the PMKID, or None if not
     available or not crackable."""
-    if not ssid or not hs.pmkid or len(hs.pmkid) != 16:
+    if not ssid_bytes or not hs.pmkid or len(hs.pmkid) != 16:
         return None
     akm = wpa.crackable_pmkid_akm(hs)
     if akm is None:
@@ -52,7 +53,7 @@ def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
         f"*{hs.pmkid.hex()}"
         f"*{mac_compact(hs.bssid)}"
         f"*{mac_compact(hs.client_mac)}"
-        f"*{ssid_hex(ssid)}"
+        f"*{ssid_bytes.hex()}"
     )
     ft_frame = wpa.ft_identifiers_frame(hs) if akm == AKM_FT_PSK else None
     if ft_frame is not None:
@@ -63,13 +64,13 @@ def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
     return f"WPA*01{prefix}***{message_pair}"
 
 
-def eapol_hashlines(ssid: str, hs: Handshake) -> List[str]:
+def eapol_hashlines(ssid_bytes: bytes, hs: Handshake) -> List[str]:
     """One ``WPA*02*…`` / ``WPA*04*…`` line per distinct *crackable* handshake instance. Empty
     when the SSID is hidden or no instance is serialisable (e.g. a clipped MIC
     frame), i.e. exactly when there's nothing hashcat could crack."""
-    if not ssid:
+    if not ssid_bytes:
         return []
-    return [wpa.hc22000_line(ssid, hs, pair) for pair in wpa.crackable_pairs(hs)]
+    return [wpa.hc22000_line(ssid_bytes, hs, pair) for pair in wpa.crackable_pairs(hs)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,8 +94,8 @@ class Hc22000Line:
 
     @property
     def ssid(self) -> str:
-        """The ESSID field decoded as UTF-8, undecodable bytes replaced."""
-        return bytes.fromhex(self.essid).decode("utf-8", errors="replace")
+        """The ESSID field as text, the way the parser makes ap.ssid."""
+        return ssid_text(bytes.fromhex(self.essid))
 
     @property
     def bssid(self) -> str:

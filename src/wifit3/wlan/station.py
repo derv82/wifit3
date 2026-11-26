@@ -114,7 +114,7 @@ class WlanTransport:
 class Association:
     """Open-System auth + Association Request against one AP."""
 
-    def __init__(self, iface, bssid: str, ssid: str, channel: int,
+    def __init__(self, iface, bssid: str, ssid_bytes: bytes, channel: int,
                  our_mac: Optional[bytes] = None, assoc_timeout: float = 1.5,
                  auth_timeout: float = 1.0,
                  assoc_trailer_ies: bytes = b"",
@@ -124,7 +124,7 @@ class Association:
         self.iface = iface
         self.bssid = bssid.lower()
         self.bssid_bytes = str_to_mac(self.bssid)
-        self.ssid = ssid or ""
+        self.ssid_bytes = ssid_bytes
         self.channel = channel
         self.our_mac = our_mac or random_client_mac()
         self.assoc_timeout = assoc_timeout
@@ -176,7 +176,7 @@ class Association:
                 break
             # Send Assoc whether or not the Auth Resp surfaced
             logger.info("-> Assoc Req to %s", self.bssid)
-            await self._send_until(self._assoc_req(self.ssid),
+            await self._send_until(self.assoc_req_frame(self.ssid_bytes),
                                    lambda: self.assoc_status is not None, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
@@ -205,15 +205,15 @@ class Association:
         leaves us AUTHENTICATED, so the caller can claim the next SSID directly."""
         self._assoc_ok = False
         self.assoc_status = None
-        self.ssid = ssid
+        self.ssid_bytes = ssid.encode("utf-8")
         logger.info("-> Assoc Req to %s as %r", self.bssid, ssid)
-        await self._send_until(self._assoc_req(ssid),
+        await self._send_until(self.assoc_req_frame(self.ssid_bytes),
                                lambda: self.assoc_status is not None, self.assoc_timeout)
         self.associated = self._assoc_ok
         return self.assoc_status
 
-    def _assoc_req(self, ssid: str) -> bytes:
-        return assoc_req(self.bssid_bytes, self.our_mac, ssid, self.assoc_trailer_ies,
+    def assoc_req_frame(self, ssid_bytes: bytes) -> bytes:
+        return assoc_req(self.bssid_bytes, self.our_mac, ssid_bytes, self.assoc_trailer_ies,
                          channel=self.channel, privacy=self.privacy, beacon_frame=self.beacon_frame)
 
     async def _send_until(self, frame: bytes, done, timeout: float,

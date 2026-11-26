@@ -3,10 +3,10 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from wifit3.crack.default_psks import default_psks
-from wifit3.dot11.wpa import is_valid_psk
+from wifit3.dot11.wpa import is_valid_psk, psk_bytes
 
 DEFAULT_PASSWORDS_PATH = Path(__file__).parent / "assets" / "default_passwords.txt"
-SSID_VARIANTS_VERSION = 1
+SSID_VARIANTS_VERSION = 2
 
 # ssid_passwords() fans each probed SSID out to 3 cases x (1 + len(_SSID_SUFFIXES)) = up to 15
 # passwords, each one PBKDF2 (~2 ms on a Pi core), and caps the total.
@@ -41,7 +41,7 @@ def _leet_variants(value: str) -> list[str]:
 
 def _with_number(base: str, number: int) -> str:
     """``base`` + ``number``, zero-padded only as far as 8 bytes needs, to at most 4 digits."""
-    return base + str(number).zfill(min(8 - len(base.encode()), _MAX_NUMBER_DIGITS))
+    return base + str(number).zfill(min(8 - len(psk_bytes(base)), _MAX_NUMBER_DIGITS))
 
 
 def ssid_variants(ssid: str) -> list[str]:
@@ -69,12 +69,21 @@ def ssid_variants(ssid: str) -> list[str]:
     return [psk for psk in dict.fromkeys(candidates) if is_valid_psk(psk)]
 
 
-def all_ssid_variants(networks: Iterable[tuple[str, str]]) -> list[str]:
-    """``default_psks`` of every (SSID, BSSID), then their ``ssid_variants``, deduped."""
-    unique = list(dict.fromkeys(networks))
+def all_ssid_variants(networks: Iterable[tuple[bytes, str]]) -> list[str]:
+    """``default_psks`` of every (SSID bytes, BSSID), then their ``ssid_variants``, deduped; a password
+    that is not UTF-8 as ``$HEX[...]``."""
+    unique = [(ssid_bytes.decode("utf-8", errors="surrogateescape"), bssid)
+              for ssid_bytes, bssid in dict.fromkeys(networks)]
     defaults = [psk for ssid, bssid in unique for psk in default_psks(ssid, bssid)]
     variants = [psk for ssid, _ in unique for psk in ssid_variants(ssid)]
-    return list(dict.fromkeys(defaults + variants))
+    passwords: list[str] = []
+    for psk in dict.fromkeys(defaults + variants):
+        try:
+            psk.encode("utf-8")
+            passwords.append(psk)
+        except UnicodeEncodeError:
+            passwords.append(f"$HEX[{psk_bytes(psk).hex()}]")
+    return passwords
 
 
 def ssid_passwords(ssids: Iterable[str]) -> list[str]:

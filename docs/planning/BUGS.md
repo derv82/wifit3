@@ -175,20 +175,6 @@ and Textual compositing.
 **Direction.** Cache raw values and rebuild markup only when a value changes, instead of
 rebuilding the whole snapshot each tick.
 
-## Capture handling lives in the Scanner's table refresh
-
-**Problem.** Saving, logging and auto-cracking a capture happen in `ScannerView.refresh_table`, so
-capture handling is tied to a UI loop. Not a functional bug: captures from any screen work today.
-Design debt that needs the backend thought through before moving it.
-
-## Session pcap rewrites every handshake of the session
-
-**Problem.** The capture `.pcap` grows linearly: each save re-dumps every handshake captured this
-session, not just the newest. Unclear whether anything is lost or duplicated; a wrong write path
-here means lost captures.
-
-**Direction.** Read the save path and pin down what is written and when before changing it.
-
 ## `beacon_clone` copies HE/EHT operation widths as-is
 
 **Problem.** `beacon_clone` forces the HT/VHT operation elements to 20 MHz but copies HE and EHT

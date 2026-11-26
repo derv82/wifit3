@@ -99,9 +99,10 @@ class Rtl8821auDkmsDriver(Driver):
         loop = asyncio.get_running_loop()
         # All bring-up is blocking synchronous USB I/O; keep it off the event loop.
 
-        # Hold interface 0 for the session: unclaimed, WinUSB claims and releases it around every
-        # EP0 transfer, and that churn intermittently fails with "Entity not found".
-        await loop.run_in_executor(None, usb.util.claim_interface, self.transport.dev, 0)
+        # Hold the WLAN interface for the session: unclaimed, WinUSB claims and releases it around
+        # every EP0 transfer, and that churn intermittently fails with "Entity not found".
+        wlan_interface = self.transport.wlan_interface().bInterfaceNumber
+        await loop.run_in_executor(None, usb.util.claim_interface, self.transport.dev, wlan_interface)
 
         # EFUSE read (probe phase, before power-on, like the vendor): crystal_cap (AFE
         # trim) + the per-rate TX-power base/diffs + the MAC address.

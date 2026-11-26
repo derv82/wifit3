@@ -45,7 +45,7 @@ def test_assoc_resp_copies_beacon_elements_in_hostapd_order():
     ht_op = bytes.fromhex("3d03" "010000")
     ht_cap = bytes.fromhex("2d02" "6e01")             # cap info 0x016e: 40 MHz bit set
     he_cap = bytes.fromhex("ff03" "230102")
-    beacon = bytes(36) + ssid_ie("x") + wmm + wps + ext_cap + he_cap + ht_op + ht_cap
+    beacon = bytes(36) + ssid_ie(b"x") + wmm + wps + ext_cap + he_cap + ht_op + ht_cap
     f = assoc_resp(_BSSID, _CLIENT, twin_beacon=beacon)
     tail = f[30 + len(rates_ie() + ext_rates_ie()):]
     assert tail == ht_cap + ht_op + he_cap + ext_cap + wmm
@@ -68,7 +68,7 @@ def test_assoc_resp_copies_the_twin_beacon_rates_in_hostapd_order():
     supp = bytes.fromhex("0108" "828b0c1218243048")
     ext = bytes.fromhex("3202" "606c")
     rm_enabled = bytes.fromhex("4605" "7100000000")
-    beacon = _beacon(0x0011, ssid_ie("x"), rm_enabled, ext, supp)
+    beacon = _beacon(0x0011, ssid_ie(b"x"), rm_enabled, ext, supp)
     f = assoc_resp(_BSSID, _CLIENT, channel=6, twin_beacon=beacon)
     assert f[30:] == supp + ext + rm_enabled
     assert rates_ie(6) not in f and ext_rates_ie(6) not in f
@@ -98,8 +98,8 @@ def test_beacon_clone_strips_the_sae_h2e_only_selector():
 def test_beacon_clone_uses_generic_rates_for_a_decoy_on_the_other_band():
     supp_5ghz = bytes.fromhex("0108" "8c129824b048606c")
     ht_op_36 = bytes.fromhex("3d03" "240000")
-    to_2ghz = beacon_clone(_beacon(0x0011, ssid_ie("x"), supp_5ghz, ht_op_36), 6)
-    assert to_2ghz[36:] == ssid_ie("x") + rates_ie(6) + ext_rates_ie(6) + bytes.fromhex("3d03" "060000")
+    to_2ghz = beacon_clone(_beacon(0x0011, ssid_ie(b"x"), supp_5ghz, ht_op_36), 6)
+    assert to_2ghz[36:] == ssid_ie(b"x") + rates_ie(6) + ext_rates_ie(6) + bytes.fromhex("3d03" "060000")
     supp_2ghz = bytes.fromhex("0104" "828b0c12")
     ext_2ghz = bytes.fromhex("3202" "606c")
     to_5ghz = beacon_clone(_beacon(0x0011, supp_2ghz, ds_param_ie(11), ext_2ghz), 36)
@@ -131,10 +131,10 @@ def test_eapol_m1_layout_fromds_no_mic():
 
 
 def test_beacon_clone_strips_sae_keeps_psk():
-    beacon = bytes(36) + ssid_ie("Net") + rates_ie() + ds_param_ie(11) + _RSN_PSK_SAE + _RSNXE
+    beacon = bytes(36) + ssid_ie(b"Net") + rates_ie() + ds_param_ie(11) + _RSN_PSK_SAE + _RSNXE
     out = beacon_clone(beacon, 1)
     assert out[22:24] == b"\x00\x00"                  # sequence zeroed for HW restamp
-    assert ssid_ie("Net") in out
+    assert ssid_ie(b"Net") in out
     assert ds_param_ie(1) in out and ds_param_ie(11) not in out
     assert b"\x00\x0f\xac\x08" not in out             # SAE AKM gone
     assert b"\x01\x00\x00\x0f\xac\x02" in out         # single PSK AKM

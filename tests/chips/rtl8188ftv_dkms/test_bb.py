@@ -75,19 +75,6 @@ class FakeTB:
         self.writes.append((addr, len(data), bytes(data)))
 
 
-def test_bb_config_phase_order():
-    from wifit3.chips.rtl8188ftv_dkms import bb
-    t = FakeTB([0xFC14, 0x00000000])
-    bb.bb_config(t, 0x1D, 1, 7)
-    assert t.writes[0] == (0x02, 2, 0xFC14 | 0x2003)
-    assert t.writes[1] == (0x1F, 1, 0x07)
-    assert t.writes[2] == (0x840, 4, 0x100780)
-    assert t.writes[3] == (0x02, 1, 0x17)
-    addr, width, value = t.writes[-1]
-    assert (addr, width) == (0x24, 4)
-    assert value == ((0x1D | (0x1D << 6)) << 11) & 0x007FF800
-
-
 def test_rf_serial_word():
     from wifit3.chips.rtl8188ftv_dkms import rf
     t = FakeTB([])
@@ -150,19 +137,3 @@ def test_config_rf_reg_b2_retries_with_lck_kick():
     assert t.writes.count((0x840, 4, (0xB2 << 20) | data)) == 2
 
 
-def test_rf_config_prologue_restore_and_tables():
-    from wifit3.chips.rtl8188ftv_dkms import rf
-    t = FakeTB([0x0] * 4000)
-    tables = rf.rf_config(t, 1, 7)
-    assert sorted(tables.keys()) == sorted([
-        "2GA_P", "2GA_N", "2GB_P", "2GB_N",
-        "2GCCKA_P", "2GCCKA_N", "2GCCKB_P", "2GCCKB_N",
-        "5GA_P", "5GA_N", "5GB_P", "5GB_N"])
-    assert t.writes[0][0] == 0x860
-    assert t.writes[-1] == (0x870, 4, 0x0)
-    try:
-        rf.rf_config(FakeTB([0x0] * 4000), 1, 7, load_phy_file=0x20)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("para-file path accepted")

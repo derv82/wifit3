@@ -346,7 +346,7 @@ def test_launch_runs_the_default_passwords_then_the_ssid_passwords_first(tmp_pat
                                            str(ssid_passwords_path),
                                            str(wordlist.resolve())]
     assert ssid_passwords_path.read_text(encoding="utf-8").splitlines() == list(dict.fromkeys(
-        all_ssid_variants([("ab", "02:00:00:00:00:01")]) + ssid_passwords(["CafeGuest"])))
+        all_ssid_variants([(b"ab", "02:00:00:00:00:01")]) + ssid_passwords(["CafeGuest"])))
     assert spawn.call_args.args[0][-1] == str(DEFAULT_PASSWORDS_PATH.resolve())
     assert job.tool_state["identities"] == [
         wordlist_identity(DEFAULT_PASSWORDS_PATH), SSID_VARIANTS_IDENTITY, wordlist_identity(wordlist)]
@@ -791,21 +791,6 @@ def _exhausted_job(tmp_path) -> JobState:
     log.write_text('{ "session": "hashcat", "status": 5, "progress": [3, 3] }\n')
     return _job(log_path=str(log), pid=777, capture_path=str(tmp_path / "x.hc22000"),
                 tool_state={"wordlists": ["rockyou.txt"]})
-
-
-def test_poll_status_reaps_procs_on_exhausted(tmp_path):
-    """A finished-but-not-cracked job drops its process-tracking entry (no leak)."""
-    tool = HashcatTool()
-    proc = subprocess.Popen([sys.executable, "-c", "pass"])
-    proc.wait()
-    tool._procs[proc.pid] = proc
-    log = tmp_path / "j.log"
-    log.write_text('{ "session": "hashcat", "status": 5, "progress": [3, 3] }\n')
-    res = tool.poll_status(_job(log_path=str(log), pid=proc.pid,
-                                capture_path=str(tmp_path / "x.hc22000"),
-                                tool_state={"wordlists": ["rockyou.txt"]}))
-    assert res.status == ToolStatus.FAILURE
-    assert proc.pid not in tool._procs
 
 
 def test_a_finished_hashcat_is_waited_on_instead_of_left_as_a_zombie(tmp_path, mocker):

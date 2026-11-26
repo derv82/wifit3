@@ -66,7 +66,7 @@ def auth_req(bssid: bytes, our_mac: bytes) -> bytes:
     return _hdr(b"\xb0\x00", bssid, our_mac) + b"\x00\x00\x01\x00\x00\x00"
 
 
-def assoc_req(bssid: bytes, our_mac: bytes, ssid: str, trailer_ies: bytes = b"",
+def assoc_req(bssid: bytes, our_mac: bytes, ssid_bytes: bytes, trailer_ies: bytes = b"",
               channel: int = 1, privacy: Optional[bool] = None,
               ht_capable: bool = True, beacon_frame: Optional[bytes] = None) -> bytes:
     """Association Request: band-aware rates, 20MHz HT caps, and the capability field: ESS plus
@@ -95,5 +95,5 @@ def assoc_req(bssid: bytes, our_mac: bytes, ssid: str, trailer_ies: bytes = b"",
     cap = struct.pack("<H", cap_val)
     listen = struct.pack("<H", 0x0001)
     ht = ht_cap_ie() if ht_capable else b""
-    ies = ssid_ie(ssid) + rates_ie(channel) + ext_rates_ie(channel) + ht + trailer_ies
+    ies = ssid_ie(ssid_bytes) + rates_ie(channel) + ext_rates_ie(channel) + ht + trailer_ies
     return _hdr(b"\x00\x00", bssid, our_mac) + cap + listen + ies

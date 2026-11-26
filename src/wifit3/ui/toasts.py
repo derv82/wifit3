@@ -31,7 +31,7 @@ class Toasts:
         self._shown_capture_ranks: Dict[str, ShownCaptureRank] = {}
 
     def ap_event(self, event: ApEvent, guessid: str, pbc_ignore_reasons: List[str]) -> None:
-        if event.ssid and event.ssid != "<hidden>":
+        if event.ssid:
             name = f"[bold]{escape(event.ssid)}[/bold]"
             location = (f"on channel [bold]{event.channel}[/bold] "
                         f"[dim bold](BSSID: {event.bssid})[/dim bold]")
@@ -45,7 +45,7 @@ class Toasts:
                 rank = ShownCaptureRank.AUTHORIZED
             else:
                 rank = ShownCaptureRank.CHALLENGE
-            self._show_capture(event.bssid, rank, f"Handshake captured ({event.pair_label})",
+            self._show_capture(event.bssid, rank, f"Handshake captured ({event.messages_label})",
                                f"{name} {location}")
         elif isinstance(event, PmkidCaptured):
             self._show_capture(event.bssid, ShownCaptureRank.AUTHORIZED, "PMKID captured (M1)",

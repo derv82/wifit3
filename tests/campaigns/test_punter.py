@@ -11,7 +11,7 @@ _C2 = bytes.fromhex("02bbbbbbbbbb")
 _BROADCAST = b"\xff" * 6
 _FIXED = struct.pack("<Q", 0) + struct.pack("<H", 100) + b"\x11\x04"
 _BEACON = (b"\x80\x00\x00\x00" + _BROADCAST + _BSSID_B + _BSSID_B + b"\x00\x00"
-           + _FIXED + ssid_ie("GL-Test") + rates_ie() + ds_param_ie(11) + GENERIC_RSN_IE)
+           + _FIXED + ssid_ie(b"GL-Test") + rates_ie() + ds_param_ie(11) + GENERIC_RSN_IE)
 
 
 class _FakeIface:

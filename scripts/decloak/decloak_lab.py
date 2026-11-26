@@ -174,7 +174,7 @@ async def claim_names(iface, ap: AccessPoint, args, our_mac: bytes) -> int:
     """Authenticate once, then claim a fresh sentinel SSID and --ssid in turn, --probes
     times. An AP that accepts the sentinel accepts anything, so its verdict on --ssid
     means nothing; one that refuses the sentinel and accepts --ssid has named itself."""
-    association = Association(iface, args.bssid, "", args.channel, our_mac=our_mac,
+    association = Association(iface, args.bssid, b"", args.channel, our_mac=our_mac,
                               auth_timeout=AUTH_TIMEOUT_S, assoc_timeout=ASSOC_TIMEOUT_S,
                               assoc_trailer_ies=ap.rsn_ie or b"",
                               privacy=bool(ap.rsn_ie))

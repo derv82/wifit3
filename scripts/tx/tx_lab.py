@@ -282,7 +282,7 @@ class Lab:
             await send_no_wait(frame)
 
         self.test.send_no_wait = timed_send_no_wait
-        fake = FakeAP(self.test, mac_bytes(TWIN_BSSID), LAB_SSID, self.channel, lab_beacon(self.channel))
+        fake = FakeAP(self.test, mac_bytes(TWIN_BSSID), LAB_SSID.encode("utf-8"), self.channel, lab_beacon(self.channel))
         self.tap.lab_beacons.clear()
         try:
             await fake.start()
@@ -312,7 +312,7 @@ class Lab:
 
     async def responder(self) -> None:
         print(f"[*] responder: {PROBES} probe requests from the sniffer to FakeAP on the test card")
-        fake = FakeAP(self.test, mac_bytes(TWIN_BSSID), LAB_SSID, self.channel,
+        fake = FakeAP(self.test, mac_bytes(TWIN_BSSID), LAB_SSID.encode("utf-8"), self.channel,
                       lab_beacon(self.channel), rx_source=self.test)
         calls: dict[bytes, float] = {}
         await self.sniffer.enable_rx_acks()       # tallies ACKs to each probe's Addr2: active monitor

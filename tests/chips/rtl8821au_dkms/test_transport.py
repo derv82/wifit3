@@ -151,3 +151,68 @@ def test_a_tx_enodev_logs_usb_write_port_status_before_raising(mocker, caplog):
         with pytest.raises(usb.core.USBError):
             t.bulk_out(bytes(64))
     assert "usb_write_port, status=-19" in caplog.text
+
+
+class FakeEndpoint:
+    def __init__(self, address: int, attributes: int):
+        self.bEndpointAddress = address
+        self.bmAttributes = attributes
+
+
+class FakeInterface:
+    def __init__(self, number: int, interface_class: int, endpoints: list[FakeEndpoint]):
+        self.bInterfaceNumber = number
+        self.bInterfaceClass = interface_class
+        self.bInterfaceSubClass = interface_class
+        self.bInterfaceProtocol = interface_class
+        self.endpoints = endpoints
+
+    def __iter__(self):
+        return iter(self.endpoints)
+
+
+class FakeConfiguration:
+    def __init__(self, interfaces: list[FakeInterface]):
+        self.interfaces = interfaces
+
+    def __iter__(self):
+        return iter(self.interfaces)
+
+    def __getitem__(self, index: tuple[int, int]) -> FakeInterface:
+        return self.interfaces[index[0]]
+
+
+BULK, INTERRUPT, ISOCHRONOUS = 0x02, 0x03, 0x01
+
+
+def test_bulk_in_ep_is_on_the_vendor_interface_of_a_multi_function_device(mocker):
+    dev = mocker.Mock()
+    dev.get_active_configuration.return_value = FakeConfiguration([
+        FakeInterface(0, 0xE0, [FakeEndpoint(0x81, INTERRUPT), FakeEndpoint(0x02, BULK), FakeEndpoint(0x82, BULK)]),
+        FakeInterface(1, 0xE0, [FakeEndpoint(0x03, ISOCHRONOUS), FakeEndpoint(0x83, ISOCHRONOUS)]),
+        FakeInterface(2, 0xFF, [FakeEndpoint(0x84, BULK), FakeEndpoint(0x05, BULK), FakeEndpoint(0x06, BULK),
+                                FakeEndpoint(0x87, INTERRUPT), FakeEndpoint(0x08, BULK), FakeEndpoint(0x09, BULK)]),
+    ])
+    transport = RTL8821AUDkmsTransport(dev)
+    assert transport.wlan_interface().bInterfaceNumber == 2
+    assert transport._bulk_in_ep() == 0x84
+
+
+def test_bulk_in_ep_is_on_interface_0_of_a_single_interface_device(mocker):
+    dev = mocker.Mock()
+    dev.get_active_configuration.return_value = FakeConfiguration([
+        FakeInterface(0, 0xFF, [FakeEndpoint(0x84, BULK), FakeEndpoint(0x05, BULK), FakeEndpoint(0x06, BULK),
+                                FakeEndpoint(0x87, INTERRUPT), FakeEndpoint(0x08, BULK), FakeEndpoint(0x09, BULK)]),
+    ])
+    transport = RTL8821AUDkmsTransport(dev)
+    assert transport.wlan_interface().bInterfaceNumber == 0
+    assert transport._bulk_in_ep() == 0x84
+
+
+def test_wlan_interface_is_interface_0_without_a_vendor_interface(mocker):
+    dev = mocker.Mock()
+    dev.get_active_configuration.return_value = FakeConfiguration([
+        FakeInterface(0, 0x00, [FakeEndpoint(0x84, BULK)]),
+        FakeInterface(1, 0x00, [FakeEndpoint(0x81, BULK)]),
+    ])
+    assert RTL8821AUDkmsTransport(dev).wlan_interface().bInterfaceNumber == 0

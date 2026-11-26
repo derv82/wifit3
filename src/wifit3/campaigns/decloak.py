@@ -228,7 +228,7 @@ class DecloakCampaign(Campaign):
         logger.info("[DECLOAK] associating through %d candidate(s)",
                     len(self.candidate_ssids))
         association = Association(
-            self.iface, self.ap.bssid, "", self.ap.channel, our_mac=self.source_mac,
+            self.iface, self.ap.bssid, b"", self.ap.channel, our_mac=self.source_mac,
             auth_timeout=AUTH_TIMEOUT_S, assoc_timeout=ASSOC_TIMEOUT_S,
             assoc_trailer_ies=self.ap.rsn_ie or b"",
             should_stop=lambda: self.stopped, beacon_frame=self.ap.last_beacon_frame,
@@ -268,7 +268,7 @@ class DecloakCampaign(Campaign):
             self.sent += 1
             logger.debug("[DECLOAK] %s: association request for %r", self.ap.bssid, ssid)
             if await association.associate_as(ssid) == 0:
-                self.array.decloak(self.ap, ssid, "assoc")
+                self.array.decloak(self.ap, ssid, "assoc", association.assoc_req_frame(ssid.encode("utf-8")))
                 logger.info("[DECLOAK] %s accepted %r", self.ap.bssid, ssid)
                 return ssid
         return None

@@ -64,7 +64,7 @@ def _hs(ssid: str = "TestNet", *frames, with_beacon: bool = True, pmkid: bytes =
 def test_pmkid_hashline_basic():
     pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
     hs = _hs(pmkid=pmkid)
-    line = pmkid_hashline("MyWiFi", hs)
+    line = pmkid_hashline(b"MyWiFi", hs)
     expected = (
         "WPA*01"
         f"*{pmkid.hex()}"
@@ -81,7 +81,7 @@ def test_pmkid_hashline_marks_psk_sha256_pmkid():
     pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
     hs = _hs(pmkid=pmkid)
     hs.pmkid_akm = 6
-    line = pmkid_hashline("MyWiFi", hs)
+    line = pmkid_hashline(b"MyWiFi", hs)
     assert line == f"WPA*01*{pmkid.hex()}*aabbccddeeff*112233445566*{b'MyWiFi'.hex()}***03"
     assert parse_hc22000(line).message_pair == "03"
 
@@ -97,7 +97,7 @@ def test_ft_pmkid_hashline_has_empty_message_pair_and_ft_identifiers():
     pmkid = b"\x11" * 16
     hs = _hs("Net", _ft_m2(), pmkid=pmkid)
     hs.pmkid_akm = 4
-    line = pmkid_hashline("Net", hs)
+    line = pmkid_hashline(b"Net", hs)
     assert line == (f"WPA*03*{pmkid.hex()}*aabbccddeeff*112233445566*{b'Net'.hex()}***"
                     f"*1234*{b'r0kh'.hex()}*020000000001")
     assert parse_hc22000(line).kind == "03"
@@ -106,22 +106,22 @@ def test_ft_pmkid_hashline_has_empty_message_pair_and_ft_identifiers():
 def test_ft_pmkid_hashline_none_without_ft_identifiers():
     hs = _hs("Net", pmkid=b"\x11" * 16)
     hs.pmkid_akm = 4
-    assert pmkid_hashline("Net", hs) is None
+    assert pmkid_hashline(b"Net", hs) is None
 
 
 def test_pmkid_hashline_none_when_no_pmkid():
     hs = _hs()
-    assert pmkid_hashline("X", hs) is None
+    assert pmkid_hashline(b"X", hs) is None
 
 
 def test_pmkid_hashline_none_when_no_ssid():
     hs = _hs(pmkid=b"\x00" * 16)
-    assert pmkid_hashline("", hs) is None
+    assert pmkid_hashline(b"", hs) is None
 
 
 def test_pmkid_hashline_rejects_wrong_length():
     hs = _hs(pmkid=b"\x00" * 15)  # malformed
-    assert pmkid_hashline("X", hs) is None
+    assert pmkid_hashline(b"X", hs) is None
 
 
 # ---- EAPOL hashlines ------------------------------------------------------------
@@ -139,7 +139,7 @@ def test_eapol_hashlines_one_line_per_instance():
         _ef(1, replay=9, nonce=a2),
         _ef(2, replay=9, nonce=b"\x22" + b"\x00" * 31, key_data_len=22),
     )
-    lines = eapol_hashlines("Net", hs)
+    lines = eapol_hashlines(b"Net", hs)
     assert len(lines) == 2
     assert {ln.split("*")[6] for ln in lines} == {a1.hex(), a2.hex()}  # ANonces
     # Every line is structurally valid: WPA, type 02, 9 *-separated fields.
@@ -221,4 +221,4 @@ def test_read_hc22000_keeps_valid_lines_stripped(tmp_path):
 def test_ssid_decodes_the_essid_field():
     assert parse_hc22000(f"WPA*01*{_COMMON}***").ssid == "Home"
     not_utf8 = _COMMON.replace("486f6d65", "48ff")
-    assert parse_hc22000(f"WPA*01*{not_utf8}***").ssid == "H�"
+    assert parse_hc22000(f"WPA*01*{not_utf8}***").ssid == "H"

@@ -31,7 +31,7 @@ class VerifyPskCampaign(VerifyCampaign):
         ap = self.target
         bssid = ap.bssid.lower()
         trailer = force_psk_akm(ap.rsn_ie or GENERIC_RSN_IE) or GENERIC_RSN_IE
-        association = Association(iface, bssid, ap.ssid or "", ap.channel, our_mac=our_mac,
+        association = Association(iface, bssid, ap.ssid_bytes or b"", ap.channel, our_mac=our_mac,
                                   assoc_trailer_ies=trailer, should_stop=lambda: self.stopped,
                                   beacon_frame=ap.last_beacon_frame)
         association.start()
@@ -66,7 +66,7 @@ class VerifyPskCampaign(VerifyCampaign):
                 return True
             return False
 
-        pmk = derive_pmk(self.value, (ap.ssid or "").encode())
+        pmk = derive_pmk(self.value, ap.ssid_bytes or b"")
         bssid_mac = str_to_mac(bssid)
         for attempt in range(_M2_ATTEMPTS):
             snonce = random_nonce()

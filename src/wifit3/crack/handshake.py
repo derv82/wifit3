@@ -43,7 +43,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from wifit3.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.dot11.eapol import AES_128_CMAC, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
@@ -298,6 +298,44 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
             and not _ft_pair_incomplete(p)]
 
 
+def handshake_messages(hs: Handshake, pair: CrackablePair) -> List[HandshakeMessage]:
+    """Every frame of the pair's 4-way, in arrival order: M1/M3 carrying its ANonce, M2s
+    carrying its SNonce that answer one of those M1/M3s by replay counter, M4s carrying its
+    SNonce, and each zero-nonce M4 answering one of those M3s."""
+    anonce = pair.anonce_frame.nonce
+    snonce = pair.mic_frame.nonce
+    answering_m2_replays: set[int] = set()
+    for f in hs.messages:
+        if f.nonce == anonce and _within_window(f, pair.mic_frame):
+            if f.msg_num == 1:
+                answering_m2_replays.add(_replay(f))
+            elif f.msg_num == 3:
+                answering_m2_replays.add(_replay(f) - 1)
+    messages: List[HandshakeMessage] = []
+    for f in hs.messages:
+        if not _within_window(f, pair.mic_frame):
+            continue
+        if f.msg_num in (1, 3) and f.nonce == anonce:
+            messages.append(f)
+        elif f is pair.mic_frame:
+            messages.append(f)
+        elif f.msg_num == 2 and f.nonce == snonce and _replay(f) in answering_m2_replays:
+            messages.append(f)
+        elif f.msg_num == 4 and f.nonce == snonce:
+            messages.append(f)
+        elif f.msg_num == 4 and f.nonce == _ZERO_NONCE:
+            for m3 in messages:
+                if m3.msg_num == 3 and abs(_replay(m3) - _replay(f)) <= NONCE_ERROR_CORRECTIONS:
+                    messages.append(f)
+                    break
+    return messages
+
+
+def messages_label(messages: Iterable[HandshakeMessage]) -> str:
+    """``M1+M2+M3+M4``: the message numbers present, ascending."""
+    return "+".join(f"M{n}" for n in sorted({m.msg_num for m in messages}))
+
+
 def crackable_captures(ap: AccessPoint) -> set[tuple[str, bytes]]:
     """(client, ANonce or PMKID) per crackable capture on ``ap``."""
     captures = set()
@@ -405,12 +443,7 @@ def mac_compact(mac: str) -> str:
     return mac.replace(":", "").replace("-", "").lower()
 
 
-def ssid_hex(ssid: str) -> str:
-    """SSID -> UTF-8 hex (hashcat consumes the raw advertised bytes)."""
-    return ssid.encode("utf-8", errors="replace").hex()
-
-
-def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
+def hc22000_line(ssid_bytes: bytes, hs: Handshake, pair: CrackablePair) -> str:
     """The ``WPA*02*…`` hashline for a crackable pair (``WPA*04*…`` plus MDID, R0KH-ID
     and R1KH-ID for FT-PSK), MIC field zeroed.
 
@@ -427,7 +460,7 @@ def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
         f"*{f.mic.hex()}"
         f"*{mac_compact(hs.bssid)}"
         f"*{mac_compact(hs.client_mac)}"
-        f"*{ssid_hex(ssid)}"
+        f"*{ssid_bytes.hex()}"
         f"*{pair.anonce_frame.nonce.hex()}"
         f"*{bytes(payload).hex()}"
         f"*{pair.pair_byte | NONCE_CORRECTION_BIT:02x}"

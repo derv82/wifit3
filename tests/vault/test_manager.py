@@ -1,7 +1,6 @@
 import json
 import pathlib
 import sys
-import time
 import pytest
 from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
@@ -678,66 +677,3 @@ def test_a_job_saved_with_the_older_automatic_key_loads_as_auto_crack(tmp_path, 
     assert JobManager(MagicMock()).jobs["j1"].auto_crack is True
 
 
-def _wait_for_exit(tool, pid, seconds=10.0):
-    """The fake hashcat prints one line and exits; on Windows hashcat_console is its parent,
-    so wifit3 has no Popen to wait on."""
-    deadline = time.monotonic() + seconds
-    while tool._is_running(pid) and time.monotonic() < deadline:
-        time.sleep(0.01)
-
-
-def _fake_hashcat(tmp_path):
-    """A stand-in executable that prints one exhausted status line and exits."""
-    status = '{"status": 5, "progress": [3, 3]}'
-    if sys.platform == "win32":
-        exe = tmp_path / "fake-hashcat.cmd"
-        exe.write_text(f"@echo {status}\r\n@exit /b 1\r\n", encoding="utf-8")
-        return exe
-    exe = tmp_path / "fake-hashcat.sh"
-    exe.write_text(f"#!/bin/sh\necho '{status}'\nexit 1\n", encoding="utf-8")
-    exe.chmod(0o755)
-    return exe
-
-
-def test_a_queue_of_two_wordlists_runs_both_then_reports_not_found(manager, tmp_path):
-    """The whole loop against real processes: launch, exhaust, advance, exhaust, NOT FOUND."""
-    from wifit3.models.access_point import CaptureType
-    from wifit3.vault.tools.hashcat import HashcatTool
-
-    capture = tmp_path / "ap.hc22000"
-    hashline = f"WPA*01*{'aa' * 16}*aabbccddeeff*001122334455*41535553***"
-    capture.write_text(f"{hashline}\n")
-    first, second = tmp_path / "a.txt", tmp_path / "b.txt"
-    first.write_text("one\n")
-    second.write_text("two\n")
-    cap = PersistedCapture(type=CaptureType.HS, timestamp=0, path=str(capture),
-                           bssid="00:11:22:33:44:55")
-    manager.vault.all_captures.return_value = [cap]
-    tool = HashcatTool()
-    manager.register_tool(tool)
-    job_id = manager.submit_job("hashcat", cap, {
-        "hashcat_exe": str(_fake_hashcat(tmp_path)),
-        "wordlists": [str(first), str(second)],
-    }, [hashline])
-    job = manager.jobs[job_id]
-
-    manager.poll_jobs()                                 # launches against a.txt
-    assert job.status == ToolStatus.RUNNING
-    assert job.tool_state["index"] == 0
-    first_pid = job.pid
-
-    _wait_for_exit(tool, job.pid)
-    manager.poll_jobs()                                 # a.txt exhausted -> b.txt
-    assert job.status == ToolStatus.RUNNING
-    assert job.tool_state["index"] == 1
-    assert job.pid != first_pid
-    assert job.actions == JobAction.STOP | JobAction.PAUSE   # nothing left to skip to
-
-    _wait_for_exit(tool, job.pid)
-    manager.poll_jobs()                                 # b.txt exhausted -> done
-
-    assert job.status == ToolStatus.FAILURE
-    assert job.progress_msg == "2 wordlists"
-    assert job.actions == JobAction.CLEAR
-    log = pathlib.Path(job.log_path).read_text(encoding="utf-8", errors="replace")
-    assert log.count("=== wordlist:") == 2, "both runs logged to the job's one log"

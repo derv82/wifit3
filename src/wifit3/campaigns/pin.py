@@ -320,7 +320,7 @@ class WpsCampaign(Campaign):
                 await self._lease.enter_active_monitor(self.our_mac)
                 if self._lease.active_monitor_mac:
                     self.our_mac = str_to_mac(self._lease.active_monitor_mac)
-            self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
+            self.assoc = Association(self.iface, self.bssid, self.target.ssid_bytes or b"",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR, self.wsc_2_0),
                                      should_stop=lambda: self.stopped,

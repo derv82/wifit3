@@ -116,7 +116,7 @@ class WepCampaign(Campaign):
         self._active = True
         self._log(
             f"[bold green]ARP Replay starting[/bold green] on "
-            f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
+            f"[bold]{escape(self.target.ssid_displayable or '<hidden>')}[/bold]"
         )
         # The lease enters active monitor (random STA for SPOOFABLE, the card's own for FIXED_MAC),
         # registers that STA as own and holds it for the whole run. fake-auth, replay and chopchop

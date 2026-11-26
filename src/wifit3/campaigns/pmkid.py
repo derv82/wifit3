@@ -196,7 +196,7 @@ class PmkidHarvestAttack(Campaign):
                     )
                     self.log(f"Auth → Assoc [dim bold](client MAC: {self.client_mac})[/dim bold]"
                              + (f" [dim](retry {attempt})[/dim]" if attempt > 1 else ""))
-                    assoc = Association(iface, self.target.bssid, self.target.ssid or "",
+                    assoc = Association(iface, self.target.bssid, self.target.ssid_bytes or b"",
                                         self.target.channel, our_mac=self.source_mac,
                                         assoc_trailer_ies=self._assoc_rsn_ie,
                                         should_stop=lambda: self.stopped,

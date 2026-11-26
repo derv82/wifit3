@@ -11,8 +11,8 @@ from wifit3.persist.meta import meta_path, read_meta, update_meta
 
 SSID_VARIANTS_IDENTITY = f"ssid-variants:v{SSID_VARIANTS_VERSION}"
 SSID_VARIANTS_NAME = "SSID variants"
-_EXHAUSTED_KEY = "exhausted"
-_WORDLISTS_KEY = "wordlists"
+EXHAUSTED_KEY = "exhausted"
+WORDLISTS_KEY = "wordlists"
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ def wordlist_identity(path: str | Path) -> str:
 
 
 def _exhausted(meta: dict) -> dict[str, dict[str, int]]:
-    stored = meta.get(_EXHAUSTED_KEY)
+    stored = meta.get(EXHAUSTED_KEY)
     if not isinstance(stored, dict):
         return {}
     return {identity: {hashline: epoch for hashline, epoch in recorded.items()
@@ -51,7 +51,7 @@ def _exhausted(meta: dict) -> dict[str, dict[str, int]]:
 
 
 def _wordlist_names(meta: dict) -> dict[str, list[str]]:
-    stored = meta.get(_WORDLISTS_KEY)
+    stored = meta.get(WORDLISTS_KEY)
     if not isinstance(stored, dict):
         return {}
     return {identity: [n for n in names if isinstance(n, str)]
@@ -75,7 +75,7 @@ def record_exhausted(ssid: Optional[str], bssid: str, identity: str, wordlist_na
         names[identity].append(wordlist_name)
     saved_ssid = meta.get("ssid")
     update_meta(saved_ssid if isinstance(saved_ssid, str) else ssid, bssid,
-                **{_EXHAUSTED_KEY: exhausted, _WORDLISTS_KEY: names})
+                **{EXHAUSTED_KEY: exhausted, WORDLISTS_KEY: names})
 
 
 def _configured_wordlist_names() -> dict[str, str]:

@@ -23,6 +23,7 @@ import time
 
 from wifit3.dot11.wsc import messages as M
 from wifit3.dot11.wsc import crypto as wc
+from wifit3.text import displayable_ssid
 from .registrar import (AttemptOutcome, PinResult, WpsTransport, config_error_name,
                         describe_frame, disassoc_reason, eapol_start_wait)
 
@@ -234,7 +235,7 @@ class WpsEnrollee:
                     return AttemptOutcome(
                         PinResult.SUCCESS, "<PBC>",
                         psk=psk.decode("utf-8", "replace"),
-                        ssid=ssid.decode("utf-8", "replace") if ssid else None,
+                        ssid=displayable_ssid(ssid) if ssid else None,
                     )
 
             return AttemptOutcome(PinResult.TIMEOUT, "<PBC>", detail="exchange did not converge")

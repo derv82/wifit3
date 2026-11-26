@@ -13,7 +13,7 @@ from typing import AsyncIterator, Callable, Dict, List, Optional, Set
 
 from wifit3.chips.driver import FakeMacSupport
 from wifit3.dot11.chan import is_dfs_channel
-from wifit3.dot11.packet import BeaconPacket, Packet
+from wifit3.dot11.packet import BeaconPacket, Packet, ProbeResponsePacket
 from wifit3.errors import SetChannelError
 from wifit3.models import AccessPoint, Client
 from wifit3.wlan.dedupe import StreamMerger
@@ -211,8 +211,8 @@ class WlanArray:
         self._stray_beacon_channels.pop(bssid, None)
 
     def _is_stray_beacon(self, pkt: Packet) -> bool:
-        return (isinstance(pkt, BeaconPacket)
-                and self._stray_beacon_channels.get(pkt.bssid) == pkt.channel)
+        return (isinstance(pkt, (BeaconPacket, ProbeResponsePacket))
+                and self._stray_beacon_channels.get(pkt.bssid) == pkt.elements.channel)
 
     # ----- sink facade -------------------------------------------------------
 
@@ -252,6 +252,9 @@ class WlanArray:
             return aps
         return [ap for ap in aps if ap.bssid not in self._evil_twin_bssids]
 
+    def guessid_bytes(self, ap: AccessPoint) -> bytes:
+        return self._sink.guessid_bytes(ap)
+
     def guessid(self, ap: AccessPoint) -> str:
         return self._sink.guessid(ap)
 
@@ -262,8 +265,8 @@ class WlanArray:
     def register_forged_mac(self, mac) -> None:
         self._sink.register_forged_mac(mac)
 
-    def decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
-        self._sink.decloak(ap, ssid, method)
+    def decloak(self, ap: AccessPoint, ssid: str, method: str, reveal_frame: Optional[bytes] = None) -> None:
+        self._sink.decloak(ap, ssid, method, reveal_frame=reveal_frame)
 
     def register_own_mac(self, mac) -> str:
         return self._sink.register_own_mac(mac)

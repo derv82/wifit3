@@ -8,7 +8,7 @@ import logging
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from wifit3.crack.hc22000_format import Hc22000Line, read_hc22000
 from wifit3.models import PSK_CAPTURE_TYPES, CaptureType, PersistedCapture
@@ -36,35 +36,30 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def _read_wep_key(text: str) -> str | None:
+def read_wep_key(text: str) -> str | None:
     """Extract the hex WEP key from a ``_wep_key.txt`` body, or None."""
     m = WEP_KEY_HEX_RE.search(text)
     return m.group(1).lower() if m else None
 
 
-def _read_wps_psk(text: str) -> str | None:
+def read_wps_psk(text: str) -> str | None:
     """Extract the PSK from a ``_wps_pin.txt`` or ``_wps_pbc.txt`` body, or None."""
     m = WPS_PSK_RE.search(text)
     return m.group(1).strip() if m else None
 
 
-def _ssid_naming_file(ssid: str, filename_ssid: str) -> str:
-    return ssid if ssid and safe_ssid(ssid) == filename_ssid else filename_ssid
-
-
-def _body_ssid(text: str, filename_ssid: str) -> str:
+def body_ssid(text: str, filename_ssid: str) -> str:
     m = _SSID_LINE_RE.search(text)
-    return _ssid_naming_file(m.group(1) if m else "", filename_ssid)
+    if m and m.group(1) and safe_ssid(m.group(1)) == filename_ssid:
+        return m.group(1)
+    return filename_ssid
 
 
-def _essid(lines: list[tuple[str, Hc22000Line]], filename_ssid: str) -> str:
-    if not lines:
-        return filename_ssid
-    try:
-        essid = bytes.fromhex(lines[0][1].essid).decode("utf-8")
-    except UnicodeDecodeError:
-        return filename_ssid
-    return _ssid_naming_file(essid, filename_ssid)
+def _essid(lines: list[tuple[str, Hc22000Line]], filename_ssid: str) -> tuple[str, Optional[bytes]]:
+    """The SSID naming the file, and its bytes when the first hashline's SSID names it."""
+    if lines and lines[0][1].ssid and safe_ssid(lines[0][1].ssid) == filename_ssid:
+        return lines[0][1].ssid, bytes.fromhex(lines[0][1].essid)
+    return filename_ssid, None
 
 
 def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
@@ -74,14 +69,14 @@ def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     except OSError:
         mtime = 0
     m = AGGREGATED_HC22000_RE.match(path.name)
-    ssid = _essid(lines, m.group("ssid")) if m else None
+    ssid, ssid_bytes = _essid(lines, m.group("ssid")) if m else (None, None)
     out: List[PersistedCapture] = []
     if any(line.is_pmkid for _, line in lines):
         out.append(PersistedCapture(type=CaptureType.PMKID, timestamp=mtime, path=str(path),
-                                    bssid=bssid, ssid=ssid))
+                                    bssid=bssid, ssid=ssid, ssid_bytes=ssid_bytes))
     if any(not line.is_pmkid for _, line in lines):
         out.append(PersistedCapture(type=CaptureType.HS, timestamp=mtime, path=str(path),
-                                    bssid=bssid, ssid=ssid))
+                                    bssid=bssid, ssid=ssid, ssid_bytes=ssid_bytes))
     return out
 
 
@@ -98,38 +93,39 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     ext = m.group("ext")
     text = _read_text(path) or "" if ext == "txt" else ""
     lines = read_hc22000(path) if ext == "hc22000" else []
+    ssid_bytes: Optional[bytes] = None
     if ext == "hc22000":
-        ssid = _essid(lines, m.group("ssid"))
+        ssid, ssid_bytes = _essid(lines, m.group("ssid"))
     elif ext == "txt":
-        ssid = _body_ssid(text, m.group("ssid"))
+        ssid = body_ssid(text, m.group("ssid"))
     else:
         ssid = m.group("ssid")
 
     if kind == "wep_key" and ext == "txt":
-        key = _read_wep_key(text)
+        key = read_wep_key(text)
         if key is None:
             return []
         return [PersistedCapture(type=CaptureType.WEP, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=key, ssid=ssid)]
     if kind == "wps_pin" and ext == "txt":
         return [PersistedCapture(type=CaptureType.WPS_PIN, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(text), ssid=ssid,
+                                 bssid=bssid, value=read_wps_psk(text), ssid=ssid,
                                  pin=parse_wps_pin(text))]
     if kind == "wps_pbc" and ext == "txt":
         return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(text), ssid=ssid)]
+                                 bssid=bssid, value=read_wps_psk(text), ssid=ssid)]
     if kind == "wpa_psk" and ext == "txt":
-        psk = _read_wps_psk(text)
+        psk = read_wps_psk(text)
         if psk is None:
             return []
         return [PersistedCapture(type=CaptureType.WPA_PSK, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=psk, ssid=ssid)]
     if kind == "handshake" and ext in ("hc22000", "pcap"):
         return [PersistedCapture(type=CaptureType.HS, timestamp=epoch, path=str(path),
-                                 bssid=bssid, ssid=ssid)]
+                                 bssid=bssid, ssid=ssid, ssid_bytes=ssid_bytes)]
     if kind == "pmkid" and ext in ("hc22000", "pcap"):
         return [PersistedCapture(type=CaptureType.PMKID, timestamp=epoch, path=str(path),
-                                 bssid=bssid, ssid=ssid)]
+                                 bssid=bssid, ssid=ssid, ssid_bytes=ssid_bytes)]
     return []
 
 

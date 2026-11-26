@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Set
 
 from wifit3.chips.log_trace import TRACE   # registers Logger.trace + the level name
 from wifit3.models import AccessPoint, Client, Handshake, HandshakeMessage, IdSource
+from wifit3.text import displayable_ssid
 from wifit3.dot11.eapol import AES_128_CMAC, HMAC_SHA1_AES, KEY_DESCRIPTOR_VERSION_MASK
 from wifit3.dot11.mac import mac_to_str
 from wifit3.dot11.parser import WlanFrameParser
@@ -23,7 +24,7 @@ from wifit3.dot11.rsn import AKM_FT_PSK, AKM_PSK, AKM_PSK_SHA256
 from wifit3.dot11.wsc import messages as WSC
 from wifit3.dot11.wsc.identity import apply_wsc_identity
 from wifit3.dot11.packet import (
-    Packet, BeaconPacket, EapolPacket, EapPacket, WepDataPacket, AssocRequestPacket,
+    Packet, BeaconPacket, ProbeResponsePacket, EapolPacket, EapPacket, WepDataPacket, AssocRequestPacket,
     AssocRespPacket, ProbeReqPacket, is_group_mac,
 )
 from wifit3.wlan.packet_stats import PacketStats
@@ -63,6 +64,7 @@ class WlanSink:
 
     SIBLING_BIT_DIFF_MAX = 4
     SIGNAL_WINDOW_SIZE = 8
+    ASSOC_RESPONSE_WINDOW_S = 0.1  # Max time gap between an Assoc Req & Assoc Resp
 
     def __init__(self):
         self.access_points: Dict[str, AccessPoint] = {}
@@ -73,6 +75,7 @@ class WlanSink:
         self.probed_ssids: Set[str] = set()  # every SSID probed for this session, by any client
         # (bssid, client) -> the PMKID-carrying M1 whose AKM the next M2 may confirm
         self._pmkid_m1_awaiting_m2: Dict[tuple[str, str], EapolPacket] = {}
+        self._assoc_request_by_client: Dict[tuple[str, str], tuple[AssocRequestPacket, float]] = {}
         self._waiters: list = []            # (match, future, loop) for the next_frame await-API
         self._waiters_lock = threading.Lock()
 
@@ -97,10 +100,14 @@ class WlanSink:
 
     # ----- ingest ------------------------------------------------------------
 
-    def update(self, pkt: Packet, card_id: str, channel_hint: int = 1) -> None:
+    def update(self, pkt: Packet, card_id: str, channel_hint: int = 1, *,
+               timestamp: Optional[float] = None) -> None:
         """Fold one deduplicated (novel) frame into the picture. ``card_id`` names the receiving
         card (for per-card RSSI); ``channel_hint`` is that card's current channel, used only when a
-        beacon carries no channel of its own."""
+        beacon carries no channel of its own. ``timestamp`` is the epoch seconds the frame was
+        received; None means now."""
+        if timestamp is None:
+            timestamp = time.time()
         frame_type = pkt.type
         bssid = pkt.bssid
 
@@ -111,7 +118,7 @@ class WlanSink:
         ) and logger.isEnabledFor(TRACE):
             logger.trace("%s", _fmt_frame("RXFRAME", frame_type, pkt.source, pkt.dest, bssid))
 
-        if isinstance(pkt, ProbeReqPacket) and self._is_real_ssid(pkt.ssid):
+        if isinstance(pkt, ProbeReqPacket) and pkt.ssid:
             self.probed_ssids.add(pkt.ssid)
 
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
@@ -119,10 +126,10 @@ class WlanSink:
 
         self.packet_stats.record_rx(bssid, frame_type)  # Live packet dashboard
 
-        self._on_beacon_frame(pkt, card_id, channel_hint)
+        self._on_beacon_frame(pkt, card_id, channel_hint, timestamp)
         self._on_wepdata_frame(pkt)
-        self._track_client(pkt, card_id)
-        self._on_eapol_frame(pkt)
+        self._track_client(pkt, card_id, timestamp)
+        self._on_eapol_frame(pkt, timestamp)
         self._on_eap_frame(pkt)
 
     def record_signal(self, card_id: str, bssid: str, rssi: int) -> None:
@@ -138,53 +145,45 @@ class WlanSink:
         a client's M2 pairs with it."""
         pkt = WlanFrameParser.parse_80211_frame(frame, 0)
         if isinstance(pkt, EapolPacket):
-            self._on_eapol_frame(pkt)
+            self._on_eapol_frame(pkt, time.time())
 
     def record_injected_beacon(self, frame: bytes, card_id: str, channel_hint: int) -> None:
         """Fold EvilTwin's own beacon into the sink, bypassing the array's own-frame RX filter, so a
         twin on its own BSSID has the AP record its 4-way is tracked under."""
         pkt = WlanFrameParser.parse_80211_frame(frame, -100)
         if isinstance(pkt, BeaconPacket):
-            self._on_beacon_frame(pkt, card_id, channel_hint)
+            self._on_beacon_frame(pkt, card_id, channel_hint, time.time())
 
     # ----- typed handlers ----------------------------------------------------
 
-    def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int) -> bool:
+    def _on_beacon_frame(self, pkt: Packet, card_id: str, channel_hint: int, timestamp: float) -> bool:
         """Build/refresh the AP from a beacon or probe response."""
-        if not isinstance(pkt, BeaconPacket):
+        if not isinstance(pkt, (BeaconPacket, ProbeResponsePacket)):
             return False
+        elements = pkt.elements
         frame_type = pkt.type
         bssid = pkt.bssid
         rssi = pkt.rssi
         ssid = pkt.ssid
-        channel = pkt.channel if pkt.channel is not None else channel_hint
-        enc = pkt.encryption
-        akms = pkt.akms
-        akm_suites = pkt.akm_suites
-        rsn_valid = pkt.rsn_valid
-        vendor_akm_offered = pkt.vendor_akm_offered
-        pairwise_cipher = pkt.pairwise_cipher
-        wpa3 = pkt.wpa3
-        transition_mode = pkt.transition_mode
-        pmf_capable = pkt.pmf_capable
-        pmf_required = pkt.pmf_required
-        beacon_protection = pkt.beacon_protection
-        wps = pkt.wps
-        wps_locked = pkt.wps_locked
-        wps_version = pkt.wps_version
-        wps_config_methods = pkt.wps_config_methods
-        wps_device_password_id = pkt.wps_device_password_id
-        wps_selected_registrar = pkt.wps_selected_registrar
-        wsc_manufacturer = pkt.wsc_manufacturer
-        wsc_model_name = pkt.wsc_model_name
-        wsc_model_number = pkt.wsc_model_number
-        wsc_device_name = pkt.wsc_device_name
-        wsc_device_type = pkt.wsc_device_type
+        channel = elements.channel if elements.channel is not None else channel_hint
+        enc = elements.encryption
+        akms = elements.akms
+        akm_suites = elements.akm_suites
+        rsn_valid = elements.rsn is not None
+        vendor_akm_offered = elements.vendor_akm_offered
+        pairwise_cipher = elements.pairwise_cipher
+        wpa3 = elements.wpa3
+        transition_mode = elements.transition_mode
+        pmf_capable = elements.pmf_capable
+        pmf_required = elements.pmf_required
+        beacon_protection = elements.beacon_protection
+        wps = elements.wps
 
         if bssid not in self.access_points:
             ap = AccessPoint(
                 bssid=bssid,
-                ssid=ssid if self._is_real_ssid(ssid) else None,
+                ssid=ssid,
+                ssid_bytes=pkt.ssid_bytes if ssid else None,
                 channel=channel,
                 encryption=enc,
                 akms=list(akms),
@@ -198,27 +197,28 @@ class WlanSink:
                 pmf_capable=pmf_capable,
                 pmf_required=pmf_required,
                 beacon_protection=beacon_protection,
-                wps=wps,
-                wps_locked=wps_locked,
-                wps_version=wps_version,
-                wps_config_methods=wps_config_methods,
-                wps_device_password_id=wps_device_password_id,
-                wps_selected_registrar=wps_selected_registrar,
-                chipset=pkt.chipset,
+                chipset=elements.chipset,
+                last_seen=timestamp,
             )
-            if wps:
+            if wps is not None:
+                ap.wps = True
+                ap.wps_locked = wps.locked
+                ap.wps_version = wps.version
+                ap.wps_config_methods = wps.config_methods
+                ap.wps_device_password_id = wps.device_password_id
+                ap.wps_selected_registrar = wps.selected_registrar
                 ap.identity.update(
                     IdSource.WSC_BEACON,
-                    manufacturer=wsc_manufacturer,
-                    model_name=wsc_model_name,
-                    model_number=wsc_model_number,
-                    device_name=wsc_device_name,
-                    device_type=wsc_device_type,
+                    manufacturer=wps.manufacturer,
+                    model_name=wps.model_name,
+                    model_number=wps.model_number,
+                    device_name=wps.device_name,
+                    device_type=wps.device_type,
                 )
             self.access_points[bssid] = ap
             self._record_ap_signal(ap, card_id, rssi)
             self._recompute_siblings_for(bssid)
-            if self._is_real_ssid(ssid):
+            if ssid:
                 logger.trace('[RXFRAME] %-9s New AP on Ch %s: %s ("%s")',
                              "beacon", channel, bssid, ssid)
         else:
@@ -227,7 +227,8 @@ class WlanSink:
             if frame_type == "beacon":
                 ap.beacons += 1
 
-            self.decloak(ap, ssid, frame_type)
+            reveal_frame = pkt.raw if isinstance(pkt, ProbeResponsePacket) else None
+            self.decloak(ap, ssid, frame_type, pkt.ssid_bytes, reveal_frame)
 
             self._record_ap_signal(ap, card_id, rssi)
 
@@ -247,32 +248,35 @@ class WlanSink:
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
                 ap.beacon_protection = beacon_protection
-            if pkt.chipset:
-                ap.chipset = pkt.chipset
+            if elements.chipset:
+                ap.chipset = elements.chipset
             # Only refresh WPS when this frame carried the IE.
-            if wps:
+            if wps is not None:
                 ap.wps = True
-                ap.wps_locked = wps_locked
-                ap.wps_version = wps_version
-                ap.wps_config_methods = wps_config_methods
-                ap.wps_device_password_id = wps_device_password_id
-                ap.wps_selected_registrar = wps_selected_registrar
+                ap.wps_locked = wps.locked
+                ap.wps_version = wps.version
+                ap.wps_config_methods = wps.config_methods
+                ap.wps_device_password_id = wps.device_password_id
+                ap.wps_selected_registrar = wps.selected_registrar
                 ap.identity.update(
                     IdSource.WSC_BEACON,
-                    manufacturer=wsc_manufacturer,
-                    model_name=wsc_model_name,
-                    model_number=wsc_model_number,
-                    device_name=wsc_device_name,
-                    device_type=wsc_device_type,
+                    manufacturer=wps.manufacturer,
+                    model_name=wps.model_name,
+                    model_number=wps.model_number,
+                    device_name=wps.device_name,
+                    device_type=wps.device_type,
                 )
 
         ap = self.access_points[bssid]
-        ap.last_seen = time.time()
+        ap.last_seen = max(ap.last_seen, timestamp)
 
         # Stash the latest RSNIE
-        rsn_ie = pkt.rsn_ie_raw
+        rsn_ie = elements.rsn_element_raw
         if rsn_ie and (rsn_valid or not ap.rsn_valid):
             ap.rsn_ie = rsn_ie
+
+        if frame_type == "beacon" and pkt.ssid_bytes and not pkt.ssid_bytes.strip(b"\x00"):
+            ap.hidden_ssid_len = len(pkt.ssid_bytes)
 
         # Stash the latest beacon and back-fill handshakes missing one.
         if frame_type == "beacon":
@@ -302,7 +306,7 @@ class WlanSink:
                 ap.wep = stats
         return True
 
-    def _track_client(self, pkt: Packet, card_id: str) -> bool:
+    def _track_client(self, pkt: Packet, card_id: str, timestamp: float) -> bool:
         """Register/refresh the client STA behind a frame (assoc, probed SSIDs, decloak)."""
         frame_type = pkt.type
         if frame_type not in (
@@ -353,13 +357,18 @@ class WlanSink:
         if frame_type in ("deauth", "disassoc") and client.bssid == bssid:
             client.akm_selected = None
 
-        if frame_type in ("assoc_req", "reassoc_req"):
+        if isinstance(pkt, AssocRequestPacket):
+            self._assoc_request_by_client[(bssid, client_mac)] = (pkt, timestamp)
+        elif isinstance(pkt, AssocRespPacket):
+            assoc_request = self._assoc_request_by_client.pop((bssid, client_mac), None)
             ap = self.access_points.get(bssid)
-            if ap is not None:
-                self.decloak(ap, pkt.ssid, frame_type)
+            if assoc_request is not None and ap is not None and pkt.status == 0:
+                request_pkt, request_time = assoc_request
+                if timestamp - request_time <= self.ASSOC_RESPONSE_WINDOW_S:
+                    self.decloak(ap, request_pkt.ssid, request_pkt.type, request_pkt.ssid_bytes, request_pkt.raw)
         return True
 
-    def _on_eapol_frame(self, pkt: Packet) -> bool:
+    def _on_eapol_frame(self, pkt: Packet, timestamp: float) -> bool:
         """Track the 4-way handshake / PMKID for a client on a known AP."""
         if not isinstance(pkt, EapolPacket):
             return False
@@ -401,20 +410,7 @@ class WlanSink:
 
         # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list.
         if client_mac not in self.own_macs and not hs.has_message(raw_frame):
-            eapol = HandshakeMessage(
-                raw=raw_frame,
-                msg_num=pkt.msg_num,
-                replay_hex=replay.hex(),
-                nonce=pkt.nonce or b"",
-                mic=pkt.mic or b"",
-                eapol_payload=pkt.payload,
-                akm=akm,
-                akm_selection_rejected=pkt.akm_selection_rejected,
-                mdid=pkt.mdid,
-                r0khid=pkt.r0khid,
-                r1khid=pkt.r1khid,
-                timestamp=time.time(),
-            )
+            eapol = HandshakeMessage.from_packet(pkt, akm, timestamp)
             hs.add_message(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")
@@ -480,20 +476,23 @@ class WlanSink:
         ap.wps = True
         return True
 
-    def decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
-        """Set ap.ssid to ssid, ignoring a placeholder or empty one. Sets
-        ap.decloak_method to method only while ap has no usable SSID yet, so the
-        first source to name a hidden AP is the one recorded."""
-        if not self._is_real_ssid(ssid):
+    def decloak(self, ap: AccessPoint, ssid: Optional[str], method: str, ssid_bytes: Optional[bytes] = None,
+                reveal_frame: Optional[bytes] = None) -> None:
+        """Set ap.ssid to ssid, ignoring a missing or empty one, and ap.ssid_bytes to ssid_bytes
+        (ssid's UTF-8 when None), ap.ssid_displayable and ap.decloak_reveal_frame when they changed. Sets
+        ap.decloak_method to method only while ap has no usable SSID yet, so the first source to name
+        a hidden AP is the one recorded."""
+        if not ssid:
             return
-        if not self._is_real_ssid(ap.ssid):
+        if ap.is_hidden:
             ap.decloak_method = method
+        if ssid_bytes is None:
+            ssid_bytes = ssid.encode("utf-8")
         ap.ssid = ssid
-
-    @staticmethod
-    def _is_real_ssid(ssid: Optional[str]) -> bool:
-        """True for a usable SSID (not hidden)."""
-        return bool(ssid) and ssid != "<hidden>"
+        if ssid_bytes != ap.ssid_bytes:
+            ap.ssid_bytes = ssid_bytes
+            ap.ssid_displayable = displayable_ssid(ssid_bytes)
+            ap.decloak_reveal_frame = reveal_frame
 
     @staticmethod
     def mac_octets(mac: str) -> Optional[bytes]:
@@ -542,14 +541,18 @@ class WlanSink:
                         other_ap.siblings.append(bssid)
         ap.siblings = new_siblings
 
-    def guessid(self, ap: AccessPoint) -> str:
-        """The alphabetically first SSID among ap's named siblings; "" when none."""
+    def guessid_bytes(self, ap: AccessPoint) -> bytes:
+        """The lowest SSID among ap's named siblings; b"" when none."""
         sibling_ssids = []
         for bssid in ap.siblings:
             sibling = self.access_points.get(bssid)
-            if sibling is not None and not sibling.is_hidden:
-                sibling_ssids.append(sibling.ssid)
-        return min(sibling_ssids, default="")
+            if sibling is not None and not sibling.is_hidden and sibling.ssid_bytes:
+                sibling_ssids.append(sibling.ssid_bytes)
+        return min(sibling_ssids, default=b"")
+
+    def guessid(self, ap: AccessPoint) -> str:
+        """guessid_bytes as the UI shows it."""
+        return displayable_ssid(self.guessid_bytes(ap))
 
     # ----- reads / forged-MAC bookkeeping / TX stats -------------------------
 

@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set
 
 from wifit3.dot11.pmf import PmfPosture
 from wifit3.dot11.rsn import AKM_OWE, ENTERPRISE_AKM_SUITES
+from wifit3.text import displayable_ssid
 
 from .handshake import Handshake
 from .identity import ApIdentity, IdKey, IdSource
@@ -51,12 +52,19 @@ class PersistedCapture:
     value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
     ssid: Optional[str] = None      # parsed from the filename, for display (VAULT)
     pin: Optional[str] = None       # WPS PIN (WPS_PIN captures only)
+    ssid_bytes: Optional[bytes] = None  # .hc22000 only: the first hashline's ESSID, when its SSID names the file
 
 
 @dataclass
 class AccessPoint:
     bssid: str
     ssid: Optional[str] = None
+    # The SSID element as sent: hashlines and transmitted frames use these, not ssid. None while hidden.
+    ssid_bytes: Optional[bytes] = None
+    # What the UI shows: displayable_ssid(ssid_bytes). Log lines and filenames use ssid.
+    ssid_displayable: Optional[str] = None
+    # The NUL count of a hidden beacon's SSID element; None when unknown (no NULs, or not hidden).
+    hidden_ssid_len: Optional[int] = None
     channel: int = 1
     encryption: Optional[str] = "Unknown"
     # Structured security fields from the RSN IE; `encryption` (above) is the airodump-style string.
@@ -99,6 +107,7 @@ class AccessPoint:
     # How this AP's SSID was learned, if it was ever hidden.
     # None = we never saw it hidden, or it's still hidden.
     decloak_method: Optional[str] = None
+    decloak_reveal_frame: Optional[bytes] = None  # Frame that names a hidden AP
 
     # BSSIDs we believe are virtual interfaces of the same physical radio (Main + Guest +
     # IoT on one router). Bidirectional.
@@ -126,6 +135,10 @@ class AccessPoint:
     signal_history: Dict[str, deque[int]] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
+        if self.ssid_bytes is None and self.ssid:
+            self.ssid_bytes = self.ssid.encode("utf-8")
+        if self.ssid_displayable is None and self.ssid_bytes is not None:
+            self.ssid_displayable = displayable_ssid(self.ssid_bytes)
         if self.bssid and not self.identity.get_source_value(IdKey.MANUFACTURER, IdSource.OUI):
             from wifit3.id.common import vendor_for_mac
             vendor = vendor_for_mac(self.bssid)
@@ -149,8 +162,8 @@ class AccessPoint:
 
     @property
     def is_hidden(self) -> bool:
-        """No usable SSID: never seen, or still the "<hidden>" placeholder."""
-        return not (self.ssid and self.ssid != "<hidden>")
+        """No usable SSID: never seen, or only hidden (empty or NUL-filled) SSID elements."""
+        return self.ssid_bytes is None
 
     @property
     def pmf_posture(self) -> PmfPosture:

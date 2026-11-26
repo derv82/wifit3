@@ -87,7 +87,7 @@ def test_truncated_rsn_tail_cannot_replace_required_pmf(tail):
     body = _rsn(5)[2:-2] + tail
     invalid = bytes([48, len(body)]) + body
     parsed = _ingest(sink, _beacon(invalid))
-    assert not parsed.rsn_valid
+    assert parsed.elements.rsn is None
     ap = sink.access_points[_BSSID]
     assert ap.rsn_valid and ap.pmf_capable and ap.pmf_required
     assert ap.rsn_ie == valid
@@ -109,7 +109,7 @@ def test_rejected_m2_selection_never_falls_back_to_psk(offered, associated, key_
     hs = _handshake(sink)
     assert parsed.akm_selection_rejected
     assert hs.messages[-1].akm is None and hs.messages[-1].akm_selection_rejected
-    assert crackable_pairs(hs) == [] and eapol_hashlines("Lab", hs) == []
+    assert crackable_pairs(hs) == [] and eapol_hashlines(b"Lab", hs) == []
     assert withheld_capture_label(hs) == "Unsupported AKM"
     assert handshake_uncrackable_label(hs) == "Unsupported AKM"
 
@@ -141,10 +141,10 @@ def test_matching_m2_confirms_pmkid_akm_and_hashline(akm, m1_flags, m2_flags, di
     pmkid = hmac.new(_PMK, b"PMK Name" + _AP + _STA, digest).digest()[:16]
     _ingest(sink, _key(1, flags=m1_flags, data=bytes.fromhex("dd14000fac04") + pmkid))
     hs = _handshake(sink)
-    assert not pmkid_crackable(hs) and pmkid_hashline("Lab", hs) is None
+    assert not pmkid_crackable(hs) and pmkid_hashline(b"Lab", hs) is None
     _ingest(sink, _key(2, flags=m2_flags, data=_rsn(akm)))
     assert hs.pmkid_akm == akm and pmkid_crackable(hs)
-    hashline = pmkid_hashline("Lab", hs)
+    hashline = pmkid_hashline(b"Lab", hs)
     assert hashline == (
         f"WPA*01*{pmkid.hex()}*020000000001*020000000002*4c6162***"
         + ("03" if akm == 6 else ""))
@@ -163,7 +163,7 @@ def test_matching_ft_psk_m2_confirms_pmkid_with_its_ft_identifiers():
     _ingest(sink, _key(2, flags=0x010B, data=key_data))
     hs = _handshake(sink)
     assert hs.pmkid_akm == 4 and pmkid_crackable(hs)
-    hashline = parse_hc22000(pmkid_hashline("Lab", hs))
+    hashline = parse_hc22000(pmkid_hashline(b"Lab", hs))
     assert hashline.kind == "03" and pmk_matches(_PMK, hashline)
     assert not pmk_matches(bytes(32), hashline)
 
@@ -186,7 +186,7 @@ def test_pmkid_selection_requires_matching_pairwise_messages(m1_overrides, m2_ov
     _ingest(sink, _key(2, **{"data": _rsn(2), **m2_overrides}))
     hs = _handshake(sink)
     assert hs.pmkid == _PMKID and hs.pmkid_akm is None
-    assert not pmkid_crackable(hs) and pmkid_hashline("Lab", hs) is None
+    assert not pmkid_crackable(hs) and pmkid_hashline(b"Lab", hs) is None
 
 
 @pytest.mark.parametrize("interruption", [

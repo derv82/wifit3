@@ -18,10 +18,11 @@ from wifit3.persist.exhaustion import ExhaustedWordlist, read_exhausted_wordlist
 from wifit3.persist.meta import (bssid_meta_paths, meta_path, read_bssid_metas, read_meta, update_meta,
                                  update_meta_file)
 from wifit3.persist.pcap import read_pcap
+from wifit3.text import displayable_ssid
 
-_HASHLINES_KEY = "hashlines"
-_LIVE_VERIFICATIONS_KEY = "live_verifications"
-_MANUAL_CAPTURES_KEY = "manual_captures"
+HASHLINES_KEY = "hashlines"
+LIVE_VERIFICATIONS_KEY = "live_verifications"
+MANUAL_CAPTURES_KEY = "manual_captures"
 _PMKID_KDE = b"\xdd\x14" + RSN_OUI + b"\x04"      # Key Data element: id, length, OUI, data type
 _PMKID_LEN = 16
 _PASSWORD_KEY_TYPES = frozenset({CaptureType.WPA_PSK, CaptureType.WEP})
@@ -84,14 +85,22 @@ class Key:
 @dataclass(frozen=True)
 class SsidHistory:
     ssid: str
+    ssid_bytes: Optional[bytes]     # a hashline's ESSID; None when only key captures name it
     first_seen: Optional[int]
     last_seen: Optional[int]
+
+    @property
+    def displayed_ssid(self) -> str:
+        if self.ssid_bytes is None:
+            return self.ssid
+        return displayable_ssid(self.ssid_bytes)
 
 
 @dataclass(frozen=True)
 class ApState:
     bssid: str
     ssids: tuple[SsidHistory, ...]          # newest first
+    ssid_bytes: Optional[bytes]             # newest hashline's ESSID, else the newest SSID's .meta ssid_hex
     hashlines: tuple[DatedHashline, ...]    # newest first, undated last
     keys: tuple[Key, ...]                   # most recently confirmed first
     status: PasswordStatus
@@ -115,7 +124,7 @@ def _pcap_dates(lines: dict[str, Hc22000Line], pcaps: Iterable[Path]) -> dict[st
         hids_by_needle.setdefault(bytes.fromhex(line.pmkid_or_mic), []).append(hid)
     found: dict[str, set[int]] = {}
     for pcap in pcaps:
-        for frame, epoch in read_pcap(pcap):
+        for frame, timestamp in read_pcap(pcap):
             llc = frame.find(LLC_SNAP_EAPOL)
             if llc == -1:
                 continue
@@ -127,7 +136,7 @@ def _pcap_dates(lines: dict[str, Hc22000Line], pcaps: Iterable[Path]) -> dict[st
                 needles.append(frame[pmkid_start:pmkid_start + _PMKID_LEN])
             for needle in needles:
                 for hid in hids_by_needle.get(needle, ()):
-                    found.setdefault(hid, set()).add(epoch)
+                    found.setdefault(hid, set()).add(int(timestamp))
     return found
 
 
@@ -135,7 +144,7 @@ def _stored_dates(metas: list[dict]) -> dict[str, set[int]]:
     """Dates per hashline id with a .meta record; an empty set records that none were found."""
     found: dict[str, set[int]] = {}
     for meta in metas:
-        stored = meta.get(_HASHLINES_KEY)
+        stored = meta.get(HASHLINES_KEY)
         if not isinstance(stored, dict):
             continue
         for hid, record in stored.items():
@@ -155,7 +164,7 @@ def _capture_type(value: object) -> Optional[CaptureType]:
 def _stored_verifications(metas: list[dict]) -> dict[tuple[CaptureType, str], list[LiveVerification]]:
     found: dict[tuple[CaptureType, str], list[LiveVerification]] = {}
     for meta in metas:
-        stored = meta.get(_LIVE_VERIFICATIONS_KEY)
+        stored = meta.get(LIVE_VERIFICATIONS_KEY)
         if not isinstance(stored, list):
             continue
         for record in stored:
@@ -170,7 +179,7 @@ def _stored_verifications(metas: list[dict]) -> dict[tuple[CaptureType, str], li
 def _manual_capture_names(metas: list[dict]) -> frozenset[str]:
     names: set[str] = set()
     for meta in metas:
-        stored = meta.get(_MANUAL_CAPTURES_KEY)
+        stored = meta.get(MANUAL_CAPTURES_KEY)
         if isinstance(stored, list):
             names.update(name for name in stored if isinstance(name, str))
     return frozenset(names)
@@ -316,6 +325,16 @@ def load_ap_state(bssid: str, captures: list[PersistedCapture]) -> ApState:
     status, status_key = password_status(hashlines, keys)
     ssids = _ssid_histories(hashlines, keys)
     newest_ssid = safe_ssid(ssids[0].ssid) if ssids else None
+    ssid_bytes: Optional[bytes] = None
+    if hashlines:
+        ssid_bytes = bytes.fromhex(hashlines[0].line.essid)
+    elif ssids:
+        ssid_hex = read_meta(meta_path(ssids[0].ssid, bssid)).get("ssid_hex")
+        if isinstance(ssid_hex, str):
+            try:
+                ssid_bytes = bytes.fromhex(ssid_hex)
+            except ValueError:
+                pass
     hc22000 = sorted((c for c in captures if c.path.endswith(".hc22000")),
                      key=lambda c: (safe_ssid(c.ssid) == newest_ssid, c.timestamp), reverse=True)
     cracked = {hid for key in keys for hid in key.hashline_ids}
@@ -323,7 +342,7 @@ def load_ap_state(bssid: str, captures: list[PersistedCapture]) -> ApState:
     exhausted = read_exhausted_wordlists(metas, [h.id for h in uncracked]) if uncracked else {}
     handshake_and_pmkid_files = {c.path: c for c in sorted(captures, key=lambda c: c.timestamp)
                                  if c.type in (CaptureType.HS, CaptureType.PMKID)}
-    return ApState(bssid, ssids, tuple(hashlines), tuple(keys), status, status_key,
+    return ApState(bssid, ssids, ssid_bytes, tuple(hashlines), tuple(keys), status, status_key,
                    key_statuses(keys, hashlines, status, status_key),
                    hc22000[0] if hc22000 else None, uncracked, MappingProxyType(exhausted),
                    tuple(reversed(handshake_and_pmkid_files.values())))
@@ -331,13 +350,15 @@ def load_ap_state(bssid: str, captures: list[PersistedCapture]) -> ApState:
 
 def _ssid_histories(hashlines: list[DatedHashline], keys: list[Key]) -> tuple[SsidHistory, ...]:
     seen: dict[str, list[int]] = {}
+    ssid_bytes_by_ssid: dict[str, bytes] = {}
     for h in hashlines:
         seen.setdefault(h.line.ssid, []).extend(h.captured)
+        ssid_bytes_by_ssid.setdefault(h.line.ssid, bytes.fromhex(h.line.essid))
     for key in keys:
         for capture in key.captures:
             if capture.ssid and capture.ssid not in seen:
                 seen[capture.ssid] = [capture.timestamp]
-    histories = [SsidHistory(ssid, min(epochs, default=None), max(epochs, default=None))
+    histories = [SsidHistory(ssid, ssid_bytes_by_ssid.get(ssid), min(epochs, default=None), max(epochs, default=None))
                  for ssid, epochs in seen.items()]
     return tuple(sorted(histories, key=lambda s: epoch_sort_key(s.last_seen), reverse=True))
 
@@ -350,7 +371,7 @@ def record_hashlines_captured(ssid: Optional[str], bssid: str, raw_lines: Iterab
 
 def record_hashline_dates(ssid: Optional[str], bssid: str, dates: Mapping[str, Iterable[int]]) -> None:
     """Add capture dates, by hashline id, to the SSID's .meta; no dates records that none exist."""
-    stored = read_meta(meta_path(ssid, bssid)).get(_HASHLINES_KEY)
+    stored = read_meta(meta_path(ssid, bssid)).get(HASHLINES_KEY)
     stored = stored if isinstance(stored, dict) else {}
     for hid, epochs in dates.items():
         if not isinstance(stored.get(hid), dict):
@@ -359,25 +380,25 @@ def record_hashline_dates(ssid: Optional[str], bssid: str, dates: Mapping[str, I
             stored[hid]["captured"] = []
         captured = stored[hid]["captured"]
         captured.extend(e for e in epochs if e not in captured)
-    update_meta(ssid, bssid, **{_HASHLINES_KEY: stored})
+    update_meta(ssid, bssid, **{HASHLINES_KEY: stored})
 
 
 def record_manual_capture(ssid: Optional[str], bssid: str, path: Path) -> None:
     """Note in the SSID's .meta that this capture holds a key typed in through Add key."""
-    stored = read_meta(meta_path(ssid, bssid)).get(_MANUAL_CAPTURES_KEY)
+    stored = read_meta(meta_path(ssid, bssid)).get(MANUAL_CAPTURES_KEY)
     stored = [name for name in stored if isinstance(name, str)] if isinstance(stored, list) else []
     if path.name not in stored:
         stored.append(path.name)
-    update_meta(ssid, bssid, **{_MANUAL_CAPTURES_KEY: stored})
+    update_meta(ssid, bssid, **{MANUAL_CAPTURES_KEY: stored})
 
 
 def record_live_verification(key: Key, correct: bool) -> None:
     """Note in the .meta of the key's newest capture that a live check accepted or rejected it."""
     capture = key.newest_capture
-    stored = read_meta(meta_path(capture.ssid, capture.bssid)).get(_LIVE_VERIFICATIONS_KEY)
+    stored = read_meta(meta_path(capture.ssid, capture.bssid)).get(LIVE_VERIFICATIONS_KEY)
     stored = stored if isinstance(stored, list) else []
     stored.append({"kind": key.type.value, "key": key.value, "at": int(time.time()), "correct": correct})
-    update_meta(capture.ssid, capture.bssid, **{_LIVE_VERIFICATIONS_KEY: stored})
+    update_meta(capture.ssid, capture.bssid, **{LIVE_VERIFICATIONS_KEY: stored})
 
 
 def forget_key(key: Key) -> None:
@@ -386,16 +407,16 @@ def forget_key(key: Key) -> None:
     for path in bssid_meta_paths(key.newest_capture.bssid):
         meta = read_meta(path)
         fields: dict[str, Optional[list]] = {}
-        verifications = meta.get(_LIVE_VERIFICATIONS_KEY)
+        verifications = meta.get(LIVE_VERIFICATIONS_KEY)
         if isinstance(verifications, list):
             kept = [r for r in verifications if not (isinstance(r, dict) and r.get("key") == key.value
                                                      and _capture_type(r.get("kind")) == key.type)]
             if len(kept) != len(verifications):
-                fields[_LIVE_VERIFICATIONS_KEY] = kept or None
-        manual = meta.get(_MANUAL_CAPTURES_KEY)
+                fields[LIVE_VERIFICATIONS_KEY] = kept or None
+        manual = meta.get(MANUAL_CAPTURES_KEY)
         if isinstance(manual, list):
             kept_names = [name for name in manual if name not in capture_names]
             if len(kept_names) != len(manual):
-                fields[_MANUAL_CAPTURES_KEY] = kept_names or None
+                fields[MANUAL_CAPTURES_KEY] = kept_names or None
         if fields:
             update_meta_file(path, **fields)

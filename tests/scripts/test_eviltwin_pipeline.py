@@ -57,7 +57,7 @@ def test_full_capture_pipeline_cracks():
                                         nonce=parsed.nonce, mic=parsed.mic,
                                         eapol_payload=parsed.payload, akm=2, timestamp=1.1))
 
-    lines = eapol_hashlines(ssid, hs)
+    lines = eapol_hashlines(ssid.encode("utf-8"), hs)
     assert len(lines) == 1 and lines[0].startswith("WPA*02*")
 
     crack = _load_crack()

@@ -5,6 +5,7 @@ registry. These are the picture assertions that used to live on WlanInterface, r
 ``sink.update(pkt, card_id)``, plus the multicard-specific per-card signal behavior."""
 
 import struct
+from typing import Optional
 
 import pytest
 
@@ -227,11 +228,33 @@ def test_invalid_rsn_followup_keeps_valid_security_profile():
 
 def test_decloak_via_probe_resp():
     s = WlanSink()
-    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid": "<hidden>"}), W0)
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": b""}), W0)
     assert s.access_points[BSSID].ssid is None
     s.update(pkt({"type": "probe_resp", "bssid": BSSID, "rssi": -60, "ssid": "Now_Visible"}), W0)
     ap = s.access_points[BSSID]
     assert ap.ssid == "Now_Visible" and ap.decloak_method == "probe_resp"
+
+
+def test_a_nul_filled_beacon_gives_the_hidden_ssid_length():
+    s = WlanSink()
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": bytes(8)}), W0)
+    ap = s.access_points[BSSID]
+    assert ap.is_hidden
+    assert ap.ssid_bytes is None
+    assert ap.hidden_ssid_len == 8
+
+
+def test_last_seen_is_the_latest_frame_time_not_the_last_in_order():
+    s = WlanSink()
+    s.update(_beacon(), W0, timestamp=200.0)
+    s.update(_beacon(), W0, timestamp=100.0)
+    assert s.access_points[BSSID].last_seen == 200.0
+
+
+def test_an_empty_ssid_beacon_gives_no_hidden_ssid_length():
+    s = WlanSink()
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": b""}), W0)
+    assert s.access_points[BSSID].hidden_ssid_len is None
 
 
 def test_assoc_req_stamps_client_akm():
@@ -478,26 +501,30 @@ def test_reassoc_with_different_akm_gives_newest():
     assert all(message.akm == 8 for message in hs.messages)
 
 
-def test_decloak_via_assoc_req():
-    """A client's assoc-req SSID IE decloaks the hidden AP it's joining."""
+@pytest.mark.parametrize("request_type, response_type", [("assoc_req", "assoc_resp"), ("reassoc_req", "reassoc_resp")])
+def test_decloak_via_accepted_assoc_req(request_type, response_type):
     s = WlanSink()
-    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid": "<hidden>"}), W0)
+    client = "12:22:33:44:55:66"
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": b""}), W0)
+    s.update(pkt({"type": request_type, "bssid": BSSID, "source": client, "dest": BSSID,
+                  "rssi": -45, "ssid": "Real_Name"}), W0, timestamp=100.0)
     assert s.access_points[BSSID].ssid is None
-    s.update(pkt({"type": "assoc_req", "bssid": BSSID, "source": "12:22:33:44:55:66",
-                  "dest": BSSID, "rssi": -45, "ssid": "Real_Name"}), W0)
+    s.update(pkt({"type": response_type, "bssid": BSSID, "source": BSSID, "dest": client,
+                  "rssi": -45, "status": 0}), W0, timestamp=100.0)
     ap = s.access_points[BSSID]
-    assert ap.ssid == "Real_Name" and ap.decloak_method == "assoc_req"
+    assert ap.ssid == "Real_Name" and ap.decloak_method == request_type
 
 
-def test_decloak_via_reassoc_req():
-    """Reassoc-req carries the SSID too (PMF doesn't protect it), so it decloaks as well."""
+@pytest.mark.parametrize("status, response_time", [(1, 100.0), (0, 100.0 + WlanSink.ASSOC_RESPONSE_WINDOW_S + 0.01)])
+def test_no_decloak_on_rejected_or_late_assoc_resp(status, response_time):
     s = WlanSink()
-    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid": "<hidden>"}), W0)
+    client = "12:22:33:44:55:66"
+    s.update(pkt({"type": "beacon", "bssid": BSSID, "rssi": -60, "ssid_bytes": b""}), W0)
+    s.update(pkt({"type": "assoc_req", "bssid": BSSID, "source": client, "dest": BSSID,
+                  "rssi": -45, "ssid": "Wrong_Guess"}), W0, timestamp=100.0)
+    s.update(pkt({"type": "assoc_resp", "bssid": BSSID, "source": BSSID, "dest": client,
+                  "rssi": -45, "status": status}), W0, timestamp=response_time)
     assert s.access_points[BSSID].ssid is None
-    s.update(pkt({"type": "reassoc_req", "bssid": BSSID, "source": "12:22:33:44:55:66",
-                  "dest": BSSID, "rssi": -45, "ssid": "Real_Name"}), W0)
-    ap = s.access_points[BSSID]
-    assert ap.ssid == "Real_Name" and ap.decloak_method == "reassoc_req"
 
 
 def test_from_ds_client_is_receiver_not_addr3_origin():
@@ -516,7 +543,7 @@ def test_siblings_last_byte_differs():
     s.update(pkt({"type": "beacon", "bssid": "aa:bb:cc:dd:ee:00", "rssi": -60,
                   "ssid": "TestSSID", "channel": 44}), W0)
     s.update(pkt({"type": "beacon", "bssid": "aa:bb:cc:dd:ee:02", "rssi": -60,
-                  "ssid": "<hidden>", "channel": 44}), W0)
+                  "ssid_bytes": b"", "channel": 44}), W0)
     assert s.access_points["aa:bb:cc:dd:ee:00"].siblings == ["aa:bb:cc:dd:ee:02"]
     assert s.access_points["aa:bb:cc:dd:ee:02"].siblings == ["aa:bb:cc:dd:ee:00"]
 
@@ -630,7 +657,7 @@ def test_a_probe_request_registers_its_client():
     assert _STA_MAC in s.clients
 
 
-def _broadcast_probe(ssid: str):
+def _broadcast_probe(ssid: Optional[str]):
     return pkt({"type": "probe_req", "bssid": "ff:ff:ff:ff:ff:ff", "source": _STA_MAC,
                 "dest": "ff:ff:ff:ff:ff:ff", "ssid": ssid, "rssi": -60})
 
@@ -645,7 +672,7 @@ def test_a_broadcast_probe_request_records_its_ssid():
 def test_probed_ssids_ignore_empty_and_hidden():
     s = WlanSink()
     s.update(_broadcast_probe(""), W0)
-    s.update(_broadcast_probe("<hidden>"), W0)
+    s.update(_broadcast_probe(None), W0)
     s.update(_beacon(), W0)
     assert s.probed_ssids == set()
 

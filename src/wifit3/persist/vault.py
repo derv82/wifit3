@@ -23,8 +23,10 @@ from wifit3.persist.ap_state import ApState, Key, PasswordStatus, read_hashlines
 from wifit3.persist.capture_history import load_capture_index, summarize
 from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid, wps_run_state_name
 from wifit3.persist.config import Config
-from wifit3.persist.meta import clear_meta_paths_cache, meta_path, update_meta
+from wifit3.persist.meta import clear_meta_paths_cache, meta_path, read_meta, update_meta, update_meta_file
+from wifit3.persist.pcap import FourWayHandshake, HandshakePcaps, read_handshakes
 from wifit3.persist.save import SaveResult
+from wifit3.text import displayable_ssid
 from wifit3.vault.manager import JobManager
 from wifit3.wlan.sink import WlanSink
 
@@ -99,12 +101,14 @@ class Vault:
     def __init__(self) -> None:
         self._index: Dict[str, List[PersistedCapture]] = {}
         self._ap_states: Dict[str, ApState] = {}
+        self._pcap_handshakes: Dict[str, tuple[FourWayHandshake, ...]] = {}
         self._change_listeners: list[Callable[[Optional[str]], None]] = []
         self._probed_ssids_source: Callable[[], Iterable[str]] = lambda: ()
         self._refresh_count = 0
         self._change_counts: Dict[str, int] = {}
         self.errors: list[str] = []                       # surfaced as toasts by the app on mount
         self._propagation_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="psk-propagation")
+        self._handshake_pcaps = HandshakePcaps()
         try:
             self.refresh()
         except Exception as exc:
@@ -151,9 +155,11 @@ class Vault:
         if bssid is None:
             self._refresh_count += 1
             self._ap_states.clear()
+            self._pcap_handshakes.clear()
         else:
             self._change_counts[bssid] = self._change_counts.get(bssid, 0) + 1
             self._ap_states.pop(bssid, None)
+            self._pcap_handshakes.pop(bssid, None)
         for listener in self._change_listeners:
             try:
                 listener(bssid)
@@ -185,6 +191,17 @@ class Vault:
             self._record_pcap_dates(state)
         return state
 
+    def pcap_handshakes(self, bssid: str) -> tuple[FourWayHandshake, ...]:
+        """The AP's 4-ways read from its pcaps, newest first, cached until the AP changes."""
+        handshakes = self._pcap_handshakes.get(bssid)
+        if handshakes is None:
+            revision = self.revision(bssid)
+            paths = [Path(c.path) for c in self.persisted(bssid) if c.path.endswith(".pcap")]
+            handshakes = self._pcap_handshakes[bssid] = tuple(read_handshakes(bssid, self.ssid(bssid), paths))
+            if self.revision(bssid) != revision:    # changed by another thread meanwhile
+                self._pcap_handshakes.pop(bssid, None)
+        return handshakes
+
     @staticmethod
     def _record_pcap_dates(state: ApState) -> None:
         """Save the dates read from pcaps to the .meta, so they are read once; the state already
@@ -202,9 +219,30 @@ class Vault:
     def ssid(self, bssid: str) -> Optional[str]:
         """The AP's SSID from its newest capture. A PSK is saved under the SSID it cracked, whenever
         it cracked, so PSK files come last; a .pcap only knows the filename-safe form."""
+        capture = self._ssid_capture(bssid)
+        if capture is None:
+            return None
+        return capture.ssid
+
+    def displayed_ssid(self, bssid: str) -> Optional[str]:
+        """``ssid`` as the UI shows it: from its hashline's SSID bytes when it has them."""
+        capture = self._ssid_capture(bssid)
+        if capture is None:
+            return None
+        if capture.ssid_bytes is None:
+            return capture.ssid
+        return displayable_ssid(capture.ssid_bytes)
+
+    def _ssid_capture(self, bssid: str) -> Optional[PersistedCapture]:
         captures = sorted(self.persisted(bssid), key=lambda c: c.type == CaptureType.WPA_PSK)
-        return next((c.ssid for c in captures if c.ssid and not c.path.endswith(".pcap")),
-                    next((c.ssid for c in captures if c.ssid), None))
+        pcap_capture: Optional[PersistedCapture] = None
+        for capture in captures:
+            if capture.ssid:
+                if not capture.path.endswith(".pcap"):
+                    return capture
+                if pcap_capture is None:
+                    pcap_capture = capture
+        return pcap_capture
 
     def all_captures(self) -> List[PersistedCapture]:
         """Every saved capture across all APs, unordered (callers sort as needed)."""
@@ -320,7 +358,19 @@ class Vault:
     # ----- writes (persist to disk, then fold into the cache) -----
 
     def save_handshake(self, ap: "AccessPoint", client_mac: str) -> Optional[HashlineSaveResult]:
-        return self._save_hashlines(ap, CaptureType.HS, lambda: save.save_handshake(ap, client_mac))
+        result = self._save_hashlines(ap, CaptureType.HS, lambda: save.save_handshake(ap, client_mac))
+        if result is not None and Config.save_pcap:
+            written = self._handshake_pcaps.save(ap, client_mac)
+            indexed = {c.path for c in self.persisted(ap.bssid)}
+            for path in written:
+                if str(path) not in indexed:
+                    epoch = int(LEGACY_CAPTURE_RE.match(path.name).group("epoch"))
+                    self._index.setdefault(ap.bssid, []).insert(0, PersistedCapture(
+                        type=CaptureType.HS, timestamp=epoch, path=str(path), bssid=ap.bssid,
+                        ssid=safe_ssid(ap.ssid)))
+            if written:
+                self.notify_changed(ap.bssid)
+        return result
 
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[HashlineSaveResult]:
         return self._save_hashlines(ap, CaptureType.PMKID, lambda: save.save_pmkid(ap, client_mac))
@@ -333,11 +383,11 @@ class Vault:
         result = write()
         if not result:
             return None
-        update_meta(ap.ssid, ap.bssid)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
         if not result.was_new:
             return HashlineSaveResult(result.path, was_new=False)
         capture = PersistedCapture(type=kind, timestamp=int(time.time()), path=str(result.path),
-                                   bssid=ap.bssid, ssid=ap.ssid)
+                                   bssid=ap.bssid, ssid=ap.ssid, ssid_bytes=ap.ssid_bytes)
         after = read_hashlines(ap.bssid, [*self.persisted(ap.bssid), capture])
         before = {h.id: h.line for h in state.hashlines}
         new_lines = {hid: raw_and_line for hid, raw_and_line in after.items() if hid not in before}
@@ -386,44 +436,59 @@ class Vault:
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes, manual: bool = False) -> Optional[SaveResult]:
         """``manual``: typed in, not recovered from the AP, so unverified until a live check."""
-        result = save.save_wep_key(ap, key)
-        if result:
-            update_meta(ap.ssid, ap.bssid)
-        if result and result.was_new:
+        if not key:
+            return None
+        saved = self._saved_key(ap.bssid, CaptureType.WEP, key.hex())
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wep_key(ap, key), was_new=True)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
+        if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ap.ssid, ap.bssid, result.path)
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WEP, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=key.hex(), ssid=ap.ssid))
-        elif result and not manual:
+        elif not manual:
             self._record_key_recovered_again(ap.bssid, (CaptureType.WEP, key.hex()))
         return result
 
     def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: Optional[str],
                      manual: bool = False) -> Optional[SaveResult]:
         """``manual``: typed in, not recovered from the AP, so unverified until a live check."""
-        result = save.save_wps_pin(ap, pin, psk)
-        if result:
-            update_meta(ap.ssid, ap.bssid)
-        if result and result.was_new:
+        if psk == "":
+            return None
+        saved = self._saved_key(ap.bssid, CaptureType.WPS_PIN, psk, pin)
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wps_pin(ap, pin, psk), was_new=True)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
+        if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ap.ssid, ap.bssid, result.path)
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PIN, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, pin=pin, ssid=ap.ssid))
-        elif result and psk and not manual:
+        elif psk and not manual:
             self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
-        result = save.save_wps_pbc(ap, psk)
-        if result:
-            update_meta(ap.ssid, ap.bssid)
-        if result and result.was_new:
+        if not psk:
+            return None
+        saved = self._saved_key(ap.bssid, CaptureType.WPS_PBC, psk)
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wps_pbc(ap, psk), was_new=True)
+        update_meta(ap.ssid, ap.bssid, ap.ssid_bytes)
+        if result.was_new:
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPS_PBC, timestamp=int(time.time()), path=str(result.path),
                 bssid=ap.bssid, value=psk, ssid=ap.ssid))
-        elif result:
+        else:
             self._record_key_recovered_again(ap.bssid, (CaptureType.WPA_PSK, psk))
         return result
 
@@ -433,18 +498,32 @@ class Vault:
         if key is not None:
             self.record_live_verification(key, True)
 
-    def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str, manual: bool = False) -> Optional[SaveResult]:
+    def save_wpa_psk(self, ssid: Optional[str], bssid: str, psk: str, manual: bool = False,
+                     ssid_bytes: Optional[bytes] = None) -> Optional[SaveResult]:
         """``manual``: typed in, not cracked or recovered from the AP."""
-        result = save.save_wpa_psk(ssid, bssid, psk)
-        if result:
-            update_meta(ssid, bssid)
-        if result and result.was_new:
+        if not psk:
+            return None
+        saved = self._saved_key(bssid, CaptureType.WPA_PSK, psk)
+        if saved is not None:
+            result = SaveResult(Path(saved.path), was_new=False)
+        else:
+            result = SaveResult(save.write_wpa_psk(ssid, bssid, psk), was_new=True)
+        update_meta(ssid, bssid, ssid_bytes)
+        if result.was_new:
             if manual:
                 ap_state.record_manual_capture(ssid, bssid, result.path)
             self._insert_capture(PersistedCapture(
                 type=CaptureType.WPA_PSK, timestamp=int(time.time()), path=str(result.path),
                 bssid=bssid, value=psk, ssid=ssid))
         return result
+
+    def _saved_key(self, bssid: str, capture_type: CaptureType, value: Optional[str],
+                   pin: Optional[str] = None) -> Optional[PersistedCapture]:
+        """The AP's indexed capture of this type holding ``value`` (and ``pin``)."""
+        for capture in self.persisted(bssid):
+            if capture.type == capture_type and capture.value == value and capture.pin == pin:
+                return capture
+        return None
 
     # ----- filesystem ops (the screen goes through these, never touches disk) -----
 
@@ -556,3 +635,25 @@ class Vault:
         migrated, deleted = save.consolidate_hc_files(Path(Config.captures_dir))
         self.refresh()
         return migrated, deleted
+
+    # ----- legacy .meta nicknames (v0.6 to v0.7) -----
+
+    def move_nicknames_to_config(self) -> None:
+        """Once, when config.toml has no [nicknames] table: move each AP's nickname from the .meta of its
+        newest capture's SSID into Config, save it (raises ConfigError), then drop the .meta key."""
+        if Config.nicknames is not None:
+            return
+        Config.nicknames = {}
+        nickname_meta_paths: List[Path] = []
+        for bssid in self._index:
+            path = meta_path(self.ssid(bssid), bssid)
+            nickname = read_meta(path).get("nickname")
+            if isinstance(nickname, str) and nickname:
+                Config.set_nickname(bssid, nickname)
+                nickname_meta_paths.append(path)
+        Config.save()
+        for path in nickname_meta_paths:
+            try:
+                update_meta_file(path, nickname=None)
+            except OSError:
+                logger.warning(f"Could not remove the nickname from {path}", exc_info=True)

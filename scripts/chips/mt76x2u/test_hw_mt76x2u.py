@@ -170,7 +170,7 @@ async def phase_rx(driver: MT76x2UDriver, duration_s: float) -> None:
             seen_aps[bssid] = {
                 "ssid": frame.ssid,
                 "rssi": frame.rssi,
-                "channel": frame.channel,
+                "channel": frame.elements.channel,
             }
 
     driver.register_rx_callback(on_parsed)
