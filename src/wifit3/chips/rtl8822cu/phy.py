@@ -439,6 +439,7 @@ def set_rf_reg(transport: RTL8822CUTransport, path: int, address: int, mask: int
 
 
 DBGPORT_PRI_2 = 2               # [SRC phydm_debug.h:318]
+DBGPORT_PRI_1 = 1               # [SRC phydm_debug.h:319]
 
 
 def set_bb_dbg_port(transport: RTL8822CUTransport, priority: int, port: int) -> None:

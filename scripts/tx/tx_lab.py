@@ -4,16 +4,14 @@ The card under test (--test-card) injects; the sniffer (--sniffer-card) captures
   capture    the sniffer's beacons/s from --ref-bssid (a 100 TU AP sends 9.8/s)
   retries    100 broadcast send_no_wait (expect 1 copy each) and 100 unicast to an address nobody
              ACKs (expect the HW retry limit): copies per frame, retry bit, sequence numbers
-  latency    inject call -> sniffer bulk read, and the sniffer's RX queue (bulk read -> callback)
+  latency    inject call -> sniffer RX callback
   serial     send_no_wait awaited back-to-back for 5 s: calls/s vs landed/s
   flood      500 unawaited send_no_wait tasks (FakeAP._tx style): landed, out-of-order, drain time
   beacon     FakeAP's own beacon loop for 30 s: gaps at the inject call vs at the sniffer
   responder  the sniffer sends probe requests; FakeAP on the test card ACKs + answers: latency
 
-Timestamps are time.perf_counter(). The script wraps the sniffer transport's ``_read_once`` (stamps
-each bulk read on the reader thread) and ``_dispatch`` (hands that stamp to the RX callbacks); src/
-is untouched. The sniffer's own USB delay is inside every latency; it is the same sniffer for every
-card, so compare cards, not absolutes.
+Timestamps are time.perf_counter() in the sniffer's RX callback. The sniffer's own USB and RX queue
+delay is inside every latency; it is the same sniffer for every card, so compare cards, not absolutes.
 
 Output prefixes: [+] found/ok   [*] step   [#] a measured number   [-] a problem.
 The reference BSSID is passed at runtime; nothing real is hardcoded.
@@ -122,40 +120,23 @@ def print_side_by_side(*blocks: list[str]) -> None:
 
 @dataclass
 class Copy:
-    read_time: float
-    dispatch_time: float
+    rx_time: float
     seq: int
     retry: bool
 
 
 class SnifferTap:
-    """Sniffer RX sink. Must be built before the sniffer connects: the RX reader thread captures
-    the transport's ``_read_once`` / ``_dispatch`` when it starts."""
+    """Sniffer RX sink; timestamps frames in the RX callback."""
 
-    def __init__(self, transport, ref_bssid: bytes) -> None:
+    def __init__(self, ref_bssid: bytes) -> None:
         self.ref_bssid = ref_bssid
         self.ref_beacons: list[float] = []
         self.lab_beacons: list[float] = []
-        self.probe_resps: dict[bytes, list[float]] = defaultdict(list)   # addr1 -> read times
+        self.probe_resps: dict[bytes, list[float]] = defaultdict(list)   # addr1 -> RX times
         self.copies: dict[tuple[bytes, int], list[Copy]] = defaultdict(list)   # (addr1, n)
-        self._read_times: dict[int, float] = {}
-        self._read_time = 0.0
-        read_once, dispatch = transport._read_once, transport._dispatch
-
-        def timed_read_once():
-            buf = read_once()
-            if buf:
-                self._read_times[id(buf)] = time.perf_counter()
-            return buf
-
-        def timed_dispatch(buf):
-            self._read_time = self._read_times.pop(id(buf), time.perf_counter())
-            dispatch(buf)
-
-        transport._read_once, transport._dispatch = timed_read_once, timed_dispatch
 
     def __call__(self, pkt) -> None:
-        raw, t = pkt.raw, self._read_time
+        raw, t = pkt.raw, time.perf_counter()
         if len(raw) < 24:
             return
         ta = raw[10:16]
@@ -170,12 +151,13 @@ class SnifferTap:
             n = struct.unpack_from("<I", raw, 33)[0]
             seq = int.from_bytes(raw[22:24], "little") >> 4
             self.copies[(bytes(raw[4:10]), n)].append(
-                Copy(t, time.perf_counter(), seq, bool(raw[1] & 0x08)))
+                Copy(t, seq, bool(raw[1] & 0x08)))
 
 
 class Lab:
-    def __init__(self, test, sniffer, tap: SnifferTap, channel: int) -> None:
+    def __init__(self, test, sniffer, tap: SnifferTap, channel: int, flood_count: int) -> None:
         self.test, self.sniffer, self.tap, self.channel = test, sniffer, tap, channel
+        self.flood_count = flood_count
         self.next_n = 0
         self.row: dict[str, str] = {}
 
@@ -228,25 +210,20 @@ class Lab:
                            histogram("copies per frame: unicast to nobody", uni_copies, 1, 1))
         print()
 
-        latency = [c[0].read_time - bcast_calls[n] for n, c in bcast.items()]
-        rx_queue = [cp.dispatch_time - cp.read_time for c in bcast.values() for cp in c]
+        latency = [c[0].rx_time - bcast_calls[n] for n, c in bcast.items()]
         print("[*] latency (broadcast frames above)")
         if not latency:
             print("[-] no broadcast frame landed")
             return
         print(f"[#] inject call -> on air at the sniffer: median {statistics.median(latency) * 1000:.1f} ms, "
               f"95% under {percentile(latency, 0.95) * 1000:.1f} ms")
-        print(f"[#] sniffer RX queue (bulk read -> callback): median {statistics.median(rx_queue) * 1000:.1f} ms, "
-              f"95% under {percentile(rx_queue, 0.95) * 1000:.1f} ms")
-        print_side_by_side(histogram("inject -> on air (ms)", [x * 1000 for x in latency], 0, 2),
-                           histogram("sniffer RX queue (ms)", [x * 1000 for x in rx_queue], 0, 10))
+        print_side_by_side(histogram("inject -> on air (ms)", [x * 1000 for x in latency], 0, 2))
         self.row["bcast landed"] = f"{len(bcast)}/{COUNT}"
         self.row["bcast copies max"] = str(max(bcast_copies, default=0))
         self.row["retry bit"] = str(retry_bits)
         self.row["seq +1"] = f"{plus_one}/{len(steps)}"
         self.row["unicast copies"] = uni_median
         self.row["latency ms"] = median_p95_ms(latency)
-        self.row["RX queue ms"] = median_p95_ms(rx_queue)
 
     async def serial(self) -> None:
         print(f"[*] serial: send_no_wait awaited back-to-back for {SERIAL_SECONDS:.0f} s")
@@ -263,21 +240,21 @@ class Lab:
         self.row["serial sent/heard per s"] = f"{calls / SERIAL_SECONDS:.0f} / {landed / SERIAL_SECONDS:.0f}"
 
     async def flood(self) -> None:
-        print(f"[*] flood: {FLOOD} unawaited send_no_wait tasks at once")
-        ns = range(self.next_n, self.next_n + FLOOD)
-        self.next_n += FLOOD
+        print(f"[*] flood: {self.flood_count} unawaited send_no_wait tasks at once")
+        ns = range(self.next_n, self.next_n + self.flood_count)
+        self.next_n += self.flood_count
         t0 = time.perf_counter()
         tasks = [asyncio.create_task(self.send(marker_frame(BROADCAST, n))) for n in ns]
         await asyncio.gather(*tasks)
         returned = time.perf_counter() - t0
         await asyncio.sleep(SETTLE)
         seen = self.copies_of(BROADCAST, ns)
-        order = [n for n, _ in sorted(seen.items(), key=lambda kv: kv[1][0].read_time)]
+        order = [n for n, _ in sorted(seen.items(), key=lambda kv: kv[1][0].rx_time)]
         inversions = sum(b < a for a, b in zip(order, order[1:]))
-        last = max((c[0].read_time for c in seen.values()), default=t0) - t0
-        print(f"[#] {len(seen)}/{FLOOD} heard, {inversions} out of order")
+        last = max((c[0].rx_time for c in seen.values()), default=t0) - t0
+        print(f"[#] {len(seen)}/{self.flood_count} heard, {inversions} out of order")
         print(f"[#] every task returned after {returned:.2f} s; last frame on air {last:.2f} s")
-        self.row["flood heard"] = f"{len(seen)}/{FLOOD}"
+        self.row["flood heard"] = f"{len(seen)}/{self.flood_count}"
         self.row["flood out of order"] = str(inversions)
         self.row["flood drain s"] = f"{last:.2f}"
 
@@ -372,7 +349,7 @@ async def main(a) -> None:
         return
     print(f"[+] test:    {test.description}")
     print(f"[+] sniffer: {sniffer.description}")
-    tap = SnifferTap(sniffer.driver.transport, mac_bytes(a.ref_bssid))
+    tap = SnifferTap(mac_bytes(a.ref_bssid))
 
     print("[*] connecting...")
     # Sequential, sniffer first: two bring-ups at once collide on USB (see scripts/ack/tx_retries.py).
@@ -386,10 +363,11 @@ async def main(a) -> None:
     sniffer.register_rx_callback(tap)
     print()
 
-    lab = Lab(test, sniffer, tap, a.channel)
+    lab = Lab(test, sniffer, tap, a.channel, a.flood_count)
     try:
-        for step in (lab.capture, lab.retries_and_latency, lab.serial, lab.flood, lab.beacon,
-                     lab.responder):
+        steps = (lab.flood,) if a.flood_only else (
+            lab.capture, lab.retries_and_latency, lab.serial, lab.flood, lab.beacon, lab.responder)
+        for step in steps:
             await step()
             print()
     finally:
@@ -404,6 +382,8 @@ if __name__ == "__main__":
     p.add_argument("--sniffer-card", default="7925", help="substring of the sniffer card")
     p.add_argument("--ref-bssid", required=True, help="a 100 TU AP on --channel, for the capture check")
     p.add_argument("--channel", type=int, default=1)
+    p.add_argument("--flood-count", type=int, default=FLOOD)
+    p.add_argument("--flood-only", action="store_true", help="run only the concurrent TX ordering flood")
     p.add_argument("--debug", action="store_true")
     try:
         asyncio.run(main(p.parse_args()))

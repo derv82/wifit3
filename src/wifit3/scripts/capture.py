@@ -6,8 +6,9 @@ Run on the (Linux) capture box as root, with the card UNPLUGGED:
 
 It starts a full usbmon0 (all-buses) tshark capture, walks the card through
 monitor-mode bring-up, two airodump reference segments (native hopping + a
-fixed-channel over-air pcap), a deterministic channel sweep, and an optional
-injection test. It saves the usbmon pcap + per-tool logs + a sysinfo snapshot
+fixed-channel over-air pcap), a deterministic channel sweep, a driver reload
+(rmmod + modprobe, card still plugged), an optional injection test, and the
+teardown (airmon-ng stop + driver unload). It saves the usbmon pcap + per-tool logs + a sysinfo snapshot
 + the fixed-channel pcap + the bound driver's firmware and DKMS source under
 `captures_<chipset>/`. `main.log` records when each step ran (epoch
 timestamps); `pcap_slicer.py` maps those to pcap frame ranges.
@@ -120,6 +121,7 @@ class Capture:
         self.supports_5g = False
         self.lsusb_baseline = ""
         self.driver_module = None
+        self.kernel_module = None
         self.firmware_files = []
 
         # /dev/shm is always tmpfs (RAM): writing the pcap there means no
@@ -310,6 +312,11 @@ class Capture:
         so we know exactly what produced the pcap. The version fields are the
         fetch recipe for mainline drivers that ship no on-disk source."""
         self.driver_module = self._bound_module(iface)
+        try:
+            self.kernel_module = os.path.basename(os.readlink(
+                Path("/sys/class/net") / iface / "device" / "driver" / "module"))
+        except OSError:
+            self.kernel_module = None
         drv_log = self.temp_dir / "driver.log"
         try:
             with open(drv_log, "w") as f:
@@ -682,6 +689,18 @@ class Capture:
             subprocess.run(["sudo", "kill", str(self.airodump_proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if self.airodump_log:
             self.airodump_log.close()
+
+        # Stop monitor mode and unload the driver while usbmon still records, so the capture holds
+        # the driver's teardown and power-off. The module autoloads again on the next plug-in.
+        if self.mon_iface:
+            self.run_cmd(["sudo", "airmon-ng", "stop", self.mon_iface], timeout=30)
+        else:
+            self.run_cmd(["sudo", "airmon-ng", "stop", f"{self.base_iface}mon"], timeout=30)
+            self.run_cmd(["sudo", "airmon-ng", "stop", self.base_iface], timeout=30)
+        if self.kernel_module:
+            self.run_cmd(["sudo", "rmmod", self.kernel_module], timeout=30)
+        self.remove_unmanage_rule()
+
         if self.tshark_proc and self.tshark_proc.poll() is None:
             time.sleep(1) # flush
             subprocess.run(["sudo", "pkill", "-P", str(self.tshark_proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -690,13 +709,6 @@ class Capture:
 
         if self.tshark_log:
             self.tshark_log.close()
-
-        if self.mon_iface:
-            subprocess.run(["sudo", "airmon-ng", "stop", self.mon_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        else:
-            subprocess.run(["sudo", "airmon-ng", "stop", f"{self.base_iface}mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["sudo", "airmon-ng", "stop", self.base_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.remove_unmanage_rule()
 
         self.logger.log_main("[+] Cleanup complete. Safe to unplug.")
 
@@ -860,6 +872,28 @@ class Capture:
                            157, 161, 165]
             for ch in channels_5g:
                 self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=10)
+
+        # Driver reload with the card still plugged: unload (power-off), probe, monitor mode again.
+        if self.kernel_module:
+            self.run_cmd(["sudo", "rmmod", self.kernel_module], timeout=30)
+            self.run_cmd(["sudo", "modprobe", self.kernel_module], timeout=30)
+            appeared = []
+            deadline = time.time() + 15
+            while not appeared and time.time() < deadline:
+                time.sleep(0.5)
+                appeared = sorted(self.parse_wifi_ifaces(
+                    subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
+                    - self.iface_baseline)
+            if appeared:
+                self.base_iface = appeared[-1]
+                self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], timeout=30)
+                iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
+                self.mon_iface = (self.parse_monitor_iface(iw_out, self.base_iface)
+                                  or self.parse_first_monitor(iw_out) or self.base_iface)
+            else:
+                self.logger.log_main("[!] No wlan interface appeared after the driver reload")
+        else:
+            self.logger.log_main("[!] Driver module unknown; skipping the driver reload")
 
         self.populate_target_from_control_interface()
 

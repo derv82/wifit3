@@ -7,16 +7,18 @@ read8/write8 surface, so the replay runs at the ctrl_transfer layer: extract_ctr
 extract_bulk_out_ops merged by frame, driven through rtw88_pcap_replay.ReplayDevice. One
 monotonic cursor walks the whole capture: the deterministic cold init runs via the driver's
 ``_bringup``, then the operational phase dispatches each interleaved burst (monitor arm, channel
-tune, phydm watchdog tick, TX inject) to its real driver handler at the cursor, distinguished by
-a unique opener op. The first op that opens no handler is the frontier. Modelled on the sibling
-rtl8821cu_dkms recipe (same 0x4e0 family, same ReplayDevice engine).
+tune, phydm watchdog tick) to its real driver handler at the cursor, distinguished by a unique
+opener op; TX frames (MGMT queue) are skipped. A frontier inside ``airmon-ng stop`` replays the teardown
+(``airmon-ng stop`` + ``rmmod``) through ``_close``. The first op that opens no handler is the
+frontier. Modelled on the sibling rtl8821cu_dkms recipe (same 0x4e0 family, same ReplayDevice engine).
 
 Captures (D-Link AC13U 2001:3329): capture-1 sweeps ch1-12 + 5G, capture-2 adds ch13/ch14.
 capture-3 is unusable: its usbmon file is truncated (1 bulk-IN completion), so the CFG_PARAM ACK
 wait during bring up starves and the walk stops at op 4721, before the operational phase.
+The teardown and reload replays need a capture from the current capture.py, which records both.
 
     uv run python scripts/porting/verify_pcap.py rtl8822cu [capture-N]
-    uv run python scripts/chips/rtl8822cu/verify_pcap.py [capture-N]
+    uv run python scripts/chips/rtl8822cu/verify_pcap.py [capture-N | path/to/capture-N.pcap]
 
 Exit code is 0 only on full reproduction. Any frontier or divergence exits nonzero: a
 divergence is the next op to port, a call to action, not a win. The final line names the
@@ -24,6 +26,7 @@ capture command the frontier sits in (e.g. still inside ``sudo airmon-ng start w
 """
 from __future__ import annotations
 
+import asyncio
 import bisect
 import sys
 import time
@@ -34,15 +37,32 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts" / "porting"))
 
 import rtw88_pcap_replay as rp
-from wifit3.chips.rtl8822cu import watchdog
+import usb.util
+from wifit3.chips.rtl8822cu import dack_cache, dm, driver, watchdog
 from wifit3.chips.rtl8822cu.driver import RTL8822CUDriver, _DEFAULT_CHANNEL
-from wifit3.chips.rtl8822cu.phy import switch_channel
+from wifit3.chips.rtl8822cu.phy import MASKDWORD, get_bb_reg, set_bb_reg, switch_channel
+from wifit3.chips.rtl8822cu.tx import TX_DESC_QSEL_MGMT
 
 CAP_DIR = REPO / "driver_captures" / "captures_rtl88x2cu"
+
+
+def _dig_init_without_igi_start(t, dm_state) -> None:
+    """dm.dig_init minus the port's IGI 0x1C start; phydm_dig_init only reads IGI
+    [SRC phydm_dig.c:1036-1050]."""
+    dm_state.cur_ig_value = get_bb_reg(t, 0x1D70, 0x0000007F)
+    set_bb_reg(t, 0x1E80, MASKDWORD, 0x55005500)
+
+
+# Waived port-only writes the vendor build doesn't make: the IGI 0x1C start, and the TX LED
+# blink (CONFIG_RTW_LED is off [SRC include/autoconf.h:178]).
+dm.dig_init = _dig_init_without_igi_start
+driver.enable_tx_blink = lambda t: None
+driver.disable_tx_blink = lambda t: None
 
 # Operational-dispatch openers (each the unique first op of a vendor handler at the cursor):
 _OP_HOP = 0x3C60         # IN: path-A RF18 read opens a channel tune
 _OP_TICK = 0x0210        # IN: TXDMA-status read opens a phydm dynamic-check watchdog tick
+_OP_UNLOAD = 0x0086      # IN: check_ips_status read opens rtw_dev_unload [SRC rtl8822c_ops.c:905]
 
 _RX_BULK_IN_EP = 0x84    # the RTL8822CU RX endpoint (rx_pkt_desc + frame, and in-band C2H)
 
@@ -92,10 +112,9 @@ def _frontier(w: Walk, label: str, e: Exception) -> dict | None:
 def _walk_operational(w: Walk):
     """Dispatch each operational burst to its handler at the cursor. Channel hops
     (``driver.set_channel``) and phydm watchdog ticks (``watchdog.tick``) interleave, each opened by
-    a unique op; TX injects are not yet ported. The first op that opens no handler STOPS the walk and
-    is returned as the frontier."""
+    a unique op. The first op that opens no handler STOPS the walk and is returned as the frontier."""
     wd_st = watchdog.WatchdogState.from_phydm(w.driver.phydm)
-    hops = ticks = injects = 0
+    hops = ticks = 0
     while w.i < len(w.ops):
         o = w.peek()
         if o.get("dir") == "IN" and o.get("wval") == _OP_HOP:
@@ -107,19 +126,27 @@ def _walk_operational(w: Walk):
                 w.driver._current_channel = ch
                 w.driver.current_band_is_2g = ch <= 14
             except Exception as e:  # noqa: BLE001
-                return hops, ticks, injects, _frontier(w, f"hop ch{ch}", e)
+                return hops, ticks, _frontier(w, f"hop ch{ch}", e)
             hops += 1
             continue
         if o.get("dir") == "IN" and o.get("wval") == _OP_TICK:
             try:
                 watchdog.tick(w.t, wd_st, w.driver._current_channel)
             except Exception as e:  # noqa: BLE001
-                return hops, ticks, injects, _frontier(w, f"tick #{ticks + 1}", e)
+                return hops, ticks, _frontier(w, f"tick #{ticks + 1}", e)
             ticks += 1
             continue
-        # TX inject (BULK) not yet ported -> frontier
         break
-    return hops, ticks, injects, w.peek()
+    return hops, ticks, w.peek()
+
+
+def _walk_teardown(w: Walk) -> None:
+    """Replay ``rtw_dev_unload`` through the driver's shipped ``_close`` at the cursor. The pyusb
+    release/dispose calls are host-side (no transfer on the wire), so they're stubbed."""
+    w.driver._claimed = True
+    usb.util.release_interface = lambda *a, **k: None
+    usb.util.dispose_resources = lambda *a, **k: None
+    asyncio.run(w.driver._close())
 
 
 def _pump_rx(w: Walk) -> tuple[int, int, int]:
@@ -171,7 +198,7 @@ def _phase_at(pcap: Path, cap_name: str, frame: int):
     as pcap_slicer, so the two tools agree on the boundaries."""
     from pcap_slicer import parse_log
 
-    log = CAP_DIR / f"{cap_name}_logs" / "main.log"
+    log = pcap.parent / f"{cap_name}_logs" / "main.log"
     if not log.exists():
         return None
     cmds = parse_log(str(log))
@@ -213,7 +240,7 @@ def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None       # replay needs no settle delays
 
     name = Path(cap).stem if cap else "capture-1"
-    pcap = CAP_DIR / f"{name}.pcap"
+    pcap = Path(cap) if cap and cap.endswith(".pcap") else CAP_DIR / f"{name}.pcap"
     if not pcap.exists():
         print(f"FAIL: no such capture {pcap}")
         return 1
@@ -223,10 +250,14 @@ def run(cap: str | None = None) -> int:
     ctrl = rp.extract_ctrl_ops(pcap, dev_addr)
     bulk = rp.extract_bulk_out_ops(pcap, dev_addr)
     bulk_in = rp.extract_bulk_in_ops(pcap, dev_addr)
-    ops = rp.merge_ops_by_frame(ctrl, bulk)
+    # Waived: TX frames (MGMT queue in the TX descriptor; FW download and H2C use other queues).
+    # They interleave with register ops at any point, and the capture holds no inject_frame
+    # input (frame, rate) to drive the port with.
+    fw = [o for o in bulk if (o["data"][5] & 0x1F) != TX_DESC_QSEL_MGMT]
+    ops = rp.merge_ops_by_frame(ctrl, fw)
     total = len(ops)
     print(f"{pcap.name}: card=dev{dev_addr}, {len(ctrl)} control + {len(bulk)} bulk-OUT ops"
-          f" + {len(bulk_in)} bulk-IN RX completions")
+          f" ({len(bulk) - len(fw)} TX frames skipped) + {len(bulk_in)} bulk-IN RX completions")
 
     w = Walk(ops, responses=bulk_in)
     # The BB/RF FW-offload now blocks per batch on its CFG_PARAM_ACK C2H, read off the RX bulk-IN
@@ -250,9 +281,53 @@ def run(cap: str | None = None) -> int:
             _print_phase(pcap, name, ops[w.i]["frame"])
         return 2
     print(f"  bringup: reproduced {w.i} ops single-cursor (cold init + monitor entry)")
+    if not w.driver._dack_restored:     # _connect caches the DACK after a successful bring-up
+        dack_cache.put(w.driver._dack_cache_key, w.driver.dack)
 
-    hops, ticks, injects, frontier = _walk_operational(w)
-    print(f"  operational: {hops} channel tunes + {ticks} watchdog ticks + {injects} injects")
+    while True:
+        hops, ticks, frontier = _walk_operational(w)
+        print(f"  operational: {hops} channel tunes + {ticks} watchdog ticks")
+        phase = _phase_at(pcap, name, frontier["frame"]) if frontier is not None else None
+        if phase is None or phase[1] is None or not phase[1].startswith(("sudo airmon-ng stop", "sudo rmmod")):
+            break
+        # The disconnect and managed-mode ops before rtw_dev_unload are skipped: wifit3 never
+        # leaves monitor mode.
+        unload = next((j for j in range(w.i, len(w.ops))
+                       if w.ops[j].get("dir") == "IN" and w.ops[j].get("wval") == _OP_UNLOAD), None)
+        if unload is None:
+            break
+        skipped = unload - w.i
+        w.dev.i = unload
+        try:
+            _walk_teardown(w)
+            print(f"  teardown: {skipped} disconnect/managed-mode ops skipped, "
+                  f"_close reproduced {w.i - unload} ops")
+        except Exception as e:  # noqa: BLE001
+            _frontier(w, "teardown _close", e)
+            frontier = w.peek()
+            break
+        frontier = w.peek()
+        phase = _phase_at(pcap, name, frontier["frame"]) if frontier is not None else None
+        if phase is None or phase[1] is None or not phase[1].startswith("sudo modprobe"):
+            break
+        # Driver reload: the app builds a new driver per connect; the DACK cache is process-wide.
+        start = w.i
+        w.driver = RTL8822CUDriver(w.dev)
+        w.t = w.driver.transport
+        w.driver._bulk_in_ep = _RX_BULK_IN_EP
+        # The reload's FW ACKs follow its own start in the bulk-IN stream; drop the earlier session's RX.
+        w.dev.responses = rp.extract_bulk_in_ops(pcap, dev_addr, window=(frontier["frame"], 1 << 31))
+        w.dev.resp_i = 0
+        try:
+            w.driver._bringup(w.driver.transport)
+            w.driver._monitor_entry()
+            w.driver._current_channel = _DEFAULT_CHANNEL
+        except Exception as e:  # noqa: BLE001
+            _frontier(w, "reload bringup", e)
+            frontier = w.peek()
+            break
+        print(f"  reload: reproduced {w.i - start} ops (bring-up + monitor entry, "
+              f"DACK {'restored' if w.driver._dack_restored else 'calibrated'})")
 
     reads, rx_parsed, beacons, rssis = _pump_rx(w)
     print(f"  RX stream (past frontier): pumped {reads}/{len(bulk_in)} captured bulk-IN "

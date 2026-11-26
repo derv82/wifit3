@@ -14,6 +14,7 @@ from wifit3.chips.rtl8822cu.tx import (
     TX_DESC_QSEL_MGMT,
     build_tx_desc_inject,
     build_tx_desc_mgmt,
+    build_tx_packet_inject,
     pick_bulk_out_ep,
     write_bulk,
 )
@@ -125,6 +126,31 @@ def test_inject_desc_checksum_spans_full_48_bytes():
     for i in range(24):                             # 24 u16 words = the whole 48-byte descriptor
         chksum ^= struct.unpack_from("<H", body, i * 2)[0]
     assert chksum & 0xFFFF == stored
+
+
+@pytest.mark.parametrize("bulk_size,length,padded", [
+    (64, 16, True), (64, 15, False), (64, 17, False),
+    (512, 464, True), (512, 463, False), (512, 465, False),
+    (1024, 976, True), (1024, 1488, False),
+])
+def test_inject_packet_usb_boundary(bulk_size, length, padded):
+    frame = (_CAPTURE_INJECT_FRAME + bytes(length))[:length]
+    packet = build_tx_packet_inject(frame, bulk_out_size=bulk_size)
+    offset = 8 if padded else 0
+    assert len(packet) == 48 + offset + length
+    assert _field(packet, 0, 0, 16) == length
+    assert _field(packet, 0, 16, 8) == 48
+    assert _field(packet, 1, 24, 5) == int(padded)
+    assert packet[48:48 + offset] == bytes(offset)
+    assert packet[48 + offset:] == frame
+    assert 0 == __import__("functools").reduce(
+        int.__xor__, struct.unpack_from(f"<{(48 + offset) // 2}H", packet), 0
+    )
+
+
+def test_inject_packet_rejects_invalid_bulk_size():
+    with pytest.raises(ValueError):
+        build_tx_packet_inject(_CAPTURE_INJECT_FRAME, bulk_out_size=0)
 
 
 def test_inject_desc_takes_seq_from_frame_not_hwseq():

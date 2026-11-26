@@ -68,6 +68,9 @@ def dig_init(t: RTL8822CUTransport, dm: PhydmState) -> None:
     hardware-IGI offsets. [SRC phydm_dig.c:1036, :784]"""
     dm.cur_ig_value = get_bb_reg(t, 0x1D70, 0x0000007F)
     set_bb_reg(t, 0x1E80, MASKDWORD, 0x55005500)
+    set_bb_reg(t, 0x1D70, 0x0000007F, 0x1C)
+    set_bb_reg(t, 0x1D70, 0x00007F00, 0x1C)
+    dm.cur_ig_value = 0x1C
 
 
 def _read_cck_env(t: RTL8822CUTransport, dm: PhydmState) -> None:
