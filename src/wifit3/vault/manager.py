@@ -81,7 +81,12 @@ class JobManager:
             return
         data = {k: v.to_dict() for k, v in self.jobs.items()}
         logger.debug(f"Saving {len(data.keys())} jobs to {jobs_file}")
-        jobs_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        temporary = jobs_file.with_name(jobs_file.name + ".tmp")
+        try:
+            temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            temporary.replace(jobs_file)
+        except OSError:
+            logger.exception(f"Error while saving {jobs_file}")
 
     def reconcile_on_startup(self) -> None:
         """Resolve jobs left in a ``RUNNING`` state by a previous session."""
@@ -96,7 +101,7 @@ class JobManager:
                     job.progress_msg = "Stopped when wifit3 closed."
                     changed = True
                     continue
-                if not (tool and (job.log_path or job.api_id)):
+                if not (tool and (job.log_path or job.api_id or job.tool_state)):
                     job.status = ToolStatus.ERROR
                     job.progress_msg = "Interrupted: wifit3 closed before the job started"
                     changed = True

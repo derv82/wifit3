@@ -1,5 +1,6 @@
 import logging
 import threading
+from itertools import islice
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 class CpuCrackQueue(WordlistQueue):
     ssid_passwords_index: Optional[int] = None  # queue entry of the in-memory SSID passwords
     keys: list[str] = field(default_factory=list)   # recovered by the job's earlier wordlists
+    passwords_tried: int = 0                        # in the current entry
+    passwords_total: int = 0                        # in the current entry; 0 until counted
 
     @property
     def on_ssid_passwords(self) -> bool:
@@ -88,7 +91,7 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
     name = ToolName.CPU_CRACK
     label = "CPU Crack"
     description = "Built-in CPU cracker (WPA/WPA2/PMKID)"
-    capabilities = ToolCapability.KILLABLE | ToolCapability.SINGLETON
+    capabilities = ToolCapability.KILLABLE | ToolCapability.SINGLETON | ToolCapability.ADOPTABLE
     queue_type = CpuCrackQueue
 
     def __init__(self) -> None:
@@ -125,7 +128,7 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
             raise ValueError("No passwords to try: choose a wordlist or a password source")
         self._start_wordlist(job, queue)
 
-    def _start_wordlist(self, job: JobState, queue: CpuCrackQueue) -> None:
+    def _start_wordlist(self, job: JobState, queue: CpuCrackQueue, paused: bool = False) -> None:
         lines_by_essid = _lines_by_essid(job.hashlines_path)
         for key in queue.keys:
             self._remove_cracked_lines(key, lines_by_essid)
@@ -133,8 +136,11 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
             wordlist=Path(queue.current) if queue.current else None,
             ssid_passwords=(_ssid_passwords(job, _ap_ssid_variants(job))
                             if queue.on_ssid_passwords else []),
-            lines_by_essid=lines_by_essid)
-        run.unpaused.set()
+            lines_by_essid=lines_by_essid,
+            passwords_tried=queue.passwords_tried,
+            passwords_total=queue.passwords_total)
+        if not paused:
+            run.unpaused.set()
         run.thread = threading.Thread(target=self._crack, args=(run,), daemon=True,
                                       name=f"cpu_crack {queue.label}")
         self._runs[job.job_id] = run
@@ -144,8 +150,12 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
 
     def _crack(self, run: _WordlistRun) -> None:
         try:
-            run.passwords_total = sum(1 for _ in self._passwords(run))
-            for psk in self._passwords(run):
+            run.unpaused.wait()
+            if run.stop_requested.is_set():
+                return
+            if not run.passwords_total:
+                run.passwords_total = sum(1 for _ in self._passwords(run))
+            for psk in islice(self._passwords(run), run.passwords_tried, None):
                 run.unpaused.wait()
                 if run.stop_requested.is_set():
                     return
@@ -183,9 +193,22 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
         run = self._runs.get(job.job_id)
         keys = tuple(dict.fromkeys([*queue.keys, *(run.keys if run is not None else [])]))
         if run is not None and not assume_dead and run.thread.is_alive():
-            percent = run.passwords_tried / max(run.passwords_total, 1) * 100
+            queue.passwords_tried = run.passwords_tried
+            queue.passwords_total = run.passwords_total
+            queue.keys = list(keys)
+            queue.write_to(job)
+            percent = run.passwords_tried / run.passwords_total * 100 if run.passwords_total else 0.0
             state = "Running" if run.unpaused.is_set() else "Paused"
             return replace(self._running(self._progress_msg(state, percent), percent, queue), keys=keys)
+
+        if run is None and not assume_dead and not queue.stopped:
+            wordlist = queue.current
+            if wordlist is not None and (not Path(wordlist).is_file()
+                                         or wordlist_identity(wordlist) != queue.identities[queue.index]):
+                return ToolResult(status=ToolStatus.ERROR, value=f"Wordlist changed or missing: {wordlist}")
+            percent = queue.passwords_tried / queue.passwords_total * 100 if queue.passwords_total else 0.0
+            self._start_wordlist(job, queue, paused=True)
+            return self._running(self._progress_msg("Paused", percent), percent, queue)
 
         self._runs.pop(job.job_id, None)
         queue.keys = list(keys)
@@ -199,6 +222,11 @@ class CpuCrackTool(CrackerTool[CpuCrackQueue]):
             return replace(ended, keys=keys)
         reason = run.error if run is not None else None
         return ToolResult(status=ToolStatus.ERROR, value=reason or "cpu_crack ended without recovering the key")
+
+    def _start_next_wordlist(self, job: JobState, queue: CpuCrackQueue) -> None:
+        queue.passwords_tried = 0
+        queue.passwords_total = 0
+        super()._start_next_wordlist(job, queue)
 
     def _live_run(self, job: JobState) -> Optional[_WordlistRun]:
         run = self._runs.get(job.job_id)

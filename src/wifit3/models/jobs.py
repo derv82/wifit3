@@ -11,7 +11,7 @@ class ToolCapability(IntFlag):
     NONE = 0
     KILLABLE = auto()
     SINGLETON = auto()      # only one instance of this tool may run at a time
-    ADOPTABLE = auto()      # process outlives the app; adopt it on relaunch, don't kill on exit
+    ADOPTABLE = auto()      # the job outlives the app (its process, or a saved place); adopt it on relaunch
 
 class JobAction(IntFlag):
     """What a job will accept right now; recomputed on every poll, never persisted."""
