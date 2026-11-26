@@ -488,11 +488,10 @@ def test_bringup_feeds_config_bb_rf_the_efuse_derived_values(monkeypatch):
     assert calls["btcoex_wifionly_hw_config"] == [{}]
 
 
-def test_bringup_leaves_bt_combo_coexistence_tables_untouched(monkeypatch, caplog):
+def test_bringup_gives_the_antenna_to_wifi_on_bt_combo_boards(monkeypatch):
     _d, calls = _run_bringup(monkeypatch, _efuse(0x33, board_option=0x21))
 
-    assert "btcoex_wifionly_hw_config" not in calls
-    assert "BT-combo board" in caplog.text
+    assert calls["btcoex_wifionly_hw_config"] == [{}]
 
 
 def test_monitor_entry_enables_tx_only_hardware_led_after_monitor_mode(monkeypatch):

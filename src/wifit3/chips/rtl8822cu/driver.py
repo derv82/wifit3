@@ -239,11 +239,7 @@ class RTL8822CUDriver(Driver):
                 dack_cache.discard(self._dack_cache_key)
             raise
         phy_bf_init(t)
-        if not self.efuse.bluetooth_coexist:
-            btcoex_wifionly_hw_config(t)
-        else:
-            logger.warning("RTL8822CU BT-combo board: coexistence policy is not ported; "
-                           "leaving the vendor BT tables untouched")
+        btcoex_wifionly_hw_config(t)
         init_misc(t)
         self._log_state("bringup")
 
