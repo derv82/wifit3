@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from rich.markup import escape
@@ -15,9 +16,13 @@ from .item import AddKeyPressed, ShowApPressed, VaultItemView
 from .key_row import DeleteKeyPressed, key_description
 from wifit3.models import AccessPoint, CaptureType, PersistedCapture
 from wifit3.persist.ap_state import ApState, is_confirmed
+from wifit3.persist.capture_import import CaptureImport
+from wifit3.persist.config import Config
+from wifit3.ui.path_picker import PathPickerModal
 from wifit3.ui.screens.vault.job_pane import JobTrackerPane
 from wifit3.ui.screens.vault.modals.add_credential import AddCredentialModal, ManualCredential
 from wifit3.ui.screens.vault.modals.confirm import ConfirmModal
+from wifit3.ui.screens.vault.modals.import_problems import ImportProblemsModal
 from wifit3.ui.modals.nickname import NicknameModal
 
 
@@ -45,6 +50,7 @@ class VaultDrawer(ModalScreen):
         Binding("n", "set_nickname", "Nickname", show=True),
         Binding("a", "add_credential", "Add Key", show=True),
         Binding("o", "show_directory", "Open Dir", show=True),
+        Binding("i", "import_captures", "Import", show=True),
         Binding("z", "export_zip", "Export .zip", show=True),
         Binding("d", "delete_ap", "Delete AP", show=True),
         Binding("q", "app.quit", "Quit", show=True),
@@ -354,6 +360,34 @@ class VaultDrawer(ModalScreen):
             return
         if matched:
             self.notify(f"PSK also verified and saved for {len(matched)} related APs")
+
+    def action_import_captures(self) -> None:
+        picker = PathPickerModal(Path.home(), title="Import captures", multiple=True, checkable_directories=True)
+        self.app.push_screen(picker, self._import_paths_chosen)
+
+    def _import_paths_chosen(self, paths: Optional[list[Path]]) -> None:
+        if not paths:
+            return
+        captures_dir = Path(Config.captures_dir).resolve()
+        for path in paths:
+            if path.resolve().is_relative_to(captures_dir):
+                self.notify(f"wifit3 cannot import its own captures directory into {Config.captures_dir}",
+                            severity="warning")
+                return
+        self._import_captures(paths)
+
+    @work(thread=True)
+    def _import_captures(self, paths: list[Path]) -> None:
+        result = CaptureImport()
+        try:
+            result.add_paths(paths)
+        except OSError as exc:
+            self.app.call_from_thread(self.notify, f"Import failed: {exc}", severity="error")
+        self.app.vault.refresh()
+        if result.problems:
+            self.app.call_from_thread(self.app.push_screen, ImportProblemsModal(result.summary, result.problems))
+        else:
+            self.app.call_from_thread(self.notify, result.summary)
 
     def action_export_zip(self) -> None:
         try:

@@ -171,13 +171,15 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
 
     def __init__(self, start: str | Path, *, directories_only: bool = False,
                  title: str = "Select", prefer_relative: bool = False,
-                 multiple: bool = False, checked: Iterable[Path] = ()) -> None:
+                 multiple: bool = False, checkable_directories: bool = False,
+                 checked: Iterable[Path] = ()) -> None:
         super().__init__()
         self._start = Path(start).expanduser()
         self._directories_only = directories_only
         self._title = title
         self._prefer_relative = prefer_relative
         self._multiple = multiple
+        self._checkable_directories = checkable_directories
         self._checked: list[Path] = [Path(path) for path in checked]
 
     def compose(self) -> ComposeResult:
@@ -191,7 +193,9 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
                     yield _RootButton(label, target)
             yield Input(str(self._start), id="picker-path")
             yield tree(root, checked=self._checked, id="picker-tree")
-            if self._multiple:
+            if self._checkable_directories:
+                yield Label("Select multiple files or directories with spacebar", id="picker-hint")
+            elif self._multiple:
                 yield Label("Select multiple files with spacebar or click", id="picker-hint")
             with Horizontal(id="buttons"):
                 yield Button("Cancel", "default", id="picker-cancel")
@@ -245,7 +249,7 @@ class PathPickerModal(ModalScreen[Optional[list[Path]]]):
         if node is None:
             return
         entry = node.data
-        if self._multiple and entry is not None and not _is_dir(entry.path):
+        if self._multiple and entry is not None and (self._checkable_directories or not _is_dir(entry.path)):
             self._toggle_check(entry.path)
         else:
             node.toggle()

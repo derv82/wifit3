@@ -10,13 +10,23 @@ from wifit3.persist.config import Config
 from wifit3.persist.hc22000 import Hc22000Import
 
 PCAP_EXTENSIONS = (".cap", ".pcap", ".pcapng")
+IMPORT_EXTENSIONS = (".hc22000", *PCAP_EXTENSIONS, ".txt", ".meta")
 
 
 @dataclass
 class CaptureImport(Hc22000Import):
-    """One import: the selected files and directories (recursive), zips read in memory; anything in
-    Config.captures_dir is skipped."""
+    """One import: the selected files and directories (recursive), zips read in memory; other file types
+    and anything in Config.captures_dir are skipped."""
     files: int = 0
+
+    @property
+    def summary(self) -> str:
+        """``Imported 41 handshakes & 12 PMKIDs (38 APs) from 120 files, 9 already in Vault``."""
+        text = (f"Imported {self.handshakes} handshakes & {self.pmkids} PMKIDs ({len(self.bssids)} APs) "
+                f"from {self.files} files")
+        if self.duplicates:
+            text += f", {self.duplicates} already in Vault"
+        return text
 
     def add_paths(self, paths: list[Path]) -> None:
         captures_dir = Path(Config.captures_dir).resolve()
@@ -31,6 +41,8 @@ class CaptureImport(Hc22000Import):
                 name = file_path.relative_to(path.parent).as_posix()
                 if file_path.suffix.lower() == ".zip":
                     self._add_zip(name, file_path)
+                    continue
+                if file_path.suffix.lower() not in IMPORT_EXTENSIONS:
                     continue
                 try:
                     data = file_path.read_bytes()
@@ -51,6 +63,8 @@ class CaptureImport(Hc22000Import):
                     if info.filename.lower().endswith(".zip"):
                         self.problems.append((entry_name, "zip inside zip, skipped"))
                         continue
+                    if PurePosixPath(info.filename).suffix.lower() not in IMPORT_EXTENSIONS:
+                        continue
                     self._add_file(entry_name, archive.read(info), int(datetime(*info.date_time).timestamp()))
         except zipfile.BadZipFile:
             self.problems.append((name, "corrupt zip"))
@@ -62,7 +76,5 @@ class CaptureImport(Hc22000Import):
         extension = PurePosixPath(name).suffix.lower()
         if extension == ".hc22000":
             self.add_file(name, data.decode("utf-8", errors="replace"), date)
-        elif extension in PCAP_EXTENSIONS or extension in (".txt", ".meta"):
-            self.problems.append((name, "not supported yet"))
         else:
-            self.problems.append((name, "unsupported file type"))
+            self.problems.append((name, "not supported yet"))

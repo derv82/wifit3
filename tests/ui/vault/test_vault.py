@@ -10,7 +10,7 @@ import pytest
 from textual import events
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Label
+from textual.widgets import Label, Static
 
 from wifit3.crack.hc22000_format import hashline_id
 from wifit3.models import AccessPoint, CaptureType, ToolName
@@ -28,6 +28,7 @@ from wifit3.ui.screens.vault.item import VaultItemView, _ApStatePanel, _no_crack
 from wifit3.ui.screens.vault.key_row import DeleteKeyPressed
 from wifit3.ui.screens.vault.rows import date_text
 from wifit3.ui.screens.vault.modals.add_credential import ManualCredential
+from wifit3.ui.screens.vault.modals.import_problems import ImportProblemsModal
 from wifit3.crack import wpa_psk
 from wifit3.dot11.wpa import derive_pmk
 from tests.hashline_dates import write_hashline_dates
@@ -397,3 +398,41 @@ async def test_none_crackable_shows_only_for_pcaps_without_a_crackable_4way(tmp_
         await _wait_until(pilot, lambda: item.query_one(_ApStatePanel)._no_crackable_label.display)
         assert str(item.query_one(_ApStatePanel)._no_crackable_label.content) == \
             f"1 capture, none crackable ({date_text(1700000000)})"
+
+
+async def test_importing_from_the_captures_directory_is_refused(tmp_path):
+    app = _VaultApp()
+    async with app.run_test():
+        drawer = _DrawerWithoutWidgets()
+        await app.push_screen(drawer)
+        drawer._import_paths_chosen([tmp_path / "old"])
+        assert app.notified[-1] == f"wifit3 cannot import its own captures directory into {tmp_path}"
+
+
+async def test_an_import_without_problems_says_what_it_imported(tmp_path_factory):
+    selected_dir = tmp_path_factory.mktemp("old")
+    _write(selected_dir, "a.hc22000", _PMKID_LINE)
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        drawer = _DrawerWithoutWidgets()
+        await app.push_screen(drawer)
+        drawer._import_paths_chosen([selected_dir])
+        await app.workers.wait_for_complete()
+        await pilot.pause(0)
+        assert app.notified[-1] == "Imported 0 handshakes & 1 PMKIDs (1 APs) from 1 files"
+        assert app.vault.ap_state("aa:bb:cc:dd:ee:ff").hashlines
+
+
+async def test_an_import_with_problems_lists_them_in_a_modal(tmp_path_factory):
+    selected_dir = tmp_path_factory.mktemp("old")
+    _write(selected_dir, "a.hc22000", _PMKID_LINE + "not a hashline\n")
+    app = _VaultApp()
+    async with app.run_test() as pilot:
+        drawer = _DrawerWithoutWidgets()
+        await app.push_screen(drawer)
+        drawer._import_paths_chosen([selected_dir])
+        await app.workers.wait_for_complete()
+        await pilot.pause(0)
+        assert isinstance(app.screen, ImportProblemsModal)
+        problems = str(app.screen.query_one("VerticalScroll > Static", Static).render())
+        assert problems == f"{selected_dir.name}/a.hc22000:2 - not a hashline"

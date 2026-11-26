@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input
+from textual.widgets import Button, DirectoryTree, Input
 
 from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
 from wifit3.ui.path_picker import (
-    _DirectoriesOnlyTree, _nearest_dir, picker_roots,
+    PathPickerModal, _DirectoriesOnlyTree, _nearest_dir, picker_roots,
     relative_to_cwd,
 )
 from wifit3.ui.pref import PreferencesModal
@@ -76,3 +76,22 @@ async def test_preferences_stores_a_relative_capture_dir(tmp_path, monkeypatch):
         await pilot.pause(0)
 
         assert prefs.query_one("#captures_dir", Input).value == "captures"
+
+
+@pytest.mark.parametrize("checkable_directories, chosen_paths", [(True, [["captures"]]), (False, [])])
+async def test_spacebar_checks_a_directory_only_when_directories_are_checkable(
+        tree_fixture, checkable_directories, chosen_paths):
+    app = _Host()
+    chosen: list[list[Path]] = []
+    async with app.run_test() as pilot:
+        picker = PathPickerModal(tree_fixture, multiple=True, checkable_directories=checkable_directories)
+        app.push_screen(picker, chosen.append)
+        await pilot.pause(0)
+        tree = picker.query_one("#picker-tree", DirectoryTree)
+        while not tree.root.children:
+            await pilot.pause(0.01)
+        tree.move_cursor(tree.root.children[0])
+        await pilot.press("space")
+        picker.query_one("#picker-select", Button).press()
+        await pilot.pause(0)
+    assert [[path.name for path in paths] for paths in chosen] == chosen_paths
