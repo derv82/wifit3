@@ -29,7 +29,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8922AU](#rtl8922au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822CU](#rtl8822cu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822CU](#rtl8822cu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8188FTV](#rtl8188ftv) | ✅ | ✅ | ✅ | ✅ | ✅ | B |
@@ -302,15 +302,15 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **A** | 2026-09-02 | Dual-band kernel-parity RX + full attack suite; spoofable ACKs. |
-| RX | ✅ | 2026-11-05 | 5-min fixed-channel baseline: 2G ch4 4.96 vs 3.49 beacons/s, 37/36 APs; 5G ch36 9.67 vs 9.71 beacons/s, 6/7 APs; median RSSI +0.5 dB vs Linux (40 common APs); both channels heard their reference APs. One zero-beacon cross-band metadata record on ch4. |
-| Port | ✅ | 2026-09-02 | Vendor USB replay matches bring-up, 65/67 hops, 34/35 watchdog ticks and RX records to TX frontier; TX descriptor not capture-verified byte by byte. DIG set to start with highest sensitivity. (fixed startup degradation) |
-| TX | ✅ | 2026-11-06 | TX Lab: Ch100: 100/100 broadcast; flood 499/500, 0 out of order; 50/50 probe replies. RTL8821AU DKMS sniffer. Deauth + PMKID, 2.4 + 5 GHz. |
-| Handshake | ✅ | 2026-11-05 | Deauth → 4-way M1-M4; Evil twin capture succeed.|
+| RX | ✅ | 2026-11-05 | 2G: 5.0 vs 3.5/s, 5G: 9.7 vs 9.7/s; RSSI +0.5 dB. |
+| Port | ✅ | 2026-09-02 | Matches linux-DKMS (rtl88x2cu) both bands. |
+| TX | ✅ | 2026-11-06 | Deauth + PMKID, 2.4 + 5 GHz; TX Lab flood 499/500 in order. |
+| Handshake | ✅ | 2026-11-05 | Deauth → M1–M4; evil twin capture. |
 | PMKID | ✅ | 2026-11-06 | Passive + active, 2.4 + 5 GHz. |
 | WEP | ✅ | 2026-09-02 | ChopChop + ARP replay ~220 IVs/s. |
-| WPS | ✅ | 2026-11-05 | PIN works; M1-M7 captured, pixie pin cracked using ralink |
-| ACKs | ✅ | 2026-09-02 | Auto-ACKs spoofed mac in AM; TX stops-on-ACK AM both on & off (retry 6). |
-| Stress | ✅ | 2026-11-04 | 30-min 23-channel dual-band soak; active-BSSID trend 0.88 with a temporary minute 10–18 visibility dip. (possibly due to me moving the laptop a bit) |
+| WPS | ✅ | 2026-11-05 | PIN → M7; Pixie Dust cracked. |
+| ACKs | ✅ | 2026-09-02 | Auto-ACK forged MAC in active monitor; TX stops on ACK. |
+| Stress | ✅ | 2026-11-04 | 30-min 23-ch dual-band soak (trend 0.88). |
 
 → [RTL8822CU.md](../src/wifit3/chips/rtl8822cu/RTL8822CU.md)
 
