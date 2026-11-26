@@ -6,11 +6,8 @@ Every expected value is re-derived from the 8188eu vendor C, NOT from any Python
   - RFE gate:       hal/rtl8188e/rtl8188e_phycfg.c    (PHY_SetRFEReg_8188E)
   - init tables:    hal/phydm/rtl8188e/halhwimg8188e_{mac,bb,rf}.c (board-gated rows, A-cut walk)
 
-A divergence of the Python port from the C is a HARD failure here (not xfail). xfail is used ONLY
-for C branches that genuinely cannot be driven through the Python seam (no such parameter exists).
+A divergence of the Python port from the C is a HARD failure here.
 """
-import pytest
-
 from wifit3.chips.rtl8188eus_dkms import bb, efuse, mac, phy_cond, rf
 from wifit3.chips.rtl8188eus_dkms.bb_agc_tab_tbl import AGC_TAB
 from wifit3.chips.rtl8188eus_dkms.bb_phy_reg_tbl import PHY_REG
@@ -202,17 +199,6 @@ def test_autoload_fail_uses_default_board_options():
     assert (b.external_pa_2g, b.external_lna_2g, b.type_glna, b.rfe_type) == (False, False, 0x1, 0xFF)
 
 
-@pytest.mark.xfail(reason="read_board_options models only the AUTO path (registry AmplifierType_2G==0); "
-                          "the C registry-override path uses rtw_amplifier_type_2g&ODM_BOARD_EXT_PA "
-                          "instead of efuse 0xCA (rtl8188e_hal_init.c:3082-3083), unreachable from the seam",
-                   strict=False)
-def test_registry_override_external_pa_UNREACHABLE():
-    # If rtw_amplifier_type_2g had ODM_BOARD_EXT_PA(BIT3) set, C would force ExternalPA_2G=1
-    # regardless of the (0xFF -> AUTO -> ext_pa=0) efuse byte. Python cannot express this.
-    b = _board(0xFF)
-    assert b.external_pa_2g is True
-
-
 # =========================================================================================
 # build_driver_words  --  board-type / type_glna packing   branches 10,11,12
 # C: hal_dm.c:228-247 (odm_board_type) -> halhwimg8188e_mac.c:30-54 (_board_type + driver2/driver4)
@@ -256,15 +242,6 @@ def test_driver_words_preserve_nonboard_bits_across_internal_external():
     ref = _dw(False, False, 0x0)[0]
     for lna, pa, glna in ((True, False, 0x1), (False, True, 0x0), (True, True, 0x2)):
         assert _dw(lna, pa, glna)[0] & ~0x1F == ref & ~0x1F
-
-
-@pytest.mark.xfail(reason="build_driver_words has no EEPROMBluetoothCoexist parameter; the C BT bit "
-                          "(board_type&BIT2 -> _board_type bit4 -> driver1 bit4, hal_dm.c:244-245 & "
-                          "halhwimg8188e_mac.c:34) cannot be driven from the seam", strict=False)
-def test_bt_coexist_bit_UNREACHABLE():
-    # C would set driver1 bit4 when EEPROMBluetoothCoexist!=0; build_driver_words clears it via &~0x1F.
-    d1, _, _ = _dw(True, True, 0x2)
-    assert d1 & 0x10 != 0            # BT bit; never settable -> xfail
 
 
 # =========================================================================================

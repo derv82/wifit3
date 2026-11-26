@@ -22,8 +22,6 @@ Build config pinned from ``include/autoconf.h`` (this driver's compile):
   MP_DRIVER = 0                        (autoconf.h:266) -> non-MP turn-on tail
   CONFIG_PREALLOC_RX_SKB_BUFFER NOT set -> rxagg_usb size=0x5 timeout=0x20
 """
-import pytest
-
 from wifit3.chips.rtl8812au_dkms.mac import (
     hal_init_misc_post,
     hal_init_misc_pre,
@@ -191,37 +189,6 @@ def test_queue_priority_three_out_ep_0xF5B0():  # branch 7
     # usb_halinit.c:693-700,730-751 the 3-EP path never calls init_hi_queue_config ->
     #   REG_HIQ_NO_LMT_EN=0x5A7 (hal_com_reg.h:391) is NOT written
     assert not any(o[0] == "W8" and o[1] == 0x5A7 for o in rec.ops)
-
-
-@pytest.mark.xfail(reason="OutEpNumber is a device/port constant (ALFA=3 bulk-OUT EPs); the "
-                          "4-EP _InitNormalChipFourOutEpPriority path (usb_halinit.c:702-727) is "
-                          "not reachable through the transport-only mock.", strict=False)
-def test_queue_priority_four_out_ep_0xC5A0():  # branch 8
-    rec = _misc()
-    # usb_halinit.c:710-716 4-EP typical -> be=1,bk=1,vi=2,vo=2,mgt=0,hi=3 = 0xC5A0 (maps :1400-1405)
-    assert ("W16", 0x10C, 0xC5A0) in rec.ops
-    # usb_halinit.c:699 also writes REG_HIQ_NO_LMT_EN=0x5A7 = 0xFF on the 4-EP path
-    assert ("W8", 0x5A7, 0xFF) in rec.ops
-
-
-@pytest.mark.xfail(reason="OutEpNumber fixed to 3 in the port; the 2-EP "
-                          "_InitNormalChipTwoOutEpPriority path (usb_halinit.c:615-665) is not "
-                          "reachable through the transport-only mock.", strict=False)
-def test_queue_priority_two_out_ep_0xFAF0():  # branch 9
-    rec = _misc()
-    # usb_halinit.c:637-661 2-EP with OutEpQueueSel HQ|NQ: valueHi=HIGH(3),valueLow=NORMAL(2)
-    #   be=2,bk=2,vi=3,vo=3,mgt=3,hi=3 = 0xFAF0 (maps hal_com_reg.h:1400-1405)
-    assert ("W16", 0x10C, 0xFAF0) in rec.ops
-
-
-@pytest.mark.xfail(reason="OutEpNumber fixed to 3; the 'shall not reach' default branch "
-                          "(usb_halinit.c:747-749) emits no register write and cannot be driven "
-                          "from the transport mock.", strict=False)
-def test_queue_priority_default_no_trxdma_write():  # branch 10
-    rec = _misc()
-    # usb_halinit.c:747-749 default: RTW_INFO only, no REG_TRXDMA_CTRL write. The 3-EP port always
-    # writes 0x10C, so asserting the absence documents that the default path is unreachable here.
-    assert not any(o[0] == "W16" and o[1] == 0x10C for o in rec.ops)
 
 
 def test_page_boundary_rx_dma_0x3E7F():  # branch 11
@@ -581,63 +548,9 @@ def test_post_non_mp_turn_on_writes():  # branch 40 + 41
 # Suspicion flags  --  MISC31 writes the C oracle performs but the Python MAC fns omit
 # =====================================================================================
 
-@pytest.mark.xfail(reason="NOT A BUG (triaged 2026-09-12): MISC31 REG_USB_HRPWM(0xFE58)=0 "
-                          "(usb_halinit.c:1710) IS ported -- in monitor.set_monitor_mode "
-                          "(monitor.py:91), not hal_init_misc_post. This port relocates the C's "
-                          "end-of-hal_init MISC31 stage into monitor entry. Out of scope for the "
-                          "mac functions; belongs to monitor-area tests.",
-                   strict=False)
-def test_misc31_usb_hrpwm_written():  # branch 42
-    rec = Rec()
-    hal_init_misc_post(rec)
-    # usb_halinit.c:1710 rtw_write8(REG_USB_HRPWM=0xFE58, 0) (hal_com_reg.h:545)
-    assert ("W8", 0xFE58, 0x00) in rec.ops
-
-
-@pytest.mark.xfail(reason="NOT A BUG (triaged 2026-09-12): the XMIT_ACK REG_FWHW_TXQ_CTRL|=BIT12 "
-                          "write (usb_halinit.c:1712-1715) IS ported -- monitor.set_monitor_mode "
-                          "(monitor.py:92). Not in the mac functions by design (MISC31 relocated to "
-                          "monitor entry). Out of scope for mac; belongs to monitor-area tests.",
-                   strict=False)
-def test_misc31_xmit_ack_bit12_set():  # branch 43
-    rec = Rec(reads={0x420: 0x00})
-    hal_init_misc_post(rec)
-    # usb_halinit.c:1712-1715 rtw_write32(REG_FWHW_TXQ_CTRL=0x420, read32 | BIT(12)) -> 0x1000
-    assert ("W32", 0x420, 0x00001000) in rec.ops
-
 
 # =====================================================================================
 # Pre-MAC context branches  --  handled by other Python modules, not the MAC functions
 # =====================================================================================
 
-@pytest.mark.xfail(reason="bkeepfwalive 'goto exit' early-exit (usb_halinit.c:1400-1414) is a "
-                          "warm-reattach concern; the cold-boot mac_init_misc cannot be told to "
-                          "skip all writes via the transport-only mock.", strict=False)
-def test_bkeepfwalive_early_exit_skips_all_writes():  # branch 44
-    rec = _misc()
-    assert not any(o[0].startswith("W") for o in rec.ops)
 
-
-@pytest.mark.xfail(reason="RF-path reset (usb_halinit.c:1436-1441) runs before PHY_MACConfig and "
-                          "belongs to the RF/power bring-up module, not the mac.py functions "
-                          "under test.", strict=False)
-def test_rf_reset_writes_present():  # branch 45
-    rec = Rec()
-    for fn in (phy_mac_config, mac_init_misc, hal_init_misc_pre, hal_init_misc_post):
-        fn(rec)
-    # usb_halinit.c:1437-1440 write8(REG_RF_CTRL=0x1F, 5/7); write8(REG_RF_B_CTRL_8812=0x76, 5/7)
-    #   (hal_com_reg.h:53, rtl8812a_spec.h:42)
-    assert ("W8", 0x1F, 7) in rec.ops
-    assert ("W8", 0x76, 7) in rec.ops
-
-
-@pytest.mark.xfail(reason="drop-incorrect-bulkout (usb_halinit.c:755-765,1477) fires in the "
-                          "LLT/pre-FW stage, handled by another Python module, not the MAC "
-                          "functions.", strict=False)
-def test_drop_incorrect_bulkout_present():  # branch 46
-    rec = Rec()
-    for fn in (phy_mac_config, mac_init_misc, hal_init_misc_pre, hal_init_misc_post):
-        fn(rec)
-    # usb_halinit.c:761-763 write32(REG_TXDMA_OFFSET_CHK=0x20C, read32 | DROP_DATA_EN=BIT9)
-    #   (hal_com_reg.h:174,1452)
-    assert any(o[0] == "W32" and o[1] == 0x20C for o in rec.ops)

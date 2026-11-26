@@ -28,11 +28,12 @@ def test_every_driver_supports_2g_channels(driver_class):
     assert set(Driver.CHANNELS_2G) <= set(driver_class.SUPPORTED_CHANNELS)
 
 
-@pytest.mark.parametrize("driver_class", _driver_classes(), ids=lambda c: c.__name__)
+@pytest.mark.parametrize(
+    "driver_class",
+    [driver_class for driver_class in _driver_classes() if max(driver_class.SUPPORTED_CHANNELS) > 14],
+    ids=lambda c: c.__name__)
 def test_every_5g_driver_supports_5g_and_dfs_channels(driver_class):
     supported = set(driver_class.SUPPORTED_CHANNELS)
-    if max(supported) <= 14:
-        pytest.skip("2.4 GHz only")
     expected_dfs = set(Driver.CHANNELS_DFS)
     if driver_class in DRIVERS_WITHOUT_DFS:
         expected_dfs = set()

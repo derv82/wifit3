@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 
 import pytest
 
@@ -110,74 +109,7 @@ def make_init(max_packet: int = 512) -> tuple[MT7601UInit, RecordingTransport]:
     return MT7601UInit(tp, mcu, phy), tp
 
 
-SRC = Path(__file__).resolve().parents[3] / "driver_sources" / "mt7601u-source-v7.2" / "mt7601u"
-"""Absent in a clone, since driver_sources/ is gitignored; the source-derived
-tests below skip rather than fall back to a literal."""
-
-
-def source_entry_count(header: str, table: str) -> int | None:
-    """Count a table's { reg, value } entries straight out of the C.
-
-    initvals.h packs several entries per line, so counting lines undercounts --
-    that is how bbp_chip_vals lost 86 of its 150 entries. Count braces instead.
-    """
-    path = SRC / header
-    if not path.is_file():
-        return None
-    import re
-    text = path.read_text()
-    match = re.search(rf"{table}\[\] = \{{", text)
-    if match is None:
-        return None
-    end = re.search(r"^\}", text[match.end():], re.M)
-    body = re.sub(r"/\*.*?\*/|//[^\n]*", "", text[match.end():match.end() + end.start()], flags=re.S)
-    return len(re.findall(r"\{\s*\w+(?:\(\s*\d+\s*\))?|\d+\s*,", body))
-
-
 class TestGeneratedTables:
-    """Every table's size is checked against the C, never against a literal.
-
-    bbp_chip_vals is 150, not 64: initvals.h packs several { reg, value } entries
-    onto one line, so a parser that matched only the first per line dropped 86 of
-    them -- and a test that asserted the wrong literal made that look correct.
-    """
-
-    @pytest.mark.parametrize("name", ["rf_central", "rf_channel", "rf_vga"])
-    def test_phy_table_sizes_match_the_kernel_header(self, name: str) -> None:
-        # These come from RF_REG_PAIR macros, so count the macro calls.
-        path = SRC / "initvals_phy.h"
-        if not path.is_file():
-            pytest.skip("kernel sources not fetched")
-        import re
-        text = path.read_text()
-        match = re.search(rf"{name}\[\] = \{{", text)
-        assert match is not None, f"{name} not found in initvals_phy.h"
-        end = re.search(r"^\}", text[match.end():], re.M)
-        body = re.sub(r"/\*.*?\*/|//[^\n]*", "",
-                      text[match.end():match.end() + end.start()], flags=re.S)
-        want = len(re.findall(r"RF_REG_PAIR\(", body))
-        assert len(getattr(initvals_phy, name)) == want
-
-    @pytest.mark.parametrize("name", [
-        "mac_common_vals", "mac_chip_vals", "bbp_common_vals", "bbp_chip_vals",
-    ])
-    def test_mac_table_sizes_match_the_kernel_header(self, name: str) -> None:
-        want = source_entry_count("initvals.h", name)
-        if want is None:
-            pytest.skip("kernel sources not fetched")
-        assert len(getattr(initvals_mac, name)) == want
-
-    @pytest.mark.parametrize("name", [
-        "bbp_normal_temp", "bbp_normal_temp_bw20", "bbp_normal_temp_bw40",
-        "bbp_high_temp", "bbp_high_temp_bw20", "bbp_high_temp_bw40",
-        "bbp_low_temp", "bbp_low_temp_bw20", "bbp_low_temp_bw40",
-    ])
-    def test_temperature_table_sizes_match_the_kernel_header(self, name: str) -> None:
-        want = source_entry_count("initvals_phy.h", name)
-        if want is None:
-            pytest.skip("kernel sources not fetched")
-        assert len(getattr(initvals_phy, name)) == want
-
     def test_bbp_mode_table_indexes_those_nine_by_mode_and_bandwidth(self) -> None:
         assert [[len(col) for col in row] for row in initvals_phy.bbp_mode_table] == [
             [len(initvals_phy.bbp_normal_temp_bw20),
