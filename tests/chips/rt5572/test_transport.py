@@ -1,14 +1,23 @@
 import errno
+import itertools
 import logging
 from unittest.mock import MagicMock
 
 import pytest
 import usb.core
 
+import wifit3.chips.rt5572.transport as transport_module
 from wifit3.chips.rt5572 import bbp, eeprom, firmware
 from wifit3.chips.rt5572 import constants as C
 from wifit3.chips.rt5572.transport import RT5572Transport
 from wifit3.errors import is_device_gone
+
+
+@pytest.fixture(autouse=True)
+def _fake_monotonic_clock(monkeypatch):
+    """Each clock read moves it 10 ms, so the 100 ms retry window runs out without a real wait."""
+    clock = itertools.count(step=0.01)
+    monkeypatch.setattr(transport_module.time, "monotonic", lambda: next(clock))
 
 
 def test_vendor_request_retries_a_failed_transfer():

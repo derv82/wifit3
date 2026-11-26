@@ -44,6 +44,10 @@ jobs:
       - name: Unit tests
         run: uv run pytest
 
+      # pyproject addopts leaves tests/chips out of the default run.
+      - name: Driver tests
+        run: uv run pytest tests/chips
+
       # Catches a syntax/import error in any module the test suite doesn't reach — importing the
       # UI pulls the Textual path, and calling every import_driver() imports every chips/*/driver.py.
       - name: Import smoke (UI + every driver registers)

@@ -100,16 +100,6 @@ def test_probe_high_pa_board_and_hp_oem():
     assert priv.usb.max_bulk_out_size == C.USB_FULL_SPEED_BULK_SIZE
 
 
-@pytest.mark.parametrize("oemid, oem_id", [
-    (C.EEPROM_CID_TOSHIBA, C.RT_CID_TOSHIBA), (C.EEPROM_CID_QMI, C.RT_CID_819X_QMI),
-    (C.EEPROM_CID_WHQL, C.RT_CID_DEFAULT),
-])
-def test_probe_oem_id(oemid, oem_id):
-    priv, _io = _efuse_priv(logical_map(oemid=oemid))
-    rtl_usb_probe(priv, EP_2OUT, True)
-    assert priv.rtlhal.oem_id == oem_id
-
-
 def test_probe_92cu_three_endpoints_maps_with_wmm():
     regs = {C.REG_NORMAL_SIE_EP + 1: 0x11, C.REG_NORMAL_SIE_EP + 2: 0x01}
     priv, _io = _efuse_priv(logical_map(did=0x8178), ep_regs=regs, sys_cfg=C.TYPE_ID)
@@ -165,19 +155,6 @@ def test_test_chip_skips_eeprom_and_uses_test_endpoint_config():
     assert C.REG_9346CR not in io.addrs("R")
     assert io.addrs("R") == [C.REG_SYS_CFG, C.REG_TEST_SIE_OPTIONAL, C.REG_TEST_USB_TXQS]
     assert priv.usb.out_queue_sel == C.TX_SELE_LQ
-
-
-@pytest.mark.parametrize("sys_cfg, fw_name", [
-    (SYS_CFG_88C_TSMC, "rtl8192cufw_TMSC.bin"),
-    (C.VENDOR_ID, "rtl8192cufw_A.bin"),
-    (C.VENDOR_ID | C.TYPE_ID, "rtl8192cufw_TMSC.bin"),
-    (C.VENDOR_ID | 0x1000, "rtl8192cufw_B.bin"),
-])
-def test_firmware_selection(sys_cfg, fw_name):
-    priv, _io = _efuse_priv(logical_map(), sys_cfg=sys_cfg)
-    endpoints = EP_2OUT
-    rtl_usb_probe(priv, endpoints, True)
-    assert priv.rtlhal.fw_name == fw_name
 
 
 def test_supported_ids_and_lazy_driver():

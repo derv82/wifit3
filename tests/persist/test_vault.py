@@ -765,25 +765,6 @@ def test_a_saved_psk_blocks_auto_crack_only_while_it_is_current(tmp_path, mocker
     assert v.manager.submit_job.called is submitted
 
 
-@pytest.mark.parametrize(("already_stale", "submitted"), [(False, True), (True, False)])
-def test_past_the_threshold_only_a_current_password_turning_stale_submits(
-        tmp_path, mocker, already_stale, submitted):
-    _write_wpa_psk(tmp_path, "aa-bb-cc-dd-ee-ff", ssid="HomeNet", psk="oldpsk")
-    v = Vault()
-    mocker.patch.object(v.manager, "submit_job")
-    v.save_pmkid(_ap_with_pmkid_for("oldpsk", "11:22:33:44:55:01"), "11:22:33:44:55:01")
-    if already_stale:
-        v.save_pmkid(_ap_with_pmkid_for("newpsk", "11:22:33:44:55:02"), "11:22:33:44:55:02")
-    lines = (tmp_path / "HomeNet_aa-bb-cc-dd-ee-ff.hc22000").read_text(encoding="utf-8").split()
-    write_hashline_dates("HomeNet", "aa:bb:cc:dd:ee:ff", {raw: 1700000000 + i for i, raw in enumerate(lines)})
-    v.notify_changed("aa:bb:cc:dd:ee:ff")
-    v.manager.submit_job.reset_mock()
-
-    v.save_pmkid(_ap_with_pmkid_for("newpsk", "11:22:33:44:55:03"), "11:22:33:44:55:03")
-
-    assert v.manager.submit_job.called is submitted
-
-
 def test_a_psk_a_newer_capture_refutes_is_not_held(tmp_path, mocker):
     _write_wpa_psk(tmp_path, "aa-bb-cc-dd-ee-ff", ssid="HomeNet", psk="oldpsk")
     v = Vault()

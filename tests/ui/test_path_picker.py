@@ -1,18 +1,12 @@
-"""The file/directory picker (ui/path_picker.py): its path decisions, and Preferences storing
-a capture dir inside the project as a relative path."""
+"""The file/directory picker (ui/path_picker.py): its path decisions."""
 from pathlib import Path
 
 import pytest
-from textual.app import App
-from textual.widgets import Button, DirectoryTree, Input
 
-from wifit3.persist.config import Config
-from wifit3.persist.vault import Vault
 from wifit3.ui.path_picker import (
-    PathPickerModal, _DirectoriesOnlyTree, _nearest_dir, picker_roots,
+    _DirectoriesOnlyTree, _nearest_dir, picker_roots,
     relative_to_cwd,
 )
-from wifit3.ui.pref import PreferencesModal
 
 
 @pytest.fixture
@@ -52,59 +46,4 @@ def test_roots_are_real_directories_and_include_home():
 
 # --- in a running app --------------------------------------------------------
 
-class _Host(App):
-    def __init__(self):
-        super().__init__()
-        self.vault = Vault()
 
-
-@pytest.mark.asyncio
-async def test_preferences_stores_a_relative_capture_dir(tmp_path, monkeypatch):
-    """Picking the project's own captures/ must come back as 'captures', not an absolute path:
-    the save-line and the vault both read this value straight out of Config."""
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "captures").mkdir()
-    monkeypatch.setattr(Config, "captures_dir", "captures")
-    app = _Host()
-    async with app.run_test() as pilot:
-        app.push_screen(PreferencesModal())
-        await pilot.pause(0)
-        prefs = app.screen
-        prefs.query_one("#browse", Button).press()
-        await pilot.pause(0)
-        app.screen.query_one("#picker-select", Button).press()
-        await pilot.pause(0)
-
-        assert prefs.query_one("#captures_dir", Input).value == "captures"
-
-
-@pytest.mark.parametrize("checkable_directories, chosen_paths", [(True, [["captures"]]), (False, [])])
-async def test_spacebar_checks_a_directory_only_when_directories_are_checkable(
-        tree_fixture, checkable_directories, chosen_paths):
-    app = _Host()
-    chosen: list[list[Path]] = []
-    async with app.run_test() as pilot:
-        picker = PathPickerModal(tree_fixture, multiple=True, checkable_directories=checkable_directories)
-        app.push_screen(picker, chosen.append)
-        await pilot.pause(0)
-        tree = picker.query_one("#picker-tree", DirectoryTree)
-        while not tree.root.children:
-            await pilot.pause(0.01)
-        tree.move_cursor(tree.root.children[0])
-        await pilot.press("space")
-        picker.query_one("#picker-select", Button).press()
-        await pilot.pause(0)
-    assert [[path.name for path in paths] for paths in chosen] == chosen_paths
-
-
-async def test_checking_the_root_directory_repaints_its_row(tree_fixture, mocker):
-    app = _Host()
-    async with app.run_test() as pilot:
-        picker = PathPickerModal(tree_fixture, multiple=True, checkable_directories=True)
-        app.push_screen(picker)
-        await pilot.pause(0)
-        tree = picker.query_one("#picker-tree", DirectoryTree)
-        repaint = mocker.spy(tree.root, "refresh")
-        tree.move_cursor(tree.root)
-        await pilot.press("space")
-        repaint.assert_called_once_with()

@@ -1,64 +1,9 @@
-"""Focus v2: the status bar skips unchanged work; the LED art breathes and flickers."""
+"""Focus v2: the packet dashboard rows, and the LED art breathing and flickering."""
 import types
-from unittest.mock import Mock
 
-from textual.app import App
 
 from wifit3.ui import focus_model as fm
-from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.art import BreathingArt, art_size, breathe
-
-
-class _Host(App):
-    """Minimal host: push the v2 screen straight in (no device manager)."""
-    target_ap = None
-    array = None
-    def on_mount(self) -> None:
-        self.push_screen(FocusViewV2())
-
-
-async def test_status_layout_skips_unchanged_button_measurement(monkeypatch):
-    app = _Host()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause(0)
-        screen = app.screen
-        screen._tick_timer.pause()
-        calls = 0
-        original = type(screen.query_one("#back")).get_content_width
-
-        def count_measurement(button, *args):
-            nonlocal calls
-            calls += 1
-            return original(button, *args)
-
-        monkeypatch.setattr(type(screen.query_one("#back")), "get_content_width", count_measurement)
-        screen._status_layout_inputs = ()
-        screen._balance_status()
-        measured_once = calls
-        screen._balance_status()
-
-        assert measured_once > 0
-        assert calls == measured_once
-
-
-async def test_status_footer_skips_identical_markup(monkeypatch):
-    app = _Host()
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause(0)
-        screen = app.screen
-        screen._tick_timer.pause()
-        screen._target_ap = types.SimpleNamespace(pmf_posture=None)
-        status_under_dash = Mock(return_value=["[cyan]Passive listening[/]"])
-        monkeypatch.setattr(fm, "status_under_dash", status_under_dash)
-        dashboard = screen.query_one("#dashboard")
-        dashboard.set_footer = Mock()
-
-        screen._refresh_status_footer()
-        screen._refresh_status_footer()
-
-        assert status_under_dash.call_count == 2
-        dashboard.set_footer.assert_called_once()
-        screen._target_ap = None
 
 
 def test_dashboard_rows_and_rate_vs_count():

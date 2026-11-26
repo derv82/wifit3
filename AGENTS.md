@@ -22,7 +22,8 @@ uv sync --group dev               # preferred; or: pip install -e ".[dev]"
 uv run wifit3                     # or: uv run python -m wifit3
 
 # Tests
-uv run pytest                          # all tests
+uv run pytest                          # all tests except tests/chips/
+uv run pytest tests/chips/             # driver tests
 uv run pytest tests/chips/ar9271_v2/   # single module
 uv run pytest tests/wlan/test_parser.py::test_wlan_frame_parser_extracts_ssid
 

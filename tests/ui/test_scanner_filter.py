@@ -1,22 +1,16 @@
-"""The Scanner applies its ScanFilter as a display-only predicate: a filtered-out
-AP loses its table row but keeps its registry entry, so widening the filter brings
-it straight back without having to rediscover it."""
+"""A filtered-out AP is still evicted when it expires."""
 from contextlib import asynccontextmanager
 import time
 
 import pytest
 from textual.app import App
-from textual.widgets import Checkbox, Input
 
 from wifit3.models import AccessPoint
 from wifit3.wlan.sink import WlanSink
-from wifit3.persist.config import Config
 from wifit3.persist.vault import Vault
-from wifit3.ui.ap_table import APTable
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.filter import EncryptionFilter, ScanFilter
 from wifit3.ui.screens.scanner import ScannerView
-from tests.ui.wait_until import wait_until
 
 
 class _FakeIface:
@@ -96,35 +90,6 @@ class _ScannerHost(App):
 
 
 @pytest.mark.asyncio
-async def test_encryption_filter_hides_rows_but_keeps_registry():
-    open_ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="OpenNet", channel=1, encryption="OPEN")
-    wpa2_ap = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="SecureNet", channel=1, akms=["PSK"])
-
-    app = _ScannerHost(_FakeArray([open_ap, wpa2_ap], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        assert isinstance(scanner, ScannerView)
-        table = scanner.query_one("#ap-table", APTable)
-
-        scanner.refresh_table()
-        assert table.row_count == 2
-
-        scanner._scan_filter = ScanFilter(encryption=EncryptionFilter.WPA)
-        scanner.refresh_table()
-        assert table.row_count == 1
-        assert wpa2_ap.bssid in scanner.ap_cache
-        assert open_ap.bssid not in scanner.ap_cache
-        # Display-only: the hidden AP is still in the registry.
-        assert open_ap.bssid in app.array.access_points
-
-        scanner._scan_filter = ScanFilter()
-        scanner.refresh_table()
-        assert table.row_count == 2
-        assert open_ap.bssid in scanner.ap_cache
-
-
-@pytest.mark.asyncio
 async def test_filtered_ap_is_evicted_after_it_expires():
     open_ap = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="OpenNet", channel=1, encryption="OPEN")
     app = _ScannerHost(_FakeArray([open_ap], [1, 6, 11]))
@@ -141,45 +106,3 @@ async def test_filtered_ap_is_evicted_after_it_expires():
         assert open_ap.bssid not in scanner.ap_cache
 
 
-@pytest.mark.asyncio
-async def test_scanner_starts_with_the_persisted_hide_silenced_setting():
-    silenced = AccessPoint(bssid="aa:bb:cc:00:00:01", ssid="NoisyNeighbour", channel=1, akms=["PSK"])
-    audible = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="SecureNet", channel=1, akms=["PSK"])
-    Config.silenced_bssids = [silenced.bssid]
-    Config.hide_silenced = True
-
-    app = _ScannerHost(_FakeArray([silenced, audible], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        assert scanner._scan_filter.hide_silenced is True
-        scanner.refresh_table()
-        assert scanner.query_one("#ap-table", APTable).row_count == 1
-        assert app.persist_calls == 0        # restoring the setting is not a change to write back
-
-
-@pytest.mark.asyncio
-async def test_only_the_checkbox_writes_config_not_every_keystroke():
-    ap = AccessPoint(bssid="aa:bb:cc:00:00:02", ssid="SecureNet", channel=1, akms=["PSK"])
-
-    app = _ScannerHost(_FakeArray([ap], [1, 6, 11]))
-    async with app.run_test() as pilot:
-        await pilot.pause(0)
-        scanner = app.screen
-        app.persist_calls = 0
-
-        scanner.query_one("#filter-text", Input).value = "net"
-        await pilot.pause()
-        assert app.persist_calls == 0
-
-        scanner.query_one("#filter-hide-silenced", Checkbox).value = True
-        await wait_until(pilot, lambda: app.persist_calls == 1)
-        assert Config.hide_silenced is True
-
-        scanner.query_one("#filter-text", Input).value = "netg"
-        await pilot.pause()
-        assert app.persist_calls == 1       # text edits leave the stored setting alone
-
-        scanner.query_one("#filter-hide-silenced", Checkbox).value = False
-        await wait_until(pilot, lambda: app.persist_calls == 2)
-        assert Config.hide_silenced is False

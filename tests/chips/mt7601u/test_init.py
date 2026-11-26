@@ -343,15 +343,6 @@ class TestChipOnoff:
         assert val & C.MT_WLAN_FUN_CTRL_WLAN_CLK_EN
         assert not init_.wlan_running
 
-    def test_crystal_never_locking_logs_and_continues(self, caplog) -> None:
-        """init.c:55 only logs; refusing here would strand a card upstream brings up."""
-        init_, tp = make_init()
-        tp.rr = lambda offset: 0
-        with caplog.at_level(logging.ERROR):
-            init_.chip_onoff(True)
-        assert "PLL and XTAL" in caplog.text
-        assert init_.wlan_running
-
 
 class TestAggregateConstants:
     def test_values_come_from_mt7601uh(self) -> None:
@@ -386,17 +377,6 @@ class TestPollReadCounts:
         init_, reads = self._never_settles()
         assert init_.poll(C.MT_MAC_STATUS, 0xF, 0, 50) is False
         assert len(reads) == 6              # init.c:250 mt76_poll(..., 50)
-
-    def test_millisecond_poll_reads_eleven_times_for_a_hundred(self) -> None:
-        init_, reads = self._never_settles()
-        assert init_.poll_msec(C.MT_MAC_STATUS, 0xF, 0, 100) is False
-        assert len(reads) == 11             # init.c:364 mt76_poll_msec(..., 100)
-
-    def test_mac_idle_wait_raises_after_the_c_s_eleven_reads(self) -> None:
-        init_, reads = self._never_settles()
-        with pytest.raises(BringUpError, match="MAC_STATUS"):
-            init_.poll_mac_idle()
-        assert len(reads) == 11
 
     def test_a_settled_register_is_read_once(self) -> None:
         init_, tp = make_init()

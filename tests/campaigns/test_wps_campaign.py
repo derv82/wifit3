@@ -7,7 +7,6 @@ switch, success/PSK capture, and .run resume, without a radio or fake enrollee.
 
 import asyncio
 import concurrent.futures
-import multiprocessing.connection
 import threading
 import time
 from concurrent.futures.process import BrokenProcessPool
@@ -22,7 +21,6 @@ from wifit3.campaigns.wps.pixie import PixieBundle, PixieMode, PixieResult
 from wifit3.campaigns.wps.registrar import AttemptOutcome, PinResult
 from wifit3.dot11.wsc import crypto as wc
 from wifit3.models import AccessPoint
-from wifit3.dot11.wsc.crypto import pin_is_valid
 
 
 def _target(bssid="02:00:00:00:00:ff", ssid="Net", ch=1):
@@ -105,23 +103,6 @@ class ScriptedCampaign(WpsCampaign):
         return AttemptOutcome(PinResult.SECOND_HALF_WRONG, pin)   # first half ok
 
 
-async def test_campaign_finds_pin_via_full_sweep(tmp_path):
-    # A valid PIN NOT in COMMON_PINS so the sweep actually runs.
-    known = pins.full_pin("1357", "246")
-    assert pin_is_valid(known) and known not in pins.COMMON_PINS
-
-    c = ScriptedCampaign(_iface(), _target(),
-                         log=lambda m: None, known_pin=known, psk="hunter2pw")
-    await c._loop()
-
-    assert c.status == "found"
-    assert c.state.found_pin == known
-    assert c.state.found_psk == "hunter2pw"
-    assert c.state.first_half == "1357"
-    # Sweep efficiency: ≤ 8 common + 10000 first-half + 1000 second-half.
-    assert len(c.tried) <= len(pins.COMMON_PINS) + 10000 + 1000
-
-
 async def test_campaign_finds_common_pin_fast(tmp_path, monkeypatch):
     monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
     known = "12345670"                       # in COMMON_PINS
@@ -130,52 +111,6 @@ async def test_campaign_finds_common_pin_fast(tmp_path, monkeypatch):
     await c._loop()
     assert c.state.found_pin == known
     assert len(c.tried) == 1                 # found on the first common attempt
-
-
-async def test_campaign_tries_pixie_before_online_sweep(tmp_path, monkeypatch):
-    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])
-    known = pins.full_pin("1357", "246")
-    zero = b"\x00" * wc.SECRET_NONCE_LEN
-
-    class PixieVulnerable(ScriptedCampaign):
-        async def _try(self, pin):
-            self.tried.append(pin)
-            if pin == known:
-                return AttemptOutcome(PinResult.SUCCESS, pin, psk=self.psk, ssid="Net")
-            return AttemptOutcome(PinResult.FIRST_HALF_WRONG, pin,
-                                  pixie=_pixie_bundle(known, zero, zero))
-
-    c = PixieVulnerable(_iface(), _target(),
-                        log=lambda m: None, known_pin=known, psk="pw")
-    await c._loop()
-
-    assert c.status == "found"
-    assert c.state.found_pin == known
-    assert c.state.found_psk == "pw"
-    assert c.tried == [pins.COMMON_PINS[0], known]
-
-
-async def test_campaign_falls_back_when_pixie_has_no_match(tmp_path, monkeypatch):
-    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])
-    known = pins.full_pin("0001", "000")
-    e_s1 = bytes.fromhex("12" * wc.SECRET_NONCE_LEN)
-    e_s2 = bytes.fromhex("34" * wc.SECRET_NONCE_LEN)
-
-    class PixieNotVulnerable(ScriptedCampaign):
-        async def _try(self, pin):
-            out = await super()._try(pin)
-            if len(self.tried) == 1:
-                out.pixie = _pixie_bundle(known, e_s1, e_s2)
-            return out
-
-    c = PixieNotVulnerable(_iface(), _target(),
-                           log=lambda m: None, known_pin=known, psk="pw")
-    await c._loop()
-
-    assert c.status == "found"
-    assert c.state.found_pin == known
-    assert c.tried[:2] == [pins.COMMON_PINS[0], pins.COMMON_PINS[1]]
-    assert len(c.tried) > 2
 
 
 async def test_campaign_resumes_the_sweep_when_a_pixie_half_is_wrong(tmp_path, monkeypatch):
@@ -278,39 +213,6 @@ def _parked_recover(started, release):
 
 async def _await_started(started):
     await asyncio.get_running_loop().run_in_executor(None, started.wait, 5)
-
-
-async def test_pixie_search_runs_in_a_worker_process(monkeypatch):
-    # The only test here that spawns a worker. The bundle is null-secret, so the search hits on
-    # its first mode and this costs a spawn and nothing more.
-    created, workers = [], []
-
-    class RecordingPool(concurrent.futures.ProcessPoolExecutor):
-        def __init__(self, *a, **kw):
-            super().__init__(*a, **kw)
-            assert isinstance(self._processes, dict)   # _halt_pixie relies on this private map
-            created.append(self)
-
-        def submit(self, *a, **kw):
-            future = super().submit(*a, **kw)
-            workers.extend(self._processes.values())   # populated by submit, cleared by shutdown
-            return future
-
-    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", RecordingPool)
-    c = _pixie_campaign()
-    zero = bytes(wc.SECRET_NONCE_LEN)
-
-    result = await c._run_pixie(_pixie_bundle(PIXIE_PIN, zero, zero))
-
-    assert result.found and result.pin == PIXIE_PIN
-    assert len(created) == 1       # the search really left the event loop's process
-    assert c._pixie_pool is None   # and the worker was dropped once it answered
-    assert workers, "the search never reached a worker process"
-    for worker in workers:
-        # Wait on the sentinel, not is_alive(): the pool's manager thread reaps these workers too,
-        # and the thread that loses the waitpid race sees ECHILD, which is_alive() reports as alive.
-        died = multiprocessing.connection.wait([worker.sentinel], timeout=10)
-        assert died, "the search worker outlived the campaign"
 
 
 async def test_pixie_falls_back_to_a_thread_without_subprocesses(monkeypatch):

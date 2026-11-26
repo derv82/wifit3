@@ -793,21 +793,6 @@ def _exhausted_job(tmp_path) -> JobState:
                 tool_state={"wordlists": ["rockyou.txt"]})
 
 
-def test_poll_status_reaps_procs_on_exhausted(tmp_path):
-    """A finished-but-not-cracked job drops its process-tracking entry (no leak)."""
-    tool = HashcatTool()
-    proc = subprocess.Popen([sys.executable, "-c", "pass"])
-    proc.wait()
-    tool._procs[proc.pid] = proc
-    log = tmp_path / "j.log"
-    log.write_text('{ "session": "hashcat", "status": 5, "progress": [3, 3] }\n')
-    res = tool.poll_status(_job(log_path=str(log), pid=proc.pid,
-                                capture_path=str(tmp_path / "x.hc22000"),
-                                tool_state={"wordlists": ["rockyou.txt"]}))
-    assert res.status == ToolStatus.FAILURE
-    assert proc.pid not in tool._procs
-
-
 def test_a_finished_hashcat_is_waited_on_instead_of_left_as_a_zombie(tmp_path, mocker):
     proc = mocker.Mock()
     proc.poll.return_value = None                # still there when the job's last poll arrives

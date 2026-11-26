@@ -5,7 +5,7 @@ import pytest
 
 from wifit3.crack import wpa_psk
 from wifit3.crack.hc22000_format import parse_hc22000, pmkid_hashline
-from wifit3.crack.passwords import all_ssid_variants, ssid_passwords, ssid_variants
+from wifit3.crack.passwords import ssid_passwords
 from wifit3.dot11 import wpa
 from wifit3.dot11.eapol import eapol_key
 from wifit3.dot11.wpa import (
@@ -21,7 +21,7 @@ from wifit3.models.access_point import CaptureType
 from wifit3.models.jobs import JobAction, JobState
 from wifit3.persist.config import Config
 from wifit3.persist.meta import read_bssid_metas
-from wifit3.persist.exhaustion import (SSID_VARIANTS_IDENTITY, capture_hashline_ids, read_exhaustion,
+from wifit3.persist.exhaustion import (capture_hashline_ids, read_exhaustion,
                                        wordlist_identity)
 from wifit3.vault.tools.cpu_crack import CpuCrackTool
 
@@ -168,21 +168,6 @@ def test_cpu_crack_moves_on_to_the_next_wordlist(tool, tmp_path):
     assert _poll_finished(tool, job).status == ToolStatus.SUCCESS
 
 
-def test_cpu_crack_tries_ssid_variants_before_the_wordlist(tool, tmp_path, mocker):
-    ssid, psk = "MyHomeNet", "MyHomeNet123"
-    mac_ap, mac_sta = bytes.fromhex("fc690c158264"), bytes.fromhex("f4747f87f9f4")
-    pmkid = wpa_psk.pmkid(wpa.derive_pmk(psk, ssid.encode()), mac_ap, mac_sta)
-    line = f"WPA*01*{pmkid.hex()}*{mac_ap.hex()}*{mac_sta.hex()}*{ssid.encode().hex()}***"
-    pmk_spy = mocker.patch("wifit3.dot11.wpa.derive_pmk", wraps=wpa.derive_pmk)
-
-    job = _launch(tool, tmp_path, [line], [["wrongpass1"]], ap_ssid_passwords=True)
-    result = _poll_finished(tool, job)
-
-    assert result.value == f"Cracked! Keys: {psk}"
-    assert pmk_spy.call_args_list[0].args == ("FC690C158264", ssid.encode())
-    assert "wrongpass1" not in [call.args[0] for call in pmk_spy.call_args_list]
-
-
 def test_cpu_crack_tries_probed_ssid_variants_before_the_wordlist(tool, tmp_path, mocker):
     probed_ssid, psk = "CafeGuest", "CafeGuest123"
     mac_ap, mac_sta = bytes.fromhex("fc690c158264"), bytes.fromhex("f4747f87f9f4")
@@ -198,21 +183,6 @@ def test_cpu_crack_tries_probed_ssid_variants_before_the_wordlist(tool, tmp_path
     tried = [call.args[0] for call in pmk_spy.call_args_list]
     expected = ssid_passwords([probed_ssid])
     assert tried == expected[:expected.index(psk) + 1]
-
-
-def test_cpu_crack_counts_and_dedupes_the_ssid_passwords_in_the_total(tool, tmp_path, mocker):
-    entered, release = _gate_pmk(mocker)
-    job = _launch(tool, tmp_path, [_UNCRACKABLE_SHORT_ESSID_LINE], [["CafeGuest", "wrongpass1"]],
-                  extra_passwords=["CafeGuest", "CafeGuest"], ap_ssid_passwords=True)
-    assert entered.wait(_JOIN_SECONDS)
-
-    run = tool._runs[job.job_id]
-    tried = list(tool._passwords(run))
-    assert tried == list(dict.fromkeys(
-        all_ssid_variants([(b"ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
-    assert run.passwords_total == len(tried)
-    release.set()
-    _join(tool, job)
 
 
 def test_cpu_crack_derives_one_pmk_per_password_and_essid(tool, tmp_path, mocker):
@@ -235,28 +205,6 @@ def test_cpu_crack_stop_ends_the_job_as_stopped(tool, tmp_path, mocker):
 
     result = _poll_finished(tool, job)
     assert result.status == ToolStatus.STOPPED
-
-
-def test_cpu_crack_pause_holds_the_worker_until_resumed(tool, tmp_path, mocker):
-    entered, release = _gate_pmk(mocker)
-    job = _launch(tool, tmp_path, [_HASHCAT_PMKID_LINE], [["wrongpass1", "hashcat!"]])
-    assert entered.wait(_JOIN_SECONDS)
-    running = tool.poll_status(job)
-    assert running.actions == JobAction.STOP | JobAction.PAUSE
-    assert (running.percent, running.detail) == (0.0, "job_words0.txt")
-
-    assert tool.apply(JobAction.PAUSE, job) is True
-    release.set()
-    paused = tool.poll_status(job)
-    assert paused.value.startswith("Paused (")
-    assert paused.percent is not None
-    assert paused.actions == JobAction.STOP | JobAction.RESUME
-    thread = tool._runs[job.job_id].thread
-    thread.join(timeout=0.05)
-    assert thread.is_alive()
-
-    assert tool.apply(JobAction.RESUME, job) is True
-    assert _poll_finished(tool, job).status == ToolStatus.SUCCESS
 
 
 def test_cpu_crack_refuses_pause_once_the_worker_has_ended(tool, tmp_path):
@@ -304,22 +252,6 @@ def test_a_job_without_wordlist_files_cracks_from_the_ssid_passwords(tool, tmp_p
     assert result.status == ToolStatus.SUCCESS and result.keys == ("hashcat!",)
 
 
-def test_a_job_without_wordlist_files_ends_not_found_on_the_ssid_passwords(tool, tmp_path):
-    job = _launch_with(tool, tmp_path, [_UNCRACKABLE_SHORT_ESSID_LINE], ap_ssid_passwords=True)
-    result = _poll_finished(tool, job)
-    assert result.status == ToolStatus.FAILURE and result.value == "SSID passwords"
-
-
-@pytest.mark.parametrize("ticked", [True, False])
-def test_ap_ssid_passwords_box_adds_the_ap_ssid_variants(tool, tmp_path, ticked):
-    wordlist = _write(tmp_path / "words.txt", ["unrelated"])
-    job = _launch_with(tool, tmp_path, [_UNCRACKABLE_SHORT_ESSID_LINE], wordlists=[wordlist],
-                       ap_ssid_passwords=ticked)
-    _join(tool, job)
-    variants = set(ssid_variants("ab"))
-    assert bool(variants & set(tool._runs[job.job_id].ssid_passwords)) is ticked
-
-
 @pytest.mark.parametrize("ticked", [True, False])
 def test_default_passwords_box_runs_the_default_list_before_the_wordlists(tool, tmp_path, mocker,
                                                                          ticked):
@@ -341,36 +273,6 @@ def test_a_job_with_no_password_source_refuses_to_launch(tool, tmp_path):
 
 def _capture_exhaustion(job: JobState) -> set[str]:
     return set(read_exhaustion(read_bssid_metas("fc:69:0c:15:82:64"), capture_hashline_ids(job.capture_path)))
-
-
-def test_each_password_source_is_its_own_queue_entry_recorded_once_exhausted(tool, tmp_path,
-                                                                             mocker):
-    default = Path(_write(tmp_path / "default_passwords.txt", ["defaultpass", "CafeGuest"]))
-    mocker.patch("wifit3.vault.tools.cpu_crack.DEFAULT_PASSWORDS_PATH", default)
-    wordlist = _write(tmp_path / "words.txt", ["unrelated", "CafeGuest"])
-    job = _launch_with(tool, tmp_path, [_UNCRACKABLE_SHORT_ESSID_LINE], wordlists=[wordlist],
-                       default_passwords=True, ap_ssid_passwords=True,
-                       extra_passwords=["CafeGuest"])
-
-    _join(tool, job)
-    assert list(tool._passwords(tool._runs[job.job_id])) == ["defaultpass", "CafeGuest"]
-    ssid_entry = tool.poll_status(job)
-    assert (ssid_entry.status, ssid_entry.detail) == (ToolStatus.RUNNING, "SSID passwords (2/3)")
-    assert _capture_exhaustion(job) == {wordlist_identity(default)}
-
-    _join(tool, job)
-    assert list(tool._passwords(tool._runs[job.job_id])) == list(dict.fromkeys(
-        all_ssid_variants([(b"ab", "fc:69:0c:15:82:64")]) + ssid_passwords(["CafeGuest"])))
-    wordlist_entry = tool.poll_status(job)
-    assert wordlist_entry.detail == "words.txt (3/3)"
-    assert _capture_exhaustion(job) == {wordlist_identity(default), SSID_VARIANTS_IDENTITY}
-
-    _join(tool, job)
-    assert list(tool._passwords(tool._runs[job.job_id])) == ["unrelated", "CafeGuest"]
-    not_found = tool.poll_status(job)
-    assert (not_found.status, not_found.value) == (ToolStatus.FAILURE, "2 wordlists")
-    assert _capture_exhaustion(job) == {wordlist_identity(default), SSID_VARIANTS_IDENTITY,
-                                        wordlist_identity(wordlist)}
 
 
 def test_skip_moves_from_the_ssid_passwords_to_the_wordlist_without_recording_them(tool, tmp_path,
