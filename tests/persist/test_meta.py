@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from wifit3.persist.common import AGGREGATED_HC22000_RE, LEGACY_CAPTURE_RE
@@ -62,3 +63,22 @@ def test_bssid_meta_paths_lists_while_another_thread_writes_a_meta(monkeypatch):
     monkeypatch.setattr(Path, "exists", exists_while_a_meta_is_written)
 
     assert len(bssid_meta_paths("aa:bb:cc:dd:ee:ff")) == 2
+
+
+def test_threads_reading_and_rewriting_one_meta_raise_nothing():
+    errors: list[BaseException] = []
+
+    def rewrite(index: int) -> None:
+        try:
+            for value in range(25):
+                update_meta("HomeNet", "aa:bb:cc:dd:ee:ff", **{f"thread{index}": value})
+                read_meta(meta_path("HomeNet", "aa:bb:cc:dd:ee:ff"))
+        except OSError as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=rewrite, args=(index,)) for index in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []

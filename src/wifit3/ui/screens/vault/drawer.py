@@ -384,7 +384,10 @@ class VaultDrawer(ModalScreen):
         except OSError as exc:
             self.app.call_from_thread(self.notify, f"Import failed: {exc}", severity="error")
         self.app.vault.refresh()
-        result.save_psks(self.app.vault)
+        try:
+            result.save_psks(self.app.vault)
+        except OSError as exc:
+            self.app.call_from_thread(self.notify, f"Could not save a PSK: {exc}", severity="error")
         if result.nicknames:
             self.app.call_from_thread(self.app.persist_config)
         if result.problems:
