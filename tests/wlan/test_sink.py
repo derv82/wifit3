@@ -4,6 +4,7 @@ WlanSink is pure: it takes parsed Packets plus the receiving card id and builds 
 registry. These are the picture assertions that used to live on WlanInterface, re-driven through
 ``sink.update(pkt, card_id)``, plus the multicard-specific per-card signal behavior."""
 
+import asyncio
 import struct
 from typing import Optional
 
@@ -12,6 +13,7 @@ import pytest
 from wifit3.dot11.mac import str_to_mac
 from wifit3.dot11.wsc import messages as WSC
 from wifit3.models import AccessPoint, IdKey, IdSource
+from wifit3.wlan import sink as sink_module
 from wifit3.wlan.sink import WlanSink
 from wifit3.wlan.packet_stats import PACKET_CLASSES
 from wifit3.dot11.parser import WlanFrameParser
@@ -567,13 +569,26 @@ def test_forged_mac_does_not_create_client_or_append_eapol():
     assert hs.pmkid == pmkid and hs.messages == []
 
 
-def test_register_and_unregister_own_mac():
+async def test_unregister_own_mac_keeps_it_until_the_release_delay(monkeypatch):
+    monkeypatch.setattr(sink_module, "OWN_MAC_RELEASE_DELAY_S", 0)
     s = WlanSink()
     mac = s.register_own_mac(b"\x02\x00\x00\x00\x00\x01")
     assert mac == "02:00:00:00:00:01"
     assert mac in s.own_macs and mac not in s.clients   # our own MAC is never a client
     s.unregister_own_mac(mac)
+    assert mac in s.own_macs
+    await asyncio.sleep(0.001)
     assert mac not in s.own_macs
+
+
+async def test_register_own_mac_cancels_a_pending_release(monkeypatch):
+    monkeypatch.setattr(sink_module, "OWN_MAC_RELEASE_DELAY_S", 0)
+    s = WlanSink()
+    mac = s.register_own_mac("02:00:00:00:00:01")
+    s.unregister_own_mac(mac)
+    s.register_own_mac(mac)
+    await asyncio.sleep(0.001)
+    assert mac in s.own_macs
 
 
 def test_forged_alias_funnels_to_own_macs():

@@ -38,6 +38,7 @@ _EAPOL_KEY_DESCRIPTOR_TYPE_RSN = 2
 _KEY_INFO_PAIRWISE = 0x0008
 _KEY_INFO_ACK = 0x0080
 _KEY_INFO_MIC = 0x0100
+OWN_MAC_RELEASE_DELAY_S = 30.0
 
 
 def _set_result(fut, value) -> None:
@@ -72,6 +73,7 @@ class WlanSink:
         self.wep_store = WepCaptureStore()  # WEP IV tallying
         self.packet_stats = PacketStats()   # Packet dashboard source
         self.own_macs: Set[str] = set()     # MACs we transmit as; dropped at ingest, never a client
+        self._own_mac_releases: Dict[str, asyncio.TimerHandle] = {}
         self.probed_ssids: Set[str] = set()  # every SSID probed for this session, by any client
         # (bssid, client) -> the PMKID-carrying M1 whose AKM the next M2 may confirm
         self._pmkid_m1_awaiting_m2: Dict[tuple[str, str], EapolPacket] = {}
@@ -622,14 +624,21 @@ class WlanSink:
     def register_own_mac(self, mac) -> str:
         """Mark ``mac`` as one we transmit as: ingest drops its frames, and it never becomes a client."""
         mac_str = mac_to_str(mac) if isinstance(mac, (bytes, bytearray)) else str(mac).lower()
+        release = self._own_mac_releases.pop(mac_str, None)
+        if release is not None:
+            release.cancel()
         self.own_macs.add(mac_str)
         self.clients.pop(mac_str, None)
         return mac_str
 
     def unregister_own_mac(self, mac) -> None:
-        """Inverse of ``register_own_mac``."""
+        """Inverse of ``register_own_mac``, OWN_MAC_RELEASE_DELAY_S later: the AP keeps sending to it."""
         mac_str = mac_to_str(mac) if isinstance(mac, (bytes, bytearray)) else str(mac).lower()
-        self.own_macs.discard(mac_str)
+        release = self._own_mac_releases.pop(mac_str, None)
+        if release is not None:
+            release.cancel()
+        self._own_mac_releases[mac_str] = asyncio.get_running_loop().call_later(
+            OWN_MAC_RELEASE_DELAY_S, self.own_macs.discard, mac_str)
 
     # Back-compat alias the campaigns still call; funnels to the single own-MAC set.
     def register_forged_mac(self, mac) -> None:

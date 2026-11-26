@@ -47,57 +47,6 @@ to the chip's own efuse reader gives the exact set, e.g. for RTL8822CU:
 
     sed -n '/rtl8822c_read_efuse/,/^}/p' hal/rtl8822c/rtl8822c_ops.c | grep -oE 'Hal_[A-Za-z0-9_]+' | sort -u
 
-## PixieDust second half assumes a valid PIN checksum
-
-**Problem.** `_find_second_half` (`campaigns/wps/pixie.py`) only tries the 1000 checksum-valid
-candidates, because `pins.full_pin()` always appends the computed 8th digit. Plenty of shipped
-PINs carry a wrong checksum digit, and for those the offline attack recovers the first half,
-fails the second, and reports "no PixieDust matches" on a PIN that is actually recoverable.
-
-The online brute force has to make that assumption (one guess costs a round trip, so reaver
-hard-codes `P1_SIZE 10000` / `P2_SIZE 1000` and builds every PIN as
-`snprintf(pin, len, "%s%d", key, wps_pin_checksum(atoi(key)))` in `src/pins.c:build_wps_pin()`).
-Offline it is free: ~40ms for the extra halves.
-
-**Direction.** Mirror pixiewps `src/pixiewps.c:crack_second_half()` — after the 1000
-checksum-valid halves, sweep all 10000 four-digit halves, skipping those already tried:
-
-    for (second_half = 0; second_half < 10000; second_half++) {
-        if (wps_pin_valid(first_half * 10000 + second_half)) continue;  /* already tested */
-        uint_to_char_array(second_half, 4, s_pin);
-        if (check_pin_half(&hc, s_pin, psk, wps->e_s2, wps, wps->e_hash2)) ...
-    }
-
-`wps_pin_valid(pin)` is `wps_pin_checksum(pin / 10) == (pin % 10)`; `pins.pin_checksum()` is
-already the same function. Needs a `pins` helper that emits an 8-digit PIN *without* forcing the
-checksum, since `full_pin()` cannot express these.
-
-## PixieDust never tests the empty PIN half
-
-**Problem.** An enrollee configured with a zero-length device password hashes the empty string
-into PSK1/PSK2. `_find_first_half` / `_find_second_half` start at `"0000"`, so that AP is never
-recovered even though it is the cheapest case of all (two HMACs).
-
-**Direction.** Mirror pixiewps `src/pixiewps.c:check_empty_pin_half()`, tried first for *both*
-halves (`crack_first_half` / `crack_second_half` call it before their loops). The PSK is the
-HMAC of the empty message, `empty_psk = HMAC-SHA256_AuthKey("")` (pixiewps `empty_pin_hmac()`),
-fed through the normal hash: `E-Hash = HMAC_AuthKey(E-S || empty_psk[:16] || PKe || PKr)`.
-`wsc/crypto.check_pin_half(..., pin_half_ascii=b"")` already computes exactly this, so the fix is
-one call per half ahead of each loop, plus a PIN representation for "empty" in `PixieResult`.
-Reaver has no equivalent — an online attack cannot test it.
-
-## PixieDust RTL819x throws away a recovered first PIN half
-
-**Problem.** `_recover_rtl819x` (`campaigns/wps/pixie.py`) finds the E-S1 seed, then sweeps ten
-forward seeds for E-S2. If none match it returns `None`, discarding first-4 digits it has already
-*proved* correct against E-Hash1 — so the campaign goes on to re-brute-force that same half online,
-thousands of live attempts for something already known. Reproduces whenever the enrollee's E-S2
-seed lands outside the +0..+9s window, e.g. exactly +10s after E-S1's.
-
-**Direction.** Let a partial result escape: carry the known first half out of PixieDust and have
-the campaign enter its second-half phase with that half locked, as it already does after a live
-`FIRST_HALF_OK`. Needs a field on `PixieResult` and a branch in `_try_pixie`.
-
 ## PixieDust glibc seeding is modelled as unsigned
 
 **Problem.** `pixie_prng.glibc_nonce` keeps the seed unsigned, so it diverges from glibc for seeds
@@ -120,23 +69,6 @@ trip is self-consistent and the tests cannot see it. `ECOS_SIMPLE` is experiment
 
 **Direction.** Work out what the device really does with the top bit — whether the nonce byte is
 the seed's top 7 bits or its top 8 with one bit lost to the shift — before switching the mode on.
-
-## PixieDust first-half search recomputes PSK1 for every candidate seed
-
-**Problem.** `check_pin_half` derives `PSK1 = HMAC(authkey, half)[:16]` on every call, so the
-RTL819x sweep recomputes the same 10000 PSKs for each of its 1201 candidate E-S1 values — half of
-all HMAC work in the heaviest mode. Measured 49s, against 19s when the PSK table is built once
-and reused (2.5x), on a high-end x86 laptop.
-
-**Direction.** Build the 10000 PSK1 (and 1000 PSK2) halves once per `recover_pin` call and compare
-`HMAC_AuthKey(E-S || psk || PKe || PKr)` directly, instead of going through `check_pin_half` per
-candidate. Keep `check_pin_half` as-is: it is the hostapd-shaped primitive the online path uses.
-
-## Vault Verify from Focus leaves the card on the AP's channel
-
-**Problem.** In Focus, open the Vault, select a cracked AP on a different channel than the Focus
-target, press `Verify`: the card retunes to that AP's channel to verify, but doesn't return to the
-Focus channel. The Focus target's beacons stay at 0 until the Vault is closed, then come back.
 
 ## PSK-SHA384 and FT-PSK-SHA384 handshakes are not yet supported
 
@@ -188,13 +120,6 @@ showed about the same AP counts.
 
 **Direction.** Reproduce with the 40 MHz AP, then decide whether scanning needs wide-channel support.
 
-## Spoofed MACs appear in the clients list after campaigns
-
-We unregister the "own" MAC when the campaign ends, but subsequent TX to the faked MAC (M1, retries)
-cause the old faked MAC to appear as a client (it's no longer in "own macs").
-
-Fix: Timer on unregister_own_mac for 30s.
-
 ## MT76, Ralink and RTL8187L resend unicast that was already ACKed
 
 These cards stop resending only when the ACK is for their active-monitor MAC (RTL8187L: its silicon
@@ -230,15 +155,6 @@ full-suite runs, Kali, 3.14).
 Fix: a unique temp file per write (`tempfile.mkstemp`), plus a lock around read-merge-write. Callers
 that read the `.meta` before `update_meta` need the lock too, or `update_meta` takes a merge function.
 11 write call sites.
-
-## ar9271_v2 reopen without a power cycle fails at HTC/WMI init
-
-**Problem.** A firmware download into a chip that wasn't power-cycled fails at HTC/WMI init
-(`HTC ready: credits=33`, then a WMI timeout); a fresh plug works. 3 failures on 2 cards (Alfa x2,
-TP-Link x1). Porting the C's reboot-on-close (`hif_usb.c:1411`) made every reopen fail on Windows,
-so it was reverted.
-
-**Direction.** Capture `rmmod ath9k_htc; modprobe ath9k_htc` and compare it with our failing reopen.
 
 ## MT7612U warm bring-up wedges until a replug
 
