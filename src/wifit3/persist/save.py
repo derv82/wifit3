@@ -42,7 +42,7 @@ def fresh_path(captures_dir: Path, ssid: str | None, bssid: str, suffix: str, ep
         epoch += 1
 
 
-def existing_files(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
+def _existing(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
     """Files in ``captures_dir`` whose name carries this BSSID + ``_<suffix>``
     (kind + extension, e.g. ``_handshake.hc22000``)."""
     if not captures_dir.is_dir():
@@ -86,7 +86,7 @@ class HcFiles:
         an authorized one, or any one when ``authorized`` is False (an M1+M2 doesn't count against
         an M2+M3)."""
         paths = [self.agg_path] if self.agg_path.exists() else []
-        paths += existing_files(self.captures_dir, self.bssid, "_handshake.hc22000")
+        paths += _existing(self.captures_dir, self.bssid, "_handshake.hc22000")
         for p in paths:
             saved = _read_anonces(p)
             if anonce in saved and (saved[anonce] or not authorized):
@@ -97,7 +97,7 @@ class HcFiles:
         """Find if PMKID already exists in either the aggregate file or any split file."""
         if self.agg_path.exists() and pmkid in _read_pmkids(self.agg_path):
             return self.agg_path
-        for p in existing_files(self.captures_dir, self.bssid, "_pmkid.hc22000"):
+        for p in _existing(self.captures_dir, self.bssid, "_pmkid.hc22000"):
             if pmkid in _read_pmkids(p):
                 return p
         return None

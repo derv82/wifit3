@@ -19,7 +19,7 @@ from wifit3.persist.exhaustion import EXHAUSTED_KEY, WORDLISTS_KEY
 from wifit3.persist.hc22000 import Hc22000Import
 from wifit3.persist.meta import read_meta, update_meta_file
 from wifit3.persist.pcap import FourWayHandshake, pcap_frames, read_access_points, read_handshakes
-from wifit3.persist.save import existing_files, fresh_path
+from wifit3.persist.save import fresh_path
 from wifit3.persist.vault import Vault
 
 PCAP_EXTENSIONS = (".cap", ".pcap", ".pcapng")
@@ -72,7 +72,7 @@ class CaptureImport(Hc22000Import):
                 self._add_file(name, data, date)
         if Config.save_pcap:
             self._write_pcaps()
-        self.write_meta()
+        self.write_files()
 
     @staticmethod
     def _is_import_file(filename: str) -> bool:
@@ -225,7 +225,7 @@ class CaptureImport(Hc22000Import):
         saved_by_bssid: dict[str, set[tuple[str, bytes]]] = {}
         for (bssid, client_mac, anonce), handshake in self.four_ways.items():
             if bssid not in saved_by_bssid:
-                saved = read_handshakes(bssid, handshake.ssid, existing_files(captures_dir, bssid, ".pcap"))
+                saved = read_handshakes(bssid, handshake.ssid, self.saved_paths(bssid, ".pcap"))
                 saved_by_bssid[bssid] = {(h.client_mac, bytes.fromhex(h.hashline.anonce)) for h in saved if h.hashline}
             if (client_mac, anonce) in saved_by_bssid[bssid]:
                 continue

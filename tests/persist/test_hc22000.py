@@ -15,7 +15,7 @@ FILE_DATE = 1_700_000_000
 def _imported(text: str) -> Hc22000Import:
     result = Hc22000Import()
     result.add_file("old.hc22000", text, FILE_DATE)
-    result.write_meta()
+    result.write_files()
     return result
 
 
@@ -46,3 +46,10 @@ def test_bad_lines_and_lines_without_essid_are_problems_and_blank_lines_are_skip
     result = _imported(f"{PMKID}\n\nnot a hashline\n{no_essid}\n")
     assert result.pmkids == 1
     assert result.problems == [("old.hc22000:3", "not a hashline"), ("old.hc22000:4", "no SSID")]
+
+
+def test_a_hashline_in_one_of_the_aps_legacy_split_files_is_a_duplicate():
+    Path(Config.captures_dir).mkdir(parents=True, exist_ok=True)
+    (Path(Config.captures_dir) / "Test1_aa-bb-cc-dd-ee-ff_1700000000_pmkid.hc22000").write_text(PMKID + "\n")
+    result = _imported(f"{PMKID}\n")
+    assert (result.pmkids, result.duplicates) == (0, 1)
