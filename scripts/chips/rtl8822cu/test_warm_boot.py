@@ -1,9 +1,11 @@
-"""Experimentally reconnect one RTL8822CU using its in-memory DACK calibration."""
+"""Connect one RTL8822CU, close it and reconnect without a replug; --dack reuses the in-memory
+DACK calibration on the reconnect."""
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
+import os
 import time
 
 from wifit3.chips.log_trace import TRACE
@@ -11,7 +13,7 @@ from wifit3.chips.rtl8822cu.driver import RTL8822CUDriver
 from wifit3.device.manager import wlan_close, wlan_ifaces
 
 
-async def run(channel: int, seconds: float) -> int:
+async def run(channel: int, seconds: float, dack: bool) -> int:
     ifaces = wlan_ifaces()
     matches = [iface for iface in ifaces if isinstance(iface.driver, RTL8822CUDriver)]
     if len(matches) != 1:
@@ -57,12 +59,12 @@ async def run(channel: int, seconds: float) -> int:
         await driver.close()
         if disconnected:
             raise RuntimeError("Card disconnected; refusing to reuse calibration")
-        print("Reconnecting the same USB device using the process-local DACK cache.")
+        print("Reconnecting the same USB device.")
         start = time.monotonic()
         if not await driver.connect(progress_cb=progress):
             raise RuntimeError("Reconnect failed")
         warm_time = time.monotonic() - start
-        if not driver._dack_restored:
+        if dack and not driver._dack_restored:
             raise RuntimeError("No DACK cache entry was reused; check the card's EFUSE identity")
         warm_frames = await observe("Reconnect RX")
         print(f"Connect times: initial {cold_time:.2f}s; reconnect {warm_time:.2f}s")
@@ -81,16 +83,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--channel", type=int, default=1)
     parser.add_argument("--seconds", type=float, default=15.0, help="RX observation time per phase")
+    parser.add_argument("--dack", action="store_true", help="Reuse the DACK calibration on the reconnect")
     parser.add_argument("--trace", action="store_true", help="Enable driver trace logging")
     args = parser.parse_args()
     if args.channel not in RTL8822CUDriver.SUPPORTED_CHANNELS:
         parser.error("unsupported channel")
     if args.seconds <= 0:
         parser.error("--seconds must be positive")
+    if args.dack:
+        os.environ["WIFIT3_8822CU_DACK"] = "1"
     if args.trace:
         logging.basicConfig(level=TRACE, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
-        return asyncio.run(run(args.channel, args.seconds))
+        return asyncio.run(run(args.channel, args.seconds, args.dack))
     except (RuntimeError, OSError) as exc:
         print(f"Test failed: {exc}")
         return 1
