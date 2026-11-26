@@ -423,14 +423,14 @@ def _assoc_response() -> bytes:
 
 def test_read_access_points_stamps_messages_and_last_seen_with_frame_times(tmp_path):
     write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), *_m1_m2(1, 1000.0), (_beacon(), 1001.0)])
-    [ap] = read_access_points(tmp_path / "a.pcap")
+    [ap] = read_access_points("a.pcap", read_pcap(tmp_path / "a.pcap"))
     assert (ap.bssid, ap.ssid, ap.last_seen) == (_BSSID, _SSID, 1001.0)
     assert [message.timestamp for message in ap.handshakes[_CLIENT_MAC].messages] == pytest.approx([1000.0, 1000.005], abs=1e-6)
 
 
 def test_read_access_points_uses_a_probe_response_as_the_beacon_of_an_ap_without_beacons(tmp_path):
     write_pcap(tmp_path / "a.pcap", [(_probe_response(), 999.0), *_m1_m2(1, 1000.0)])
-    [ap] = read_access_points(tmp_path / "a.pcap")
+    [ap] = read_access_points("a.pcap", read_pcap(tmp_path / "a.pcap"))
     hs = ap.handshakes[_CLIENT_MAC]
     assert hs.beacon_frame == _probe_response()
     [pair] = hs.valid_pairs_by_instance().values()
@@ -443,13 +443,13 @@ def test_read_access_points_uses_a_probe_response_as_the_beacon_of_an_ap_without
 ])
 def test_read_access_points_decloaks_a_hidden_ap(tmp_path, naming_frames):
     write_pcap(tmp_path / "a.pcap", [(_hidden_beacon(), 999.0), *naming_frames, *_m1_m2(1, 1000.0)])
-    [ap] = read_access_points(tmp_path / "a.pcap")
+    [ap] = read_access_points("a.pcap", read_pcap(tmp_path / "a.pcap"))
     assert ap.ssid == _SSID
 
 
 def test_read_access_points_leaves_a_hidden_ap_without_an_ssid(tmp_path):
     write_pcap(tmp_path / "a.pcap", [(_hidden_beacon(), 999.0), *_m1_m2(1, 1000.0)])
-    [ap] = read_access_points(tmp_path / "a.pcap")
+    [ap] = read_access_points("a.pcap", read_pcap(tmp_path / "a.pcap"))
     assert ap.ssid is None
     assert ap.handshakes[_CLIENT_MAC].valid_pairs_by_instance()
 
@@ -460,7 +460,7 @@ def test_read_access_points_reads_a_pmkid_from_a_file_without_m2(tmp_path):
                    key_data=bytes.fromhex("dd14000fac04") + pmkid)
     m1_frame = data_header(to_ds=False, bssid=_AA, client=_SPA) + LLC_SNAP_EAPOL + m1
     write_pcap(tmp_path / "a.pcap", [(_beacon(), 999.0), (m1_frame, 1000.0)])
-    [ap] = read_access_points(tmp_path / "a.pcap")
+    [ap] = read_access_points("a.pcap", read_pcap(tmp_path / "a.pcap"))
     hs = ap.handshakes[_CLIENT_MAC]
     assert hs.pmkid == pmkid
     assert pmkid_hashline(ap.ssid_bytes, hs) is not None
@@ -484,7 +484,7 @@ def _beacon_with_ssid(ssid_bytes: bytes) -> bytes:
 def test_save_handshake_writes_the_ssid_bytes_as_the_essid(tmp_path, ssid_bytes, ssid, filename):
     pmk = derive_pmk(_PSK, ssid_bytes)
     write_pcap(tmp_path / "a.pcap", [(_beacon_with_ssid(ssid_bytes), 999.0), *_m1_m2(1, 1000.0, pmk)])
-    [ap] = read_access_points(tmp_path / "a.pcap")
+    [ap] = read_access_points("a.pcap", read_pcap(tmp_path / "a.pcap"))
     result = save_handshake(ap, _CLIENT_MAC)
     assert ap.ssid == ssid
     assert result.path.name == filename

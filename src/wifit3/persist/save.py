@@ -27,13 +27,14 @@ class SaveResult:
     was_new: bool
 
 
-def fresh_path(captures_dir: Path, ssid: str | None, bssid: str, suffix: str) -> Path:
-    """Build captures_dir/<safe_ssid>_<bssid-dashed>_<epoch><suffix>, bumping to
+def fresh_path(captures_dir: Path, ssid: str | None, bssid: str, suffix: str, epoch: Optional[int] = None) -> Path:
+    """Build captures_dir/<safe_ssid>_<bssid-dashed>_<epoch><suffix>, from ``epoch`` (default now) bumping to
     the smallest free epoch. Distinct content saved in the same second would
     otherwise collide. Dedupe only catches identical content, so structurally
     different artifacts (new ANonce / rotated PSK) need their own files."""
     base = f"{safe_ssid(ssid)}_{bssid_to_dashed(bssid)}"
-    epoch = int(time.time())
+    if epoch is None:
+        epoch = int(time.time())
     while True:
         candidate = captures_dir / f"{base}_{epoch}{suffix}"
         if not candidate.exists():
@@ -41,7 +42,7 @@ def fresh_path(captures_dir: Path, ssid: str | None, bssid: str, suffix: str) ->
         epoch += 1
 
 
-def _existing(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
+def existing_files(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
     """Files in ``captures_dir`` whose name carries this BSSID + ``_<suffix>``
     (kind + extension, e.g. ``_handshake.hc22000``)."""
     if not captures_dir.is_dir():
@@ -85,7 +86,7 @@ class HcFiles:
         an authorized one, or any one when ``authorized`` is False (an M1+M2 doesn't count against
         an M2+M3)."""
         paths = [self.agg_path] if self.agg_path.exists() else []
-        paths += _existing(self.captures_dir, self.bssid, "_handshake.hc22000")
+        paths += existing_files(self.captures_dir, self.bssid, "_handshake.hc22000")
         for p in paths:
             saved = _read_anonces(p)
             if anonce in saved and (saved[anonce] or not authorized):
@@ -96,7 +97,7 @@ class HcFiles:
         """Find if PMKID already exists in either the aggregate file or any split file."""
         if self.agg_path.exists() and pmkid in _read_pmkids(self.agg_path):
             return self.agg_path
-        for p in _existing(self.captures_dir, self.bssid, "_pmkid.hc22000"):
+        for p in existing_files(self.captures_dir, self.bssid, "_pmkid.hc22000"):
             if pmkid in _read_pmkids(p):
                 return p
         return None

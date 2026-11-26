@@ -84,12 +84,17 @@ def write_pcap(path: Path, records: Iterable[tuple[bytes, float]]) -> int:
 
 
 def read_pcap(path: Path) -> Iterator[tuple[bytes, float]]:
-    """``(802.11 frame, epoch seconds)`` of each complete record of a pcap or pcapng with raw 802.11,
-    radiotap or Prism link type, link header stripped; nothing for other link types or an unreadable file."""
+    """The frames of the pcap or pcapng at ``path`` (see pcap_frames); nothing for an unreadable file."""
     try:
         data = path.read_bytes()
     except OSError:
         return
+    yield from pcap_frames(data)
+
+
+def pcap_frames(data: bytes) -> Iterator[tuple[bytes, float]]:
+    """``(802.11 frame, epoch seconds)`` of each complete record of a pcap or pcapng with raw 802.11,
+    radiotap or Prism link type, link header stripped; nothing for other link types."""
     if data[:4] == PCAPNG_SECTION_HEADER_BLOCK.to_bytes(4, "little"):
         packets = _pcapng_packets(data)
     else:
@@ -350,17 +355,17 @@ def read_handshakes(bssid: str, ssid: Optional[str], paths: Iterable[Path]) -> l
     return handshakes
 
 
-def read_access_points(path: Path) -> list[AccessPoint]:
+def read_access_points(name: str, frames: Iterable[tuple[bytes, float]]) -> list[AccessPoint]:
     """Every AP in the capture with its handshakes and PMKIDs, stamped with the file's frame times.
     A hidden AP's SSID comes from the last probe response or association request in the capture."""
     sink = WlanSink()
     probe_response_by_bssid: dict[str, bytes] = {}
     reveal_packet_by_bssid: dict[str, ProbeResponsePacket | AssocRequestPacket] = {}
-    for frame, timestamp in read_pcap(path):
+    for frame, timestamp in frames:
         packet = WlanFrameParser.parse_80211_frame(frame, 0)
         if packet is None:
             continue
-        sink.update(packet, path.name, timestamp=timestamp)
+        sink.update(packet, name, timestamp=timestamp)
         if isinstance(packet, ProbeResponsePacket):
             probe_response_by_bssid.setdefault(packet.bssid, packet.raw)
         if isinstance(packet, (ProbeResponsePacket, AssocRequestPacket)) and packet.ssid:
