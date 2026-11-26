@@ -385,6 +385,8 @@ class VaultDrawer(ModalScreen):
             self.app.call_from_thread(self.notify, f"Import failed: {exc}", severity="error")
         self.app.vault.refresh()
         result.save_psks(self.app.vault)
+        if result.nicknames:
+            self.app.call_from_thread(self.app.persist_config)
         if result.problems:
             self.app.call_from_thread(self.app.push_screen, ImportProblemsModal(result.summary, result.problems))
         else:

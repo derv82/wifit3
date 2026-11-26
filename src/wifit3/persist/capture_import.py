@@ -1,24 +1,31 @@
 """Import of capture files, directories and zips into the captures directory."""
 from __future__ import annotations
 
+import json
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from wifit3.crack.handshake import hc22000_line
 from wifit3.crack.hc22000_format import parse_hc22000, pmkid_hashline
 from wifit3.models import CaptureType
+from wifit3.persist.ap_state import HASHLINES_KEY, LIVE_VERIFICATIONS_KEY, MANUAL_CAPTURES_KEY
 from wifit3.persist.capture_history import body_ssid, read_wep_key, read_wps_psk
-from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_colon
+from wifit3.persist.common import LEGACY_CAPTURE_RE, bssid_to_colon, bssid_to_dashed
 from wifit3.persist.config import Config
+from wifit3.persist.exhaustion import EXHAUSTED_KEY, WORDLISTS_KEY
 from wifit3.persist.hc22000 import Hc22000Import
+from wifit3.persist.meta import read_meta, update_meta_file
 from wifit3.persist.pcap import FourWayHandshake, pcap_frames, read_access_points, read_handshakes
 from wifit3.persist.save import existing_files, fresh_path
 from wifit3.persist.vault import Vault
 
 PCAP_EXTENSIONS = (".cap", ".pcap", ".pcapng")
 IMPORT_EXTENSIONS = (".hc22000", *PCAP_EXTENSIONS, ".txt", ".meta")
+MERGED_META_KEYS = ("bssid", "ssid", "ssid_hex", HASHLINES_KEY, LIVE_VERIFICATIONS_KEY, MANUAL_CAPTURES_KEY,
+                    EXHAUSTED_KEY, WORDLISTS_KEY)
 
 
 @dataclass
@@ -29,6 +36,7 @@ class CaptureImport(Hc22000Import):
     four_ways: dict[tuple[str, str, bytes], FourWayHandshake] = field(default_factory=dict)  # (BSSID, client, ANonce)
     psks: list[tuple[str, str, str, str]] = field(default_factory=list)    # (name, SSID, BSSID, PSK)
     keys: int = 0
+    nicknames: int = 0
 
     @property
     def summary(self) -> str:
@@ -102,7 +110,45 @@ class CaptureImport(Hc22000Import):
         elif extension == ".txt":
             self._add_key_file(name, data)
         else:
-            self.problems.append((name, "not supported yet"))
+            self._add_meta(name, data)
+
+    def _add_meta(self, name: str, data: bytes) -> None:
+        """Merge a .meta into the captures directory's file of the same name, its values kept on conflict;
+        a nickname goes to Config when the BSSID has none."""
+        try:
+            imported = json.loads(data)
+        except (UnicodeError, json.JSONDecodeError):
+            imported = None
+        if not isinstance(imported, dict) or not isinstance(imported.get("bssid"), str):
+            self.problems.append((name, "unreadable .meta"))
+            return
+        bssid = imported["bssid"]
+        filename = PurePosixPath(name).name
+        if not filename.lower().endswith(f"_{bssid_to_dashed(bssid)}.meta"):
+            self.problems.append((name, "not a wifit3 .meta"))
+            return
+        path = Path(Config.captures_dir) / filename
+        existing = read_meta(path)
+        update_meta_file(path, **{key: self._merged(existing.get(key), imported[key])
+                                  for key in MERGED_META_KEYS if key in imported})
+        nickname = imported.get("nickname")
+        if isinstance(nickname, str) and nickname and Config.nickname(bssid) is None:
+            Config.set_nickname(bssid, nickname)
+            self.nicknames += 1
+
+    @staticmethod
+    def _merged(existing: Any, imported: Any) -> Any:
+        """``imported`` added to ``existing``: dicts merged by key, lists unioned; any other existing value is kept."""
+        if existing is None:
+            return imported
+        if isinstance(existing, dict) and isinstance(imported, dict):
+            merged = dict(existing)
+            for key, value in imported.items():
+                merged[key] = CaptureImport._merged(existing.get(key), value)
+            return merged
+        if isinstance(existing, list) and isinstance(imported, list):
+            return existing + [item for item in imported if item not in existing]
+        return existing
 
     def _add_key_file(self, name: str, data: bytes) -> None:
         """Copy a WEP key or WPS PIN file in under its own name; keep a WPA or WPS PBC PSK for save_psks."""

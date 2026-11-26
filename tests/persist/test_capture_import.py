@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import zipfile
 from pathlib import Path
 
@@ -37,7 +38,7 @@ def test_a_directory_is_walked_recursively_and_other_file_types_are_skipped(sele
     (selected_dir / "wordlist.txt").write_bytes(b"")
     result = _imported([selected_dir])
     assert (result.files, result.pmkids) == (2, 1)
-    assert result.problems == [("old/b.meta", "not supported yet")]
+    assert result.problems == [("old/b.meta", "unreadable .meta")]
 
 
 def test_a_zip_is_read_with_its_subdirectories_and_a_zip_inside_it_is_skipped(selected_dir: Path):
@@ -145,3 +146,41 @@ def test_a_psk_is_saved_only_for_an_ap_with_a_handshake_or_pmkid(selected_dir: P
     assert [key.value for key in vault.ap_state("aa:bb:cc:dd:ee:ff").keys] == ["rightpass"]
     assert result.problems == [("old/Other_11-22-33-44-55-66_1700000000_wpa_psk.txt",
                                 "no handshake or PMKID of this AP, PSK skipped")]
+
+
+META_FILE = "Test1_aa-bb-cc-dd-ee-ff.meta"
+
+
+def test_a_meta_is_merged_into_the_aps_meta_keeping_existing_values(selected_dir: Path):
+    existing = {"bssid": "aa:bb:cc:dd:ee:ff", "ssid": "Test1", "hashlines": {"h1": {"captured": [1]}},
+                "manual_captures": ["a.txt"], "exhausted": {"w": {"h1": 5}}}
+    imported = {"bssid": "aa:bb:cc:dd:ee:ff", "ssid": "Other",
+                "hashlines": {"h1": {"captured": [2]}, "h2": {"captured": [3]}},
+                "manual_captures": ["b.txt"], "exhausted": {"w": {"h1": 9, "h2": 7}}, "unknown": 1}
+    Path(Config.captures_dir).mkdir()
+    (Path(Config.captures_dir) / META_FILE).write_text(json.dumps(existing))
+    (selected_dir / META_FILE).write_text(json.dumps(imported))
+    _imported([selected_dir])
+    assert read_meta(Path(Config.captures_dir) / META_FILE) == {
+        "bssid": "aa:bb:cc:dd:ee:ff", "ssid": "Test1",
+        "hashlines": {"h1": {"captured": [1, 2]}, "h2": {"captured": [3]}},
+        "manual_captures": ["a.txt", "b.txt"], "exhausted": {"w": {"h1": 5, "h2": 7}}}
+
+
+def test_a_metas_nickname_goes_to_config_only_when_the_bssid_has_none(selected_dir: Path,
+                                                                     monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(Config, "nicknames", {"11:22:33:44:55:66": "Kept"})
+    (selected_dir / META_FILE).write_text(json.dumps({"bssid": "aa:bb:cc:dd:ee:ff", "nickname": "Lab"}))
+    (selected_dir / "Other_11-22-33-44-55-66.meta").write_text(
+        json.dumps({"bssid": "11:22:33:44:55:66", "nickname": "Replaced"}))
+    result = _imported([selected_dir])
+    assert result.nicknames == 1
+    assert Config.nicknames == {"11:22:33:44:55:66": "Kept", "aa:bb:cc:dd:ee:ff": "Lab"}
+
+
+def test_an_invalid_meta_and_a_meta_named_for_another_bssid_are_problems(selected_dir: Path):
+    (selected_dir / "a.meta").write_text("{not json")
+    (selected_dir / "b_11-22-33-44-55-66.meta").write_text(json.dumps({"bssid": "aa:bb:cc:dd:ee:ff"}))
+    result = _imported([selected_dir])
+    assert result.problems == [("old/a.meta", "unreadable .meta"),
+                               ("old/b_11-22-33-44-55-66.meta", "not a wifit3 .meta")]

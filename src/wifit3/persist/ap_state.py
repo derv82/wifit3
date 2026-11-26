@@ -20,9 +20,9 @@ from wifit3.persist.meta import (bssid_meta_paths, meta_path, read_bssid_metas, 
 from wifit3.persist.pcap import read_pcap
 from wifit3.text import displayable_ssid
 
-_HASHLINES_KEY = "hashlines"
-_LIVE_VERIFICATIONS_KEY = "live_verifications"
-_MANUAL_CAPTURES_KEY = "manual_captures"
+HASHLINES_KEY = "hashlines"
+LIVE_VERIFICATIONS_KEY = "live_verifications"
+MANUAL_CAPTURES_KEY = "manual_captures"
 _PMKID_KDE = b"\xdd\x14" + RSN_OUI + b"\x04"      # Key Data element: id, length, OUI, data type
 _PMKID_LEN = 16
 _PASSWORD_KEY_TYPES = frozenset({CaptureType.WPA_PSK, CaptureType.WEP})
@@ -144,7 +144,7 @@ def _stored_dates(metas: list[dict]) -> dict[str, set[int]]:
     """Dates per hashline id with a .meta record; an empty set records that none were found."""
     found: dict[str, set[int]] = {}
     for meta in metas:
-        stored = meta.get(_HASHLINES_KEY)
+        stored = meta.get(HASHLINES_KEY)
         if not isinstance(stored, dict):
             continue
         for hid, record in stored.items():
@@ -164,7 +164,7 @@ def _capture_type(value: object) -> Optional[CaptureType]:
 def _stored_verifications(metas: list[dict]) -> dict[tuple[CaptureType, str], list[LiveVerification]]:
     found: dict[tuple[CaptureType, str], list[LiveVerification]] = {}
     for meta in metas:
-        stored = meta.get(_LIVE_VERIFICATIONS_KEY)
+        stored = meta.get(LIVE_VERIFICATIONS_KEY)
         if not isinstance(stored, list):
             continue
         for record in stored:
@@ -179,7 +179,7 @@ def _stored_verifications(metas: list[dict]) -> dict[tuple[CaptureType, str], li
 def _manual_capture_names(metas: list[dict]) -> frozenset[str]:
     names: set[str] = set()
     for meta in metas:
-        stored = meta.get(_MANUAL_CAPTURES_KEY)
+        stored = meta.get(MANUAL_CAPTURES_KEY)
         if isinstance(stored, list):
             names.update(name for name in stored if isinstance(name, str))
     return frozenset(names)
@@ -371,7 +371,7 @@ def record_hashlines_captured(ssid: Optional[str], bssid: str, raw_lines: Iterab
 
 def record_hashline_dates(ssid: Optional[str], bssid: str, dates: Mapping[str, Iterable[int]]) -> None:
     """Add capture dates, by hashline id, to the SSID's .meta; no dates records that none exist."""
-    stored = read_meta(meta_path(ssid, bssid)).get(_HASHLINES_KEY)
+    stored = read_meta(meta_path(ssid, bssid)).get(HASHLINES_KEY)
     stored = stored if isinstance(stored, dict) else {}
     for hid, epochs in dates.items():
         if not isinstance(stored.get(hid), dict):
@@ -380,25 +380,25 @@ def record_hashline_dates(ssid: Optional[str], bssid: str, dates: Mapping[str, I
             stored[hid]["captured"] = []
         captured = stored[hid]["captured"]
         captured.extend(e for e in epochs if e not in captured)
-    update_meta(ssid, bssid, **{_HASHLINES_KEY: stored})
+    update_meta(ssid, bssid, **{HASHLINES_KEY: stored})
 
 
 def record_manual_capture(ssid: Optional[str], bssid: str, path: Path) -> None:
     """Note in the SSID's .meta that this capture holds a key typed in through Add key."""
-    stored = read_meta(meta_path(ssid, bssid)).get(_MANUAL_CAPTURES_KEY)
+    stored = read_meta(meta_path(ssid, bssid)).get(MANUAL_CAPTURES_KEY)
     stored = [name for name in stored if isinstance(name, str)] if isinstance(stored, list) else []
     if path.name not in stored:
         stored.append(path.name)
-    update_meta(ssid, bssid, **{_MANUAL_CAPTURES_KEY: stored})
+    update_meta(ssid, bssid, **{MANUAL_CAPTURES_KEY: stored})
 
 
 def record_live_verification(key: Key, correct: bool) -> None:
     """Note in the .meta of the key's newest capture that a live check accepted or rejected it."""
     capture = key.newest_capture
-    stored = read_meta(meta_path(capture.ssid, capture.bssid)).get(_LIVE_VERIFICATIONS_KEY)
+    stored = read_meta(meta_path(capture.ssid, capture.bssid)).get(LIVE_VERIFICATIONS_KEY)
     stored = stored if isinstance(stored, list) else []
     stored.append({"kind": key.type.value, "key": key.value, "at": int(time.time()), "correct": correct})
-    update_meta(capture.ssid, capture.bssid, **{_LIVE_VERIFICATIONS_KEY: stored})
+    update_meta(capture.ssid, capture.bssid, **{LIVE_VERIFICATIONS_KEY: stored})
 
 
 def forget_key(key: Key) -> None:
@@ -407,16 +407,16 @@ def forget_key(key: Key) -> None:
     for path in bssid_meta_paths(key.newest_capture.bssid):
         meta = read_meta(path)
         fields: dict[str, Optional[list]] = {}
-        verifications = meta.get(_LIVE_VERIFICATIONS_KEY)
+        verifications = meta.get(LIVE_VERIFICATIONS_KEY)
         if isinstance(verifications, list):
             kept = [r for r in verifications if not (isinstance(r, dict) and r.get("key") == key.value
                                                      and _capture_type(r.get("kind")) == key.type)]
             if len(kept) != len(verifications):
-                fields[_LIVE_VERIFICATIONS_KEY] = kept or None
-        manual = meta.get(_MANUAL_CAPTURES_KEY)
+                fields[LIVE_VERIFICATIONS_KEY] = kept or None
+        manual = meta.get(MANUAL_CAPTURES_KEY)
         if isinstance(manual, list):
             kept_names = [name for name in manual if name not in capture_names]
             if len(kept_names) != len(manual):
-                fields[_MANUAL_CAPTURES_KEY] = kept_names or None
+                fields[MANUAL_CAPTURES_KEY] = kept_names or None
         if fields:
             update_meta_file(path, **fields)
