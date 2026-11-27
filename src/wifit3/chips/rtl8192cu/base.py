@@ -31,10 +31,6 @@ def _is_ftype_stype(fc: int, ftype: int, stype: int) -> bool:
     return (fc & (C.IEEE80211_FCTL_FTYPE | C.IEEE80211_FCTL_STYPE)) == (ftype | stype)
 
 
-def ieee80211_is_beacon(fc: int) -> bool:
-    return _is_ftype_stype(fc, C.IEEE80211_FTYPE_MGMT, C.IEEE80211_STYPE_BEACON)
-
-
 def ieee80211_is_action(fc: int) -> bool:
     return _is_ftype_stype(fc, C.IEEE80211_FTYPE_MGMT, C.IEEE80211_STYPE_ACTION)
 

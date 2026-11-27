@@ -5,7 +5,6 @@ import errno
 from . import constants as C
 from .base import (
     ieee80211_get_DA,
-    ieee80211_is_beacon,
     ieee80211_is_data_qos,
     ieee80211_is_mgmt,
     is_broadcast_ether_addr,
@@ -135,9 +134,7 @@ def rtl8192cu_endpoint_mapping(rtlpriv: RtlPriv) -> int:
 
 
 def rtl8192cu_mq_to_hwq(fc: int, mac80211_queue_index: int) -> int:
-    """trx.c:206."""
-    if ieee80211_is_beacon(fc):
-        return C.RTL_TXQ_BCN
+    """trx.c:206, except beacons go on MGT: an injected beacon on the beacon queue never airs."""
     if ieee80211_is_mgmt(fc):
         return C.RTL_TXQ_MGT
     if mac80211_queue_index == 0:
@@ -152,9 +149,7 @@ def rtl8192cu_mq_to_hwq(fc: int, mac80211_queue_index: int) -> int:
 
 
 def _rtl8192cu_mq_to_descq(fc: int, mac80211_queue_index: int) -> int:
-    """trx.c:241."""
-    if ieee80211_is_beacon(fc):
-        return C.QSLT_BEACON
+    """trx.c:241, except beacons go on MGNT, as in rtl8192cu_mq_to_hwq."""
     if ieee80211_is_mgmt(fc):
         return C.QSLT_MGNT
     if mac80211_queue_index == 0:
