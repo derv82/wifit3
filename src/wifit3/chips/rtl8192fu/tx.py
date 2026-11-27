@@ -29,10 +29,6 @@ def ieee80211_is_data_qos(frame: bytes) -> bool:
     return (frame[0] & 0x8C) == 0x88
 
 
-def ieee80211_is_beacon(frame: bytes) -> bool:
-    return (frame[0] & 0xFC) == 0x80
-
-
 def ieee80211_get_DA(frame: bytes) -> bytes:
     if frame[1] & 0x01:
         return frame[16:22]
@@ -62,8 +58,7 @@ def rtl8xxxu_80211_to_rtl_queue(queue: int) -> int:
 
 
 def rtl8xxxu_queue_select(frame: bytes, queue_mapping: int) -> int:
-    if ieee80211_is_beacon(frame):
-        return C.TXDESC_QUEUE_BEACON
+    """core.c:5018, except beacons go on MGNT: an injected frame on TXDESC_QUEUE_BEACON never airs."""
     if ieee80211_is_mgmt(frame):
         return C.TXDESC_QUEUE_MGNT
     return rtl8xxxu_80211_to_rtl_queue(queue_mapping)

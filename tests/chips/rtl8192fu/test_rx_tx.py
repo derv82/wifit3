@@ -96,6 +96,14 @@ def test_deauth_goes_out_on_the_management_pipe():
     assert _checksum_ok(desc)
 
 
+def test_beacon_goes_out_on_the_management_queue():
+    priv = _tx_priv()
+    endpoint, urb = rtl8xxxu_tx(priv, BEACON)
+
+    assert endpoint == 0x05
+    assert int.from_bytes(urb[4:8], "little") >> C.TXDESC_QUEUE_SHIFT & 0x1F == C.TXDESC_QUEUE_MGNT
+
+
 def test_null_data_goes_out_on_the_best_effort_pipe():
     priv = _tx_priv()
     null = bytes.fromhex("48010000020000000002020000000001020000000002") + bytes(2)
