@@ -226,6 +226,53 @@ demand one. Issue #55 is intentionally left open to keep gauging demand.
 
 ------------
 
+### Online brute-force campaign (research)
+
+Connect to the AP and try passwords from a wordlist, one auth exchange per guess.
+Requested in [issue #207](https://github.com/derv82/wifit3/issues/207).
+
+**For:**
+- The only campaign against WPA3-SAE: SAE resists offline cracking, so every guess has to be online.
+- SAE answers a wrong guess in the auth exchange itself: the AP rejects the STA's Confirm with
+  status 15 (`CHALLENGE_FAIL`). No assoc, no 4-way. 2 frames out, 2 in per guess.
+- hostapd has no lockout, backoff or MAC denylist for wrong passwords (WPA2 or SAE).
+
+**Against:**
+- Slow. WPA2-PSK in hostapd: one guess per M1, M1 resent 4 times (100 ms then 1 s), then deauth
+  reason 15. About 5 guesses per ~4 s, vs. ~1M/s offline against a captured handshake.
+- SAE costs a few P-256 scalar mults per guess on both sides; on a router CPU that's likely ms per guess
+  (not measured).
+- Multiple cards don't scale on hostapd: every Commit goes through a queue, capped at 15, that
+  waits `queue_len × 10 ms` between items. With 5 or more open sessions, new Commits must
+  round-trip an anti-clogging token first.
+- Lockout behaviour on vendor stacks is unknown. Like WPS lockouts, it may vary by make and model,
+  and a lockout there could take down the AP for its real users.
+
+**hostapd source references** (`driver_sources/hostap-src/src/`):
+- Bad M2: `ap/wpa_auth.c` (`invalid MIC in msg 2/4`); only emits `AP-STA-POSSIBLE-PSK-MISMATCH`.
+- One M2 per replay counter: `ap/wpa_auth.c`, `wpa_replay_counter_mark_invalid`.
+- Retry limit: `wpa_pairwise_update_count = 4` in `ap/ap_config.c`; timeouts at the top of `ap/wpa_auth.c`.
+- SAE Confirm rejection: `ap/ieee802_11.c`, `sae_check_confirm`.
+- Commit queue: `ap/ieee802_11.c`, `auth_sae_queue` / `auth_sae_process_commit`.
+- Anti-clogging: `ap/ieee802_11.c`, `use_anti_clogging`; token in `ap/comeback_token.c`
+  (HMAC of the STA MAC, not proof-of-work).
+
+**Tests to run** on every test AP (hostapd and vendor stacks), with our own APs and our own passwords only:
+- WPA2-PSK: wrong-M2 guesses per association, the time until deauth, and whether repeated
+  sessions ever get refused, slowed down, or knock real clients off.
+- SAE: time from Commit to Commit response, and from Confirm to the status 15 reply. Is CPU
+  or airtime the bottleneck?
+- SAE, hunting-and-pecking vs. H2E: per-guess turnaround on each.
+- Sustained guessing (minutes, then hours): any lockout, backoff, AP reboot, or real-client
+  disconnects?
+- 1 card vs. several cards with their own MACs: total guesses/s, and when the anti-clogging token
+  or the queue kicks in.
+
+**Where this stands:** leaning **no**: too slow to beat a wordlist against a captured handshake,
+and the DoS risk on vendor APs needs the tests above before anything ships.
+
+------------
+
 ## Deferred / Chopping Block
 
 ### Multi-threaded CPU Crack
